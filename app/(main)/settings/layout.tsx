@@ -474,7 +474,7 @@ const AppearanceTheme = ({ data, onSave }: any) => {
         type="color"
         name="primaryColor"
         value={primaryColor}
-        onChange={(e) => setPrimaryColor(e.target.value)}
+       onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setPrimaryColor(e.target.value)}
         className="h-12 w-24" // Specific style for color picker
       />
       <SaveButton onClick={handleSave} isSaving={isSaving} />
@@ -515,7 +515,7 @@ const Security = ({ data, onSave }: any) => {
     <div className="space-y-6">
       <FormToggle label="Enable 2-Factor Auth (2FA)" enabled={formData.enable2FA} onChange={() => handleToggle("enable2FA")} />
       <FormToggle label="Force strong passwords" enabled={formData.forceStrongPassword} onChange={() => handleToggle("forceStrongPassword")} />
-      <FormSelect label="Session Timeout" name="sessionTimeout" value={formData.sessionTimeout || "30"} onChange={(e) => setFormData({...formData, sessionTimeout: e.target.value})}>
+      <FormSelect label="Session Timeout" name="sessionTimeout" value={formData.sessionTimeout || "30"} onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setFormData({...formData, sessionTimeout: e.target.value})}>
         <option value="15">15 Minutes</option>
         <option value="30">30 Minutes</option>
         <option value="60">1 Hour</option>

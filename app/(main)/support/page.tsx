@@ -285,33 +285,37 @@ function TicketChatView({ ticketId, onBack }: { ticketId: string, onBack: () => 
   const [replyText, setReplyText] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const user = useAuth().user;
-
-  const handleReply = async (e: FormEvent) => {
+const handleReply = async (e: FormEvent) => {
     e.preventDefault();
     if (!replyText) return;
+
+    // ✅ ADD THIS CHECK
+    if (!auth.currentUser) {
+      alert("You are not signed in.");
+      return;
+    }
+
     setIsSubmitting(true);
-
     try {
-    const token = await auth.currentUser.getIdToken();
-     await fetch("/api/support", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-      body: JSON.stringify({
-        type: "new_support_reply",
-        ticketId, // This must be available in your component's scope
-        text: replyText, // This must be available from your state
-      }),
-    });
+      const token = await auth.currentUser.getIdToken(); // <-- No error now
+      await fetch("/api/support", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          type: "new_support_reply",
+          ticketId,
+          text: replyText,
+        }),
+      });
 
-   setReplyText("");
-    mutate(); // Re-fetch messages
-  } catch (err: any) {
-    alert(`Error sending reply: ${err.message}`);
-  } finally {
-    setIsSubmitting(false);
+      setReplyText("");
+      mutate(); // Re-fetch messages
+    } catch (err: any) {
+      alert(`Error sending reply: ${err.message}`);
+    } finally {
+      setIsSubmitting(false);
     }
   };
-
   return (
     <Card className="max-w-3xl">
       <button onClick={onBack} className="mb-2 flex items-center gap-1 text-sm text-blue-600 hover:underline">

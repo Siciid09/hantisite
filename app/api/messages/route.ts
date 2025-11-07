@@ -175,7 +175,9 @@ export async function POST(request: NextRequest) {
           return NextResponse.json({ error: "Unauthorized: Not Super Admin" }, { status: 403 });
         }
         
-        const { title, body } = body;
+       const body = await request.json();
+const { title, body: messageBody } = body; // ✅ rename
+
         if (!title || !body) {
           return NextResponse.json({ error: "Title and body are required" }, { status: 400 });
         }

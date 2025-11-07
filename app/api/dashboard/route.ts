@@ -354,7 +354,8 @@ async function getActivityFeed(
       };
     });
   } catch (error) {
-    console.warn(`Could not load activity feed: ${error.message}`);
+  console.warn(`Could not load activity feed: ${(error as Error).message}`);
+
     return [
       {
         id: "1",

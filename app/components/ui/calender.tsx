@@ -28,7 +28,7 @@ function Calendar({
       showOutsideDays={showOutsideDays}
       
       // --- ✨ FEATURES ---
-      captionLayout="dropdown-buttons" // This enables the month/year dropdowns
+    captionLayout="dropdown" // This enables the month/year dropdowns
       fromYear={fromYear}
       toYear={toYear}
       showWeekNumber={true} // This shows the week numbers

@@ -231,13 +231,13 @@ export async function GET(request: NextRequest) {
       
       // Search Query Filter
       if (searchQuery) {
-        const search = 
-          (debt.clientName || "").toLowerCase() +
-          (debt.clientPhone || "") +
-          (debt.clientWhatsapp || "") +
-          (debt.reason || "").toLowerCase() +
-          (debt.relatedSaleId || "") +
-          (debt.id || "");
+        const search =
+  (debt.clientName || "").toLowerCase() +
+  (debt.clientPhone || "") +
+  (debt.clientWhatsapp || "") +
+  (debt.reason || "").toLowerCase() +
+  ((debt as any).relatedSaleId || "") + // ✅ bypass TS check
+  (debt.id || "")
         if (!search.includes(searchQuery)) return false;
       }
 
