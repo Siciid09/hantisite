@@ -36,16 +36,20 @@ async function checkAuth(request: NextRequest) {
 // =============================================================================
 export async function GET(
   request: NextRequest,
-  context: { params: { id: string } } // <-- FIX 1: Changed from {params} to context
+  { params }: { params: Promise<{ id: string }> }
 ) {
   if (!firestoreAdmin) {
     return NextResponse.json({ error: "Admin SDK not configured." }, { status: 500 });
   }
-  
+
   try {
     const { storeId } = await checkAuth(request);
-    const customerId = context.params.id; // <-- FIX 2: Changed from params.id
+
+    // ✅ Await params because Vercel treats it as a Promise
+    const { id: customerId } = await params;
+
     const db = firestoreAdmin;
+
 
     // 1. Get Customer Details (This now contains our KPIs)
     const customerRef = db.collection("customers").doc(customerId);
