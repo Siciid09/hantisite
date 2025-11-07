@@ -52,7 +52,7 @@ const formatCurrency = (amount: number, currency: string): string => {
 // -----------------------------------------------------------------------------
 export async function PUT(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> } // <-- FIX 1: Changed signature
 ) {
   if (!authAdmin || !firestoreAdmin) {
     return NextResponse.json(
@@ -63,7 +63,7 @@ export async function PUT(
 
   try {
     const { storeId, uid, userName } = await getAuth(request);
-    const debtId = params.id;
+    const { id: debtId } = await params; // <-- FIX 2: Awaited params
     const body = await request.json();
 
     const { amountPaid, paymentMethod } = body;
@@ -77,99 +77,99 @@ export async function PUT(
     }
 
     const debtRef = firestoreAdmin.collection("debits").doc(debtId);
-    let newStatus = "partial"; // Default
+    let newStatus = "partial"; // Default
 
-    // --- (FIX) Use a Transaction for safety ---
+    // --- (FIX) Use a Transaction for safety ---
     await firestoreAdmin.runTransaction(async (transaction) => {
-      const debtDoc = await transaction.get(debtRef);
-  
-      if (!debtDoc.exists) {
-        throw new Error("Debt not found.");
-      }
-  
-      const debtData = debtDoc.data()!;
-      if (debtData.storeId !== storeId) {
-        throw new Error("Access denied.");
-      }
-  
-      const newTotalPaid = (debtData.totalPaid || 0) + paidAmount;
-      const newAmountDue = debtData.totalAmount - newTotalPaid;
-      newStatus = newAmountDue <= 0.01 ? "paid" : "partial"; // Use 0.01 for float precision
-  
-      if (newAmountDue < -0.01) {
-        throw new Error("Payment exceeds amount due.");
-      }
-  
-      // 1. Update the debt document
-      transaction.update(debtRef, {
-        totalPaid: newTotalPaid,
-        amountDue: newAmountDue,
-        status: newStatus,
-        isPaid: newStatus === "paid", // Keep isPaid for compatibility
-        paymentHistory: FieldValue.arrayUnion({
-          amount: paidAmount,
-          date: Timestamp.now(),
-          method: paymentMethod || "Cash",
-          recordedBy: uid,
-        }),
-        updatedAt: Timestamp.now(),
-      });
-  
-      // 2. Create an income record for this payment
-      const incomeRef = firestoreAdmin.collection("incomes").doc();
-      transaction.set(incomeRef, {
-        amount: paidAmount,
-        category: "Debt Payment",
-        description: `Payment for debt from ${debtData.clientName} (Debt ID: ${debtId})`,
-        currency: debtData.currency,
-        storeId,
-        userId: uid,
-        createdAt: Timestamp.now(),
-        notes: `Payment method: ${paymentMethod || "Cash"}`,
-        relatedDebtId: debtId,
-      });
-  
-      // 3. Create activity log
-      const logRef = firestoreAdmin.collection("activity_logs").doc();
-      transaction.set(logRef, {
-        storeId,
-        userId: uid,
-        userName,
-        timestamp: Timestamp.now(),
-        actionType: "UPDATE",
-        collectionAffected: "debits",
-        details: `Recorded payment of ${formatCurrency(
-          paidAmount,
-          debtData.currency
-        )} for ${debtData.clientName}. New status: ${newStatus.toUpperCase()}`,
-      });
+      const debtDoc = await transaction.get(debtRef);
 
-      // 4. --- (NEW) Update the related Sale document ---
-      const relatedSaleId = debtData.relatedSaleId;
-      if (relatedSaleId) {
-        const saleRef = firestoreAdmin.collection("sales").doc(relatedSaleId);
-        const saleDoc = await transaction.get(saleRef);
+      if (!debtDoc.exists) {
+        throw new Error("Debt not found.");
+      }
 
-        if (saleDoc.exists) {
-          const saleData = saleDoc.data()!;
-          
-          // Recalculate the sale's financial status
-          const newSaleAmountPaid = (saleData.amountPaid || 0) + paidAmount;
-          const newSaleDebtAmount = saleData.totalAmount - newSaleAmountPaid;
-          const newSaleStatus = newSaleDebtAmount <= 0.01 ? "paid" : "partial";
+      const debtData = debtDoc.data()!;
+      if (debtData.storeId !== storeId) {
+        throw new Error("Access denied.");
+      }
 
-          transaction.update(saleRef, {
-            amountPaid: newSaleAmountPaid,
-            debtAmount: newSaleDebtAmount,
-            status: newSaleStatus,
-            updatedAt: Timestamp.now(),
-          });
-        } else {
-          // If the sale was deleted, just log a warning but don't fail
-          console.warn(`Could not find related sale ${relatedSaleId} for debt ${debtId}`);
-        }
-      }
-    }); // --- End of Transaction ---
+      const newTotalPaid = (debtData.totalPaid || 0) + paidAmount;
+      const newAmountDue = debtData.totalAmount - newTotalPaid;
+      newStatus = newAmountDue <= 0.01 ? "paid" : "partial"; // Use 0.01 for float precision
+
+      if (newAmountDue < -0.01) {
+        throw new Error("Payment exceeds amount due.");
+      }
+
+      // 1. Update the debt document
+      transaction.update(debtRef, {
+        totalPaid: newTotalPaid,
+        amountDue: newAmountDue,
+        status: newStatus,
+        isPaid: newStatus === "paid", // Keep isPaid for compatibility
+        paymentHistory: FieldValue.arrayUnion({
+          amount: paidAmount,
+          date: Timestamp.now(),
+          method: paymentMethod || "Cash",
+          recordedBy: uid,
+        }),
+        updatedAt: Timestamp.now(),
+      });
+
+      // 2. Create an income record for this payment
+      const incomeRef = firestoreAdmin.collection("incomes").doc();
+      transaction.set(incomeRef, {
+        amount: paidAmount,
+        category: "Debt Payment",
+        description: `Payment for debt from ${debtData.clientName} (Debt ID: ${debtId})`,
+        currency: debtData.currency,
+        storeId,
+        userId: uid,
+        createdAt: Timestamp.now(),
+        notes: `Payment method: ${paymentMethod || "Cash"}`,
+        relatedDebtId: debtId,
+      });
+
+      // 3. Create activity log
+      const logRef = firestoreAdmin.collection("activity_logs").doc();
+      transaction.set(logRef, {
+        storeId,
+        userId: uid,
+        userName,
+        timestamp: Timestamp.now(),
+        actionType: "UPDATE",
+        collectionAffected: "debits",
+        details: `Recorded payment of ${formatCurrency(
+          paidAmount,
+          debtData.currency
+        )} for ${debtData.clientName}. New status: ${newStatus.toUpperCase()}`,
+      });
+
+      // 4. --- (NEW) Update the related Sale document ---
+      const relatedSaleId = debtData.relatedSaleId;
+      if (relatedSaleId) {
+        const saleRef = firestoreAdmin.collection("sales").doc(relatedSaleId);
+        const saleDoc = await transaction.get(saleRef);
+
+        if (saleDoc.exists) {
+          const saleData = saleDoc.data()!;
+
+          // Recalculate the sale's financial status
+          const newSaleAmountPaid = (saleData.amountPaid || 0) + paidAmount;
+          const newSaleDebtAmount = saleData.totalAmount - newSaleAmountPaid;
+          const newSaleStatus = newSaleDebtAmount <= 0.01 ? "paid" : "partial";
+
+          transaction.update(saleRef, {
+            amountPaid: newSaleAmountPaid,
+            debtAmount: newSaleDebtAmount,
+            status: newSaleStatus,
+            updatedAt: Timestamp.now(),
+          });
+        } else {
+          // If the sale was deleted, just log a warning but don't fail
+          console.warn(`Could not find related sale ${relatedSaleId} for debt ${debtId}`);
+        }
+      }
+    }); // --- End of Transaction ---
 
     return NextResponse.json({ success: true, status: newStatus });
 
@@ -184,7 +184,7 @@ export async function PUT(
 // -----------------------------------------------------------------------------
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> } // <-- FIX 1: Changed signature
 ) {
   if (!authAdmin || !firestoreAdmin) {
     return NextResponse.json(
@@ -195,7 +195,7 @@ export async function DELETE(
 
   try {
     const { storeId, uid, userName } = await getAuth(request);
-    const debtId = params.id;
+    const { id: debtId } = await params; // <-- FIX 2: Awaited params
 
     if (!debtId) {
       return NextResponse.json({ error: "Debt ID missing." }, { status: 400 });
@@ -211,9 +211,9 @@ export async function DELETE(
     const debtData = debtDoc.data()!;
     if (debtData.storeId !== storeId) {
       return NextResponse.json({ error: "Access denied." }, { status: 403 });
-    }
+   }
 
-    // --- (FIX) This must also be a transaction to handle the sale update ---
+    // --- (FIX) This must also be a transaction to handle the sale update ---
     const batch = firestoreAdmin.batch(); // A batch is fine for deletion
 
     // 1. Delete the debt
@@ -231,36 +231,36 @@ export async function DELETE(
       details: `Deleted debt for ${
         debtData.clientName
       } (${formatCurrency(debtData.totalAmount, debtData.currency)})`,
-      in: "DELETED", // This was in your original file, keeping it
-Tender: "DELETED", // This was in your original file, keeping it
+      in: "DELETED", // This was in your original file, keeping it
+      Tender: "DELETED", // This was in your original file, keeping it
     });
 
-    // 3. --- (NEW) Re-calculate the related Sale ---
-    // Deleting a debt implies the money is no longer owed.
-    // We must find the related sale and adjust its totals.
-    const relatedSaleId = debtData.relatedSaleId;
-    if (relatedSaleId) {
-      const saleRef = firestoreAdmin.collection("sales").doc(relatedSaleId);
-      const saleDoc = await saleRef.get(); // Get outside batch
-      
-      if (saleDoc.exists) {
-        const saleData = saleDoc.data()!;
-        
-        // This is tricky. If we delete a $30 debt,
-        // we should reduce the sale's totalAmount and debtAmount.
-        // This assumes deleting a debt is a "correction".
-        const newTotalAmount = saleData.totalAmount - debtData.totalAmount;
-        const newDebtAmount = saleData.debtAmount - debtData.totalAmount;
-        const newStatus = newDebtAmount <= 0.01 ? "paid" : "partial";
-        
-        batch.update(saleRef, {
-          totalAmount: newTotalAmount,
-          debtAmount: newDebtAmount,
-          status: newStatus,
-          notes: FieldValue.arrayUnion(`[System] Debt ${debtId} deleted by ${userName}`),
-        });
-      }
-    }
+    // 3. --- (NEW) Re-calculate the related Sale ---
+    // Deleting a debt implies the money is no longer owed.
+    // We must find the related sale and adjust its totals.
+    const relatedSaleId = debtData.relatedSaleId;
+    if (relatedSaleId) {
+      const saleRef = firestoreAdmin.collection("sales").doc(relatedSaleId);
+      const saleDoc = await saleRef.get(); // Get outside batch
+
+      if (saleDoc.exists) {
+        const saleData = saleDoc.data()!;
+
+        // This is tricky. If we delete a $30 debt,
+        // we should reduce the sale's totalAmount and debtAmount.
+        // This assumes deleting a debt is a "correction".
+        const newTotalAmount = saleData.totalAmount - debtData.totalAmount;
+      const newDebtAmount = saleData.debtAmount - debtData.totalAmount;
+        const newStatus = newDebtAmount <= 0.01 ? "paid" : "partial";
+
+        batch.update(saleRef, {
+          totalAmount: newTotalAmount,
+        debtAmount: newDebtAmount,
+          status: newStatus,
+          notes: FieldValue.arrayUnion(`[System] Debt ${debtId} deleted by ${userName}`),
+        });
+      }
+    }
 
     await batch.commit();
 
