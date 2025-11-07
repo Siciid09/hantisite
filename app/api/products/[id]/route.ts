@@ -35,20 +35,22 @@ async function checkAuth(request: NextRequest) {
 // =============================================================================
 export async function GET(
   request: NextRequest,
-  { params }: { params: { id: string } } // `id` is the productId
+  { params }: { params: Promise<{ id: string }> } // <-- FIX 1: Next.js 16 fix
 ) {
   if (!firestoreAdmin) {
     return NextResponse.json({ error: "Admin SDK not configured." }, { status: 500 });
   }
   
+  let productDoc: any; // <-- FIX 2: Declare productDoc here
+
   try {
     const { storeId } = await checkAuth(request);
-    const productId = params.id;
+    const { id: productId } = await params; // <-- FIX 1: Next.js 16 fix
     const db = firestoreAdmin;
 
     // 1. Get Product Details
     const productRef = db.collection("products").doc(productId);
-    const productDoc = await productRef.get();
+    productDoc = await productRef.get(); // <-- FIX 3: Assign value (no 'const')
 
     if (!productDoc.exists || productDoc.data()?.storeId !== storeId) {
       return NextResponse.json({ error: "Product not found." }, { status: 404 });
@@ -137,8 +139,8 @@ export async function GET(
     // Handle complex queries that might fail
     if (error.message.includes("array-contains")) {
       return NextResponse.json({
-         product: productDoc.data(), // Return partial data
-         kpis: { totalUnitsSold: 0, totalRevenueUsd: 0, currentStock: productDoc.data()?.quantity || 0 },
+         product: productDoc?.data(), // Now visible here
+         kpis: { totalUnitsSold: 0, totalRevenueUsd: 0, currentStock: productDoc?.data()?.quantity || 0 },
          salesHistory: [], // Return empty array
          adjustmentHistory: [],
          error: "Failed to query sales history. This query may require a composite index."

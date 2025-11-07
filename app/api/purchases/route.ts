@@ -413,6 +413,7 @@ export async function POST(request: NextRequest) {
           
           if (!productDoc || !productDoc.exists) throw new Error(`Product ${item.productName} not found`);
 
+         // --- NEW (FIXED) CODE (in POST) ---
           await performStockAdjustment(
             transaction,
             storeId,
@@ -424,7 +425,7 @@ export async function POST(request: NextRequest) {
             uid,
             userName,
             productDoc.data()!,
-            stockDoc?.data()
+            stockDoc?.data() as any // <-- ADDED 'as any'
           );
         }
       }

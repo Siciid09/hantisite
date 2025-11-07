@@ -964,7 +964,7 @@ const BreakdownChart = ({
           fill="#8884d8"
           paddingAngle={2}
           dataKey="value"
-          label={({ name, percent }) =>
+          label={({ name, percent }: any) => // <-- FIX HERE
             `${name} (${(percent * 100).toFixed(0)}%)`
           }
         >

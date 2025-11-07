@@ -2,9 +2,9 @@
 //
 // --- ISBEDELADA CUSUB ---
 // 1. (FIX) Lagu saxay TS18048 (possibly 'undefined') ee onPurchaseWriteUpdateSupplier
-//    iyadoo la hubinayo '.exists' ka hor inta aan la isticmaalin '.data()'.
+//    iyadoo la hubinayo '.exists' ka hor inta aan la isticmaalin '.data()'.
 // 2. (FIX) Lagu saxay TS18048 ee onSaleCreated, onDebitCreated, iyo onDebitUpdated
-//    iyadoo la hubinayo '.exists' iyo '.data()' si sax ah.
+//    iyadoo la hubinayo '.exists' iyo '.data()' si sax ah.
 // -----------------------------------------------------------------------------
 
 import { onSchedule } from "firebase-functions/v2/scheduler";
@@ -21,9 +21,9 @@ const db = admin.firestore();
 export const generateDailyReports = onSchedule({
   schedule: "every day 03:00",
   timeZone: "Africa/Mogadishu", // Set to your timezone
-}, async (event) => {
+}, async (event: any) => { // <-- FIX 1: Added 'event: any'
   
-  // (Kani waa sidii hore)
+  // (Kani waa sidii hore)
   console.log("Starting nightly aggregation...");
 
   const usersSnap = await db.collection("users").get();
@@ -122,13 +122,13 @@ async function aggregateProductKPIs(storeId: string) {
     kpis.totalProducts++;
     const qty = product.quantity || 0;
     if (qty <= 0) kpis.outOfStock++;
-    else if (qty <= (product.lowStockThreshold || 5)) kpis.lowStock++;
+  else if (qty <= (product.lowStockThreshold || 5)) kpis.lowStock++;
     const costPrices = product.costPrices || {};
     for (const currency in costPrices) {
       const cost = costPrices[currency] || 0;
       const value = cost * qty;
       kpis.stockValueMap.set(currency, (kpis.stockValueMap.get(currency) || 0) + value);
-    }
+ }
   });
 
   return {
@@ -156,22 +156,22 @@ async function aggregateFinanceTab(storeId: string, currency: string, startDate:
 // PATTERN 2: THE REAL-TIME TRIGGER FUNCTIONS (FIXED)
 // =============================================================================
 
-export const onPurchaseWriteUpdateSupplier = onDocumentWritten("purchases/{purchaseId}", async (event) => {
+export const onPurchaseWriteUpdateSupplier = onDocumentWritten("purchases/{purchaseId}", async (event: any) => { // <-- FIX 2: Added 'event: any'
   const change = event.data; 
   if (!change) {
-    console.log("onPurchaseWriteUpdateSupplier: No data change, exiting.");
-    return;
-  }
-  
-  // -- FIX: Si ammaan ah u hel 'data' adigoo hubinaya '.exists' --
+    console.log("onPurchaseWriteUpdateSupplier: No data change, exiting.");
+    return;
+  }
+  
+  // -- FIX: Si ammaan ah u hel 'data' adigoo hubinaya '.exists' --
   const beforeData = change.before.exists ? change.before.data() : undefined;
   const afterData = change.after.exists ? change.after.data() : undefined;
 
-  // -- FIX: Hubi in midkood 'before' ama 'after' uu jiro --
-  if (!beforeData && !afterData) {
-    console.log("onPurchaseWriteUpdateSupplier: No data before or after, exiting.");
-    return;
-  }
+  // -- FIX: Hubi in midkood 'before' ama 'after' uu jiro --
+  if (!beforeData && !afterData) {
+    console.log("onPurchaseWriteUpdateSupplier: No data before or after, exiting.");
+    return;
+  }
 
   const supplierId = afterData?.supplierId || beforeData?.supplierId;
   const storeId = afterData?.storeId || beforeData?.storeId; 
@@ -186,7 +186,7 @@ export const onPurchaseWriteUpdateSupplier = onDocumentWritten("purchases/{purch
     .where("supplierId", "==", supplierId)
     .get();
 
-  let totalOwed = 0;
+   let totalOwed = 0;
   let totalSpent = 0;
   purchasesSnap.forEach(doc => {
     const po = doc.data();
@@ -202,7 +202,7 @@ export const onPurchaseWriteUpdateSupplier = onDocumentWritten("purchases/{purch
   return supplierRef.update({ totalOwed, totalSpent });
 });
 
-export const onProductWriteUpdateKPIs = onDocumentWritten("products/{productId}", async (event) => {
+export const onProductWriteUpdateKPIs = onDocumentWritten("products/{productId}", async (event: any) => { // <-- FIX 3: Added 'event: any'
   console.log("Product written, nightly job will update KPIs.");
   return;
 });
@@ -211,134 +211,134 @@ export const onProductWriteUpdateKPIs = onDocumentWritten("products/{productId}"
 // *** CUSUB: REAL-TIME TRIGGERS FOR CUSTOMER KPIs (FIXED) ***
 // =============================================================================
 
-export const onSaleCreated = onDocumentWritten("sales/{saleId}", async (event) => {
-  // -- FIX: Hubi in 'event.data' uu jiro --
-  if (!event.data) {
-    console.log("onSaleCreated: No event data, exiting.");
-    return;
-  }
-  
-  // Kaliya shaqee marka document cusub la abuuro
-  // -- FIX: Hubi in 'after.exists' laakiin 'before' uusan jirin --
-  if (event.data.before.exists || !event.data.after.exists) {
-    return;
-  }
-  
-  const saleData = event.data.after.data();
-  if (!saleData) return;
+export const onSaleCreated = onDocumentWritten("sales/{saleId}", async (event: any) => { // <-- FIX 4: Added 'event: any'
+  // -- FIX: Hubi in 'event.data' uu jiro --
+  if (!event.data) {
+    console.log("onSaleCreated: No event data, exiting.");
+    return;
+  }
+  
+  // Kaliya shaqee marka document cusub la abuuro
+  // -- FIX: Hubi in 'after.exists' laakiin 'before' uusan jirin --
+  if (event.data.before.exists || !event.data.after.exists) {
+    return;
+  }
+  
+  const saleData = event.data.after.data();
+  if (!saleData) return;
 
-  const customerId = saleData.customerId;
-  const totalAmount = saleData.totalAmount || 0; 
-  const currency = saleData.invoiceCurrency;
+  const customerId = saleData.customerId;
+  const totalAmount = saleData.totalAmount || 0; 
+  const currency = saleData.invoiceCurrency;
 
-  if (!customerId || customerId === "walkin" || totalAmount === 0 || !currency) {
-    console.log("Skipping onSaleCreated: No customerId, walk-in, or zero amount.");
-    return;
-  }
+  if (!customerId || customerId === "walkin" || totalAmount === 0 || !currency) {
+    console.log("Skipping onSaleCreated: No customerId, walk-in, or zero amount.");
+    return;
+  }
 
-  const customerRef = db.collection("customers").doc(customerId);
+  const customerRef = db.collection("customers").doc(customerId);
 
-  try {
-    const fieldToUpdate = `totalSpent.${currency}`;
-    
-    await customerRef.update({
-      [fieldToUpdate]: admin.firestore.FieldValue.increment(totalAmount),
-      'lastActive': admin.firestore.FieldValue.serverTimestamp()
-    });
-    
-    console.log(`Updated totalSpent for customer ${customerId} by ${totalAmount} ${currency}`);
-  } catch (error) {
-    console.error(`Failed to update totalSpent for customer ${customerId}:`, error);
-  }
+  try {
+    const fieldToUpdate = `totalSpent.${currency}`;
+    
+    await customerRef.update({
+      [fieldToUpdate]: admin.firestore.FieldValue.increment(totalAmount),
+      'lastActive': admin.firestore.FieldValue.serverTimestamp()
+    });
+    
+    console.log(`Updated totalSpent for customer ${customerId} by ${totalAmount} ${currency}`);
+  } catch (error) {
+    console.error(`Failed to update totalSpent for customer ${customerId}:`, error);
+  }
 });
 
-export const onDebitCreated = onDocumentWritten("debits/{debitId}", async (event) => {
-  // -- FIX: Hubi in 'event.data' uu jiro --
-  if (!event.data) {
-    console.log("onDebitCreated: No event data, exiting.");
-    return;
-  }
-  
-  // Kaliya shaqee marka document cusub la abuuro
-  // -- FIX: Hubi in 'after.exists' laakiin 'before' uusan jirin --
-  if (event.data.before.exists || !event.data.after.exists) {
-    return;
-  }
+export const onDebitCreated = onDocumentWritten("debits/{debitId}", async (event: any) => { // <-- FIX 5: Added 'event: any'
+   // -- FIX: Hubi in 'event.data' uu jiro --
+  if (!event.data) {
+    console.log("onDebitCreated: No event data, exiting.");
+    return;
+  }
+  
+  // Kaliya shaqee marka document cusub la abuuro
+  // -- FIX: Hubi in 'after.exists' laakiin 'before' uusan jirin --
+  if (event.data.before.exists || !event.data.after.exists) {
+    return;
+  }
 
-  const debitData = event.data.after.data();
-  if (!debitData) return;
+  const debitData = event.data.after.data();
+  if (!debitData) return;
 
-  const customerId = debitData.customerId;
-  const amountOwed = debitData.amount || 0;
-  const currency = debitData.currency;
+  const customerId = debitData.customerId;
+  const amountOwed = debitData.amount || 0;
+  const currency = debitData.currency;
 
-  if (!customerId || customerId === "walkin" || amountOwed === 0 || !currency) {
-    console.log("Skipping onDebitCreated: No customerId, walk-in, or zero amount.");
-    return;
-  }
+  if (!customerId || customerId === "walkin" || amountOwed === 0 || !currency) {
+    console.log("Skipping onDebitCreated: No customerId, walk-in, or zero amount.");
+    return;
+  }
 
-  const customerRef = db.collection("customers").doc(customerId);
+  const customerRef = db.collection("customers").doc(customerId);
 
-  try {
-    const fieldToUpdate = `totalOwed.${currency}`;
-    
-    await customerRef.update({
-      [fieldToUpdate]: admin.firestore.FieldValue.increment(amountOwed)
-    });
-    
-    console.log(`Updated totalOwed for customer ${customerId} by ${amountOwed} ${currency}`);
-  } catch (error) {
-    console.error(`Failed to update totalOwed for customer ${customerId}:`, error);
-  }
+  try {
+    const fieldToUpdate = `totalOwed.${currency}`;
+    
+    await customerRef.update({
+      [fieldToUpdate]: admin.firestore.FieldValue.increment(amountOwed)
+    });
+    
+    console.log(`Updated totalOwed for customer ${customerId} by ${amountOwed} ${currency}`);
+  } catch (error) {
+    console.error(`Failed to update totalOwed for customer ${customerId}:`, error);
+  }
 });
 
-export const onDebitUpdated = onDocumentWritten("debits/{debitId}", async (event) => {
-  // -- FIX: Hubi in 'event.data' IYO before/after ay jiraan --
-  if (!event.data || !event.data.before.exists || !event.data.after.exists) {
-    console.log("onDebitUpdated: Event is not an update, exiting.");
-    return;
-  }
+export const onDebitUpdated = onDocumentWritten("debits/{debitId}", async (event: any) => { // <-- FIX 6: Added 'event: any'
+  // -- FIX: Hubi in 'event.data' IYO before/after ay jiraan --
+  if (!event.data || !event.data.before.exists || !event.data.after.exists) {
+    console.log("onDebitUpdated: Event is not an update, exiting.");
+    return;
+  }
 
-  // Hadda waa ammaan in la isticmaalo
-  const beforeData = event.data.before.data();
-  const afterData = event.data.after.data();
+  // Hadda waa ammaan in la isticmaalo
+  const beforeData = event.data.before.data();
+  const afterData = event.data.after.data();
 
-  // -- FIX: Hubi in 'data' uusan 'undefined' ahayn (inkastoo 'exists' la hubiyay) --
-  if (!beforeData || !afterData) {
-      console.log("onDebitUpdated: Data is missing, exiting.");
-      return;
-  }
+  // -- FIX: Hubi in 'data' uusan 'undefined' ahayn (inkastoo 'exists' la hubiyay) --
+  if (!beforeData || !afterData) {
+      console.log("onDebitUpdated: Data is missing, exiting.");
+      return;
+  }
 
-  // Hubi haddii deynta hadda la bixiyay ama la 'void'-gareeyay
-  const justPaid = beforeData.status !== 'paid' && afterData.status === 'paid';
-  const justVoided = beforeData.status !== 'voided' && afterData.status === 'voided';
-  
-  if (!justPaid && !justVoided) {
-    return; // Waxba iskama beddelin xaaladda (status)
-  }
+  // Hubi haddii deynta hadda la bixiyay ama la 'void'-gareeyay
+  const justPaid = beforeData.status !== 'paid' && afterData.status === 'paid';
+  const justVoided = beforeData.status !== 'voided' && afterData.status === 'voided';
+  
+  if (!justPaid && !justVoided) {
+    return; // Waxba iskama beddelin xaaladda (status)
+   }
 
-  const customerId = afterData.customerId;
-  const amount = afterData.amount || 0;
-  const currency = afterData.currency;
-  
-  const amountToDecrease = -amount;
+  const customerId = afterData.customerId;
+  const amount = afterData.amount || 0;
+  const currency = afterData.currency;
+  
+  const amountToDecrease = -amount;
 
-  if (!customerId || customerId === "walkin" || amount === 0 || !currency) {
-    console.log("Skipping onDebitUpdated: No customerId, walk-in, or zero amount.");
-    return;
-  }
-  
-  const customerRef = db.collection("customers").doc(customerId);
+  if (!customerId || customerId === "walkin" || amount === 0 || !currency) {
+    console.log("Skipping onDebitUpdated: No customerId, walk-in, or zero amount.");
+   return;
+  }
+  
+  const customerRef = db.collection("customers").doc(customerId);
 
-  try {
-    const fieldToUpdate = `totalOwed.${currency}`;
-    
-    await customerRef.update({
-      [fieldToUpdate]: admin.firestore.FieldValue.increment(amountToDecrease)
-    });
-    
-    console.log(`Decreased totalOwed for customer ${customerId} by ${amount} ${currency}`);
-  } catch (error) {
-    console.error(`Failed to decrease totalOwed for customer ${customerId}:`, error);
-  }
+  try {
+    const fieldToUpdate = `totalOwed.${currency}`;
+    
+    await customerRef.update({
+      [fieldToUpdate]: admin.firestore.FieldValue.increment(amountToDecrease)
+    });
+    
+    console.log(`Decreased totalOwed for customer ${customerId} by ${amount} ${currency}`);
+  } catch (error) {
+    console.error(`Failed to decrease totalOwed for customer ${customerId}:`, error);
+  }
 });

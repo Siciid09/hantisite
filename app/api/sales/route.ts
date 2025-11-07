@@ -134,13 +134,15 @@ export async function POST(request: NextRequest) {
         if (!productDoc.exists) {
           throw new Error(`Product not found: ${item.productName}`);
         }
-        
         const productData = productDoc.data();
         
         // Check stock
         const currentStock = productData?.quantity || 0;
-        if (currentStock < item.quantity) {
-          throw new Error(`Not enough stock for ${productData.name}. Available: ${currentStock}`);
+        
+        // --- FIX 1: Check 'quantity', not 'stock' ---
+        if (currentStock < item.quantity) { 
+          // --- FIX 2: Add '?' to productData.name ---
+          throw new Error(`Not enough stock for ${productData?.name}. Available: ${currentStock}`);
         }
 
         // Get price
@@ -150,10 +152,10 @@ export async function POST(request: NextRequest) {
           if (item.pricePerUnit) {
             pricePerUnit = item.pricePerUnit; // Trust manual price
           } else {
+            // This line is already correct!
             throw new Error(`Price for ${productData?.name} in ${invoiceCurrency} is not set.`);
           }
         }
-        
         const subtotal = (pricePerUnit * item.quantity) * (1 - (item.discount || 0) / 100);
         const itemCostUsd = (productData?.costPrices?.USD || 0) * item.quantity;
         

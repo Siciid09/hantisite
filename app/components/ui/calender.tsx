@@ -109,14 +109,21 @@ function Calendar({
         day_hidden: "invisible",
         ...classNames,
       }}
+    // --- NEW (FIXED) CODE ---
+     // --- NEW (FIXED) CODE ---
       components={{
-        IconLeft: ({ ...props }) => <ChevronLeft className="h-5 w-5" />,
-        IconRight: ({ ...props }) => <ChevronRight className="h-5 w-5" />,
+        Chevron: ({ orientation, ...props }) => {
+          if (orientation === "left") {
+            return <ChevronLeft className="h-5 w-5" {...props} />;
+          }
+          if (orientation === "right") {
+            return <ChevronRight className="h-5 w-5" {...props} />;
+          }
+          // Return an empty fragment, which is a valid React Element
+          return <></>; 
+        },
       }}
       {...props}
     />
   )
 }
-Calendar.displayName = "Calendar"
-
-export { Calendar }

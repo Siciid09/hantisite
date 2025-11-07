@@ -403,8 +403,8 @@ function ReportDownloadPopover({ formData, formIsLoading }: {
   };
 
   return (
-    <Popover className="relative inline-block w-full text-left sm:w-auto">
-      <PopoverTrigger asChild>
+    <Popover>
+    <PopoverTrigger asChild>
         <Button
           variant="outline"
           className="flex w-full items-center justify-center gap-2 border-gray-300 bg-white dark:border-gray-600 dark:bg-gray-700"
@@ -423,8 +423,8 @@ function ReportDownloadPopover({ formData, formIsLoading }: {
               Select Report Period
             </label>
             {/* Kani waa component-ka casriga ah ee aad rabtay */}
-            <NewDateRangePicker
-              date={reportRange ? { from: reportRange.from, to: reportRange.to } : undefined}
+           <NewDateRangePicker
+              date={reportRange}
               onApply={setReportRange} // Wuxuu si toos ah u cusbooneysiinayaa 'reportRange' state
             />
           </div>
@@ -1210,12 +1210,13 @@ const FormSelect = ({ label, name, children, ...props }: any) => (
 
 
 // --- Modern Date Range Picker (with Presets moved) ---
+// --- NEW (FIXED) CODE ---
 function NewDateRangePicker({
   date,
   onApply,
   className,
 }: {
-  date: { from: Date, to: Date };
+  date: DateRange | undefined; // <-- Use the imported DateRange type
   onApply: (date: DateRange | undefined) => void;
   className?: string;
 }) {

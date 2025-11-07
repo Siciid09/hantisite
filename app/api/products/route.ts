@@ -234,7 +234,7 @@ export async function POST(request: NextRequest) {
         await batch.commit();
         
         // Return JSON to fix the error
-        return NextResponse.json({ id: productId, ...productData }, { status: 201 });
+       return NextResponse.json(productData, { status: 201 });
       }
       // Add other types from your app (e.g., category, warehouse)
       case "category":
