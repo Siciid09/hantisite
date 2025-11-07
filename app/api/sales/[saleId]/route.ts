@@ -8,6 +8,7 @@
 //      restocking products, creating an expense, and voiding the debit).
 //    - This fixes the "reads must be before writes" error.
 // 2. (FIX) Includes Zod and TS '?' fixes from your original file.
+// 3. (FIX) Applied Next.js 16 `await params` fix to GET, PUT, and DELETE.
 // -----------------------------------------------------------------------------
 
 import { NextResponse, NextRequest } from "next/server";
@@ -64,7 +65,7 @@ async function checkAuth(
 // =============================================================================
 export async function GET(
   request: NextRequest,
-  { params }: { params: { saleId: string } }
+  { params }: { params: Promise<{ saleId: string }> } // <-- FIX 1
 ) {
   if (!firestoreAdmin) {
     return NextResponse.json({ error: "Admin SDK not configured." }, { status: 500 });
@@ -73,7 +74,7 @@ export async function GET(
   try {
     // All users can VIEW a sale
     const { storeId } = await checkAuth(request, ['admin', 'manager', 'user']);
-    const saleId = params.saleId;
+    const { saleId } = await params; // <-- FIX 2
 
     const docRef = firestoreAdmin.collection("sales").doc(saleId);
     const doc = await docRef.get();
@@ -106,7 +107,7 @@ export async function GET(
 // =============================================================================
 export async function PUT(
   request: NextRequest,
-  { params }: { params: { saleId: string } }
+  { params }: { params: Promise<{ saleId: string }> } // <-- FIX 1
 ) {
   if (!firestoreAdmin) {
     return NextResponse.json({ error: "Admin SDK not configured." }, { status: 500 });
@@ -115,7 +116,7 @@ export async function PUT(
   try {
     // Only 'admin' and 'manager' can UPDATE a sale
     const { storeId } = await checkAuth(request, ['admin', 'manager']);
-    const saleId = params.saleId;
+    const { saleId } = await params; // <-- FIX 2
     
     // Validate body
     const body = await request.json();
@@ -152,7 +153,7 @@ export async function PUT(
 // =============================================================================
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: { saleId: string } }
+  { params }: { params: Promise<{ saleId: string }> } // <-- FIX 1
 ) {
   if (!firestoreAdmin) {
     return NextResponse.json({ error: "Admin SDK not configured." }, { status: 500 });
@@ -161,7 +162,7 @@ export async function DELETE(
   try {
     // Only 'admin' and 'manager' can DELETE (void) a sale
     const { storeId, uid, userName } = await checkAuth(request, ['admin', 'manager']);
-    const saleId = params.saleId;
+    const { saleId } = await params; // <-- FIX 2
 
     const saleRef = firestoreAdmin.collection("sales").doc(saleId);
 
