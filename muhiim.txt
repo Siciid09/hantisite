@@ -1,0 +1,204 @@
+products >>>>>>>>>>>>>>>
+edit no amount
+requirement problem
+>>>>>>>
+
+sales>>>>>
+requiremtns removement
+>> this month not reading from dash
+>>amount and payment undefined
+refund ## Error Type
+Console Error
+
+## Error Message
+Firestore transactions require all reads to be executed before all writes.
+
+
+    at handleSaveSale (app/(main)/sales/new/page.tsx:554:58)
+
+## Code Frame
+  552 |       });
+  553 |
+> 554 |       if (!res.ok) { const err = await res.json(); throw new Error(err.error || "Failed to save sale."); }
+      |                                                          ^
+  555 |       const data = await res.json(); // Server returns the final, calculated sale
+  556 |       
+  557 |       if (action === 'save_print') {
+
+Next.js version: 16.0.0 (Turbopack)
+
+
+>>sales still show refunded
+doesnt show debt sales
+>>dashboard takes time to update the status
+
+
+dashboar:::
+
+doesnt show total sales,,
+doesnt show debt sales
+doesnt create add income and exp
+no sales data
+
+products
+>>ading new product should have manaul create new add categry and ware house which also saves to categery and warehouse
+>>
+
+
+purchases>>>
+form should user fredinly modern 
+supplier and warehouse should ave create new buttons which creates new 
+there should be place to upload image of invoice or pdf 
+status draft receved order xompleed
+	Item Name	Category	Quantity	Unit	Unit Price	Discount (%)	Tax (%)	Total
+1	Dropdown/Search	Auto-fill category	Input	Dropdown (pcs, kg, etc.)	Input	Input	Auto / Input	Auto (calculated
+"Was this purchase paid from store cash?"
+[Yes / No]
+If “Yes,” the amount will be deducted from your store’s balance.
+report not complete dowload
+total pending show 00 it should show amoutn left 
+## Error Type
+Console Error
+
+## Error Message
+Encountered two children with the same key, `4Tj1fwL963a3bjHNfJBY`. Keys should be unique so that components maintain their identity across updates. Non-unique keys may cause children to be duplicated and/or omitted — the behavior is unsupported and could change in a future version.
+
+
+    at div (<anonymous>:null:null)
+    at <unknown> (app/(main)/purchases/page.tsx:832:15)
+    at Array.map (<anonymous>:null:null)
+    at AddPurchaseModal (app/(main)/purchases/page.tsx:831:19)
+    at PurchasesPage (app/(main)/purchases/page.tsx:315:9)
+    at PurchasesPageWrapper (app/(main)/purchases/page.tsx:118:7)
+
+## Code Frame
+  830 |           <div className="max-h-40 overflow-y-auto space-y-2">
+  831 |             {cart.map(item => (
+> 832 |               <div key={item.productId} className="flex items-center justify-between rounded bg-gray-50 p-2 dark:bg-gray-700">
+      |               ^
+  833 |                 <div>
+  834 |                   <p className="font-medium dark:text-white">{item.productName}</p>
+  835 |                   <p className="text-sm text-gray-500 dark:text-gray-400">{item.quantity} x {formatCurrency(item.costPrice, currency)}</p>
+
+Next.js version: 16.0.0 (Turbopack)
+## Error Type
+Console Error
+
+## Error Message
+Encountered two children with the same key, `4Tj1fwL963a3bjHNfJBY`. Keys should be unique so that components maintain their identity across updates. Non-unique keys may cause children to be duplicated and/or omitted — the behavior is unsupported and could change in a future version.
+
+
+    at tr (<anonymous>:null:null)
+    at <unknown> (app/(main)/purchases/page.tsx:1090:19)
+    at Array.map (<anonymous>:null:null)
+    at ViewPurchaseModal (app/(main)/purchases/page.tsx:1089:33)
+    at PurchasesPage (app/(main)/purchases/page.tsx:332:9)
+    at PurchasesPageWrapper (app/(main)/purchases/page.tsx:118:7)
+
+## Code Frame
+  1088 |               <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
+  1089 |                 {purchase.items.map((item: any) => (
+> 1090 |                   <tr key={item.productId}>
+       |                   ^
+  1091 |                     <td className="py-2 pl-4 text-sm font-medium dark:text-white">{item.productName}</td>
+  1092 |                     <td className="px-2 py-2 text-sm dark:text-gray-300">{item.quantity}</td>
+  1093 |                     <td className="px-2 py-2 text-sm dark:text-gray-300">{formatCurrency(item.costPrice, currency)}</td>
+
+Next.js version: 16.0.0 (Turbopack)
+||
+
+suppliers???????????>>>>>>>>>>>>>>>>>
+
+errroooor ## Error Type
+Console Error
+
+## Error Message
+Firestore transactions require all reads to be executed before all writes.
+
+
+    at handleSaveSale (app/(main)/sales/new/page.tsx:554:58)
+
+## Code Frame
+  552 |       });
+  553 |
+> 554 |       if (!res.ok) { const err = await res.json(); throw new Error(err.error || "Failed to save sale."); }
+      |                                                          ^
+  555 |       const data = await res.json(); // Server returns the final, calculated sale
+  556 |       
+  557 |       if (action === 'save_print') {
+
+Next.js version: 16.0.0 (Turbopack)
+
+purchase auto show an amount but filter makes show 00
+
+
+income expenses::
+
+payment methopad error show no AN unknown
+paymet methods like zadd show rror Loading Financial Data
+Invalid tab: Payments
+
+Overview
+Income
+Expenses
+Payments & Currencies
+Cash Flow
+Reports
+Payment Method Balances
+Estimated balance (Income - Expenses) for each method in this period.
+
+Cash Balance
+N/A
+
+Zaad Balance
+N/A
+
+eDahab Balance
+N/A
+
+Bank Balance
+N/A
+
+report???????????????>>>>>>>>>>>>>>
+
+sales show no data 
+icome shows income even with expeses 
+
+debts show 00 even 
+
+error >>> ## Error Type
+Console Error
+
+## Error Message
+Fetch error details: {}
+
+
+    at fetcher (app/(main)/finance/page.tsx:86:13)
+
+## Code Frame
+  84 |       errorBody = { error: `API Error: ${res.status}` };
+  85 |     }
+> 86 |     console.error("Fetch error details:", errorBody);
+     |             ^
+  87 |     throw new Error(errorBody.error || `API Error: ${res.status}`);
+  88 |   }
+  89 |   return res.json();
+
+Next.js version: 16.0.0 (Turbopack)
+
+
+debts>?????????????????????????>>>>>>>>>>>>>>>>>>>>>>
+
+table shows the debts from sales but not show the amount 
+
+
+
+
+
+custom eb adds new debt but not showing in report 
+
+
+sales new 
+
+form should show hidden phone number whatsapp number with check and if not show whatsapp umber
+

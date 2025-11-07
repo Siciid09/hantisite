@@ -36,7 +36,7 @@ async function checkAuth(request: NextRequest) {
 // =============================================================================
 export async function GET(
   request: NextRequest,
-  { params }: { params: { id: string } } // `id` is the customerId
+  context: { params: { id: string } } // <-- FIX 1: Changed from {params} to context
 ) {
   if (!firestoreAdmin) {
     return NextResponse.json({ error: "Admin SDK not configured." }, { status: 500 });
@@ -44,7 +44,7 @@ export async function GET(
   
   try {
     const { storeId } = await checkAuth(request);
-    const customerId = params.id;
+    const customerId = context.params.id; // <-- FIX 2: Changed from params.id
     const db = firestoreAdmin;
 
     // 1. Get Customer Details (This now contains our KPIs)

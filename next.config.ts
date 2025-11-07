@@ -1,8 +1,12 @@
-import type { NextConfig } from "next";
-
-
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  reactStrictMode: true, // enable strict mode
+  typescript: {
+    ignoreBuildErrors: false, // ❌ show all TS errors
+  },
+  eslint: {
+    ignoreDuringBuilds: false, // ❌ show all ESLint errors
+  },
   images: {
     remotePatterns: [
       {
@@ -16,11 +20,3 @@ const nextConfig = {
 };
 
 module.exports = nextConfig;
-
-
-
-
-
-
-
-export default nextConfig;
