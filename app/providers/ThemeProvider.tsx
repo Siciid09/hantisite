@@ -12,7 +12,7 @@ const ThemeProviderWrapper: React.FC<Props> = ({ children }) => {
     <ThemeProvider
       {...({ children } as ThemeProviderProps)} // ✅ Type cast fix
       attribute="class"
-      defaultTheme="light"
+      defaultTheme="system"
       enableSystem={false}
     />
   );
