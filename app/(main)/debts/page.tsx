@@ -786,7 +786,7 @@ const AddDebtModal = ({ onClose, onSuccess, defaultCurrency, debtToEdit }: any) 
       
       const payload = {
         ...formData,
-        tags: formData.tags.split(',').map(t => t.trim()).filter(Boolean), // Convert string to array
+        tags: formData.tags.split(',').map((t: string) => t.trim()).filter(Boolean), // Convert string to array
       };
       
       const res = await fetch("/api/debts", { // Assumes API route is /api/debts

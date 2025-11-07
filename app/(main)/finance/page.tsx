@@ -856,11 +856,12 @@ const KpiCard = ({
   className?: string;
   tooltip?: string;
 }) => (
-  <Card className={`flex-1 ${className}`} title={tooltip}>
-    <div className="flex items-center justify-between">
-      <span className="text-sm font-medium text-gray-500 dark:text-gray-400">
-        {title}
-      </span>
+  <Card className={`flex-1 ${className}`}>
+  {/* Move the 'title' attribute here for the tooltip */}
+  <div className="flex items-center justify-between" title={tooltip}>
+    <span className="text-sm font-medium text-gray-500 dark:text-gray-400">
+      {title}
+    </span>
       <Icon className={`h-5 w-5 ${color}`} />
     </div>
     {isLoading ? (

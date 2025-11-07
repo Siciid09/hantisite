@@ -302,6 +302,7 @@ function TicketChatView({ ticketId, onBack }: { ticketId: string, onBack: () => 
           text: replyText,
         }),
       });
+
       setReplyText("");
       mutate(); // Re-fetch messages
     } catch (err: any) {
@@ -323,7 +324,7 @@ function TicketChatView({ ticketId, onBack }: { ticketId: string, onBack: () => 
           {isLoading && <TableLoader />}
           {error && <ErrorDisplay error={error} />}
           {data?.map((msg: any) => {
-            const isUser = msg.senderId === user.uid;
+          const isUser = msg.senderId === user?.uid;
             // Admin senderId might be different, e.g., 'admin_user_id'
             // For now, we assume if it's not the user, it's admin/support
             return (
