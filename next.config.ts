@@ -1,9 +1,9 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  reactStrictMode: true, // enable React strict mode
+  reactStrictMode: true,
   typescript: {
-    // ✅ ignore TypeScript errors during build
-    ignoreBuildErrors: true
+    // ✅ completely ignore TypeScript errors during build
+    ignoreBuildErrors: true,
   },
   images: {
     remotePatterns: [
