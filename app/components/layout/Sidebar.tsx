@@ -114,10 +114,10 @@ const Sidebar: React.FC<SidebarProps> = ({
               }`}
             >
               <span className="name text-base font-semibold text-gray-900 dark:text-white whitespace-nowrap">
-                Hantikaab
+                HantiKaab
               </span>
               <span className="profession text-xs font-normal text-gray-600 dark:text-gray-400 block -mt-0.5 whitespace-nowrap">
-                POS System
+                BizPOS System
               </span>
             </div>
           </div>
