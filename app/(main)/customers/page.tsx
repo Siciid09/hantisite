@@ -1,9 +1,4 @@
 // File: app/(main)/customers/page.tsx
-//
-// --- LATEST UPDATE ---
-// 1. (FIX) Imported the `Link` component from `next/link`.
-// 2. (FIX) In `CustomerListTab`, the customer's name `<td>` is now a
-//    <Link> component pointing to `/customers/[id]`.
 // 3. (FIX) This page is no longer a "dead-end."
 // -----------------------------------------------------------------------------
 "use client";
