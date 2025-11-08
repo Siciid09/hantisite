@@ -114,15 +114,23 @@ const LoginPage = () => {
       <div className="flex items-center justify-center p-8 bg-white dark:bg-gray-900">
         <div className="max-w-md w-full space-y-8">
           
-          {/* Mobile-only Logo */}
-          <div className="md:hidden flex justify-center">
-             <div className="flex items-center space-x-2">
-                <div className="p-3 bg-blue-600/20 dark:bg-blue-500/20 rounded-xl">
-                  <ShieldCheck className="w-8 h-8 text-blue-600 dark:text-blue-400" />
-                </div>
-                <span className="text-3xl font-bold text-gray-900 dark:text-white">Hantikaab</span>
-              </div>
-          </div>
+         {/* Mobile-only Logo */}
+<div className="md:hidden flex justify-center">
+  <div className="flex items-center space-x-2">
+    <div className="w-12 h-12 bg-white rounded-lg flex items-center justify-center shadow-md p-1">
+      <Image
+        src="/logo1.png"       // ✅ Path to your logo1 in public folder
+        alt="Hantikaab Logo"
+        width={40}
+        height={40}
+        className="object-contain"
+        priority
+      />
+    </div>
+    <span className="text-3xl font-bold text-gray-900 dark:text-white">Hantikaab</span>
+  </div>
+</div>
+
 
           <div>
             <h2 className="text-3xl font-extrabold text-center text-gray-900 dark:text-white">
