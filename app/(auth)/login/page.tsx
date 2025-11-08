@@ -23,7 +23,7 @@ const Logo = () => (
         priority
       />
     </div>
-    <span className="text-3xl font-bold text-white">Hantikaab BizPOS</span>
+    <span className="text-3xl font-bold text-white">HantiKaab BizPOS</span>
   </div>
 );
 
@@ -99,7 +99,7 @@ const LoginPage = () => {
         </div>
         <div>
           <h1 className="text-4xl font-bold leading-tight mb-4">
-            Welcome Back to Hantikaab
+            Welcome Back to HantiKaab
           </h1>
           <p className="text-lg text-blue-100">
            The all-in-one Business Management Platform to centralize your operations.
@@ -127,7 +127,7 @@ const LoginPage = () => {
         priority
       />
     </div>
-    <span className="text-3xl font-bold text-gray-900 dark:text-white">Hantikaab</span>
+    <span className="text-3xl font-bold text-gray-900 dark:text-white">HantiKaab</span>
   </div>
 </div>
 
