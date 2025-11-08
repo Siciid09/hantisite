@@ -1,8 +1,8 @@
-// File: app/(main)/Sidebar.tsx (MODIFIED VERSION)
 "use client";
 
 import React, { useState } from "react";
 import Link from "next/link";
+import Image from "next/image"; // ✅ For logo
 import { usePathname, useRouter } from "next/navigation";
 import {
   BiChevronRight,
@@ -21,11 +21,10 @@ import {
   BiHelpCircle,
   BiWallet,
 } from "react-icons/bi";
-import { X } from "lucide-react"; // <-- 1. IMPORT X icon for mobile close
-import { auth } from "@/lib/firebaseConfig"; // Make sure this path is correct
+import { X } from "lucide-react";
+import { auth } from "@/lib/firebaseConfig";
 import { signOut } from "firebase/auth";
 
-// --- (menuItems array is unchanged) ---
 const menuItems = [
   { name: "Dashboard", icon: BiSolidDashboard, href: "/dashboard", targetId: "dashboard" },
   { name: "Sales Management", icon: BiShoppingBag, href: "/sales", targetId: "sales" },
@@ -42,16 +41,13 @@ const menuItems = [
   { name: "Debts", icon: BiWallet, href: "/debts", targetId: "debts" },
 ];
 
-// --- 2. THIS IS THE FIX ---
-// The interface now accepts the new mobile props
 interface SidebarProps {
-  isClosed: boolean;         // For desktop (72px vs 250px)
-  toggleSidebar: () => void; // For desktop toggle
-  isMobileOpen: boolean;     // For mobile (overlay state)
-  onCloseMobile: () => void; // For mobile close button
+  isClosed: boolean;
+  toggleSidebar: () => void;
+  isMobileOpen: boolean;
+  onCloseMobile: () => void;
 }
 
-// --- 3. UPDATE THE COMPONENT PROPS ---
 const Sidebar: React.FC<SidebarProps> = ({
   isClosed,
   toggleSidebar,
@@ -62,7 +58,6 @@ const Sidebar: React.FC<SidebarProps> = ({
   const router = useRouter();
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
 
-  // ... (handleLogout, confirmLogout, cancelLogout are unchanged) ...
   const handleLogout = () => setShowLogoutConfirm(true);
   const cancelLogout = () => setShowLogoutConfirm(false);
   const confirmLogout = async () => {
@@ -75,11 +70,9 @@ const Sidebar: React.FC<SidebarProps> = ({
     setShowLogoutConfirm(false);
   };
 
-
   return (
     <>
-      {/* --- 4. ADD OVERLAY BACKDROP FOR MOBILE --- */}
-      {/* This darkens the background on mobile when the sidebar is open */}
+      {/* Mobile overlay */}
       {isMobileOpen && (
         <div
           className="fixed inset-0 z-40 bg-black/50 backdrop-blur-sm md:hidden"
@@ -87,32 +80,36 @@ const Sidebar: React.FC<SidebarProps> = ({
         ></div>
       )}
 
-      {/* --- 5. UPDATE THE NAV CLASSES FOR MOBILE --- */}
       <nav
         className={`
           sidebar fixed top-0 left-0 h-full z-50 
           bg-white dark:bg-gray-800 
           text-gray-900 dark:text-white 
           transition-all duration-300 ease-in-out 
-          
-          // Mobile classes:
           ${isMobileOpen ? "translate-x-0" : "-translate-x-full"}
-          
-          // Desktop classes:
           md:translate-x-0 
           ${isClosed ? "w-[72px]" : "w-[250px]"}
         `}
       >
+        {/* --- HEADER WITH LOGO --- */}
         <header className="relative py-[10px] px-[10px] border-b border-gray-200 dark:border-gray-700">
           <div className="image-text flex items-center">
+            {/* ✅ Logo image with white bg and rounded corners */}
             <span className="image flex items-center justify-center min-w-[50px] px-1">
-              <span className="logo-letters text-lg font-semibold bg-blue-50 text-blue-500 dark:bg-blue-900 dark:text-blue-300 w-10 h-10 flex items-center justify-center rounded-md transition-colors duration-300">
-                HK
-              </span>
+              <div className="w-10 h-10 bg-white rounded-md flex items-center justify-center shadow-sm transition-colors duration-300">
+                <Image
+                  src="/logo1.png"
+                  alt="Hantikaab Logo"
+                  width={32}
+                  height={32}
+                  className="object-contain"
+                  priority
+                />
+              </div>
             </span>
+
             <div
               className={`text logo-text flex flex-col transition-all duration-300 ease-in-out ${
-                // Use 'isClosed' for the desktop text
                 isClosed ? "opacity-0 scale-0 w-0" : "opacity-100 scale-100 w-auto"
               }`}
             >
@@ -125,19 +122,19 @@ const Sidebar: React.FC<SidebarProps> = ({
             </div>
           </div>
 
-          {/* --- 6. HIDE DESKTOP TOGGLE ON MOBILE --- */}
+          {/* Desktop toggle */}
           <BiChevronRight
             className={`
               toggle absolute top-1/2 -right-[25px] transform -translate-y-1/2 
               h-[25px] w-[25px] bg-blue-500 text-white rounded-full 
               cursor-pointer transition-transform duration-300 ease-in-out
-              hidden md:block // <-- Hides on mobile
+              hidden md:block
               ${isClosed ? "rotate-0" : "rotate-180"}
             `}
             onClick={toggleSidebar}
           />
-          
-          {/* --- 7. ADD MOBILE CLOSE BUTTON --- */}
+
+          {/* Mobile close button */}
           <button
             className="absolute top-3 right-3 text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-white md:hidden"
             onClick={onCloseMobile}
@@ -147,7 +144,7 @@ const Sidebar: React.FC<SidebarProps> = ({
           </button>
         </header>
 
-        {/* --- The rest of the file is unchanged --- */}
+        {/* --- Menu --- */}
         <div className="menu-bar h-[calc(100%-70px)] flex flex-col justify-between overflow-y-hidden pt-2.5">
           <div className="flex-grow flex flex-col min-h-0">
             <div className="menu flex-grow overflow-y-auto mt-5 px-[10px]">
@@ -157,11 +154,7 @@ const Sidebar: React.FC<SidebarProps> = ({
                     pathname === item.href ||
                     (item.href !== "/" && pathname.startsWith(item.href));
                   return (
-                    <li
-                      key={item.name}
-                      title={isClosed ? item.name : ""}
-                      className={`nav-link list-none mb-1.25`}
-                    >
+                    <li key={item.name} title={isClosed ? item.name : ""}>
                       <Link
                         href={item.href}
                         className={`h-[50px] flex items-center rounded-md transition-all duration-300 ease-in-out group relative overflow-hidden hover:bg-blue-500 ${
@@ -193,6 +186,7 @@ const Sidebar: React.FC<SidebarProps> = ({
               </ul>
             </div>
           </div>
+
           <div className="bottom-content pt-2.5 border-t border-gray-200 dark:border-gray-700 px-[10px]">
             <ul className="p-0">
               <li className="logout-link list-none mb-1.25" title={isClosed ? "Logout" : ""}>
@@ -219,9 +213,9 @@ const Sidebar: React.FC<SidebarProps> = ({
         </div>
       </nav>
 
-      {/* Logout Confirmation Modal (unchanged) */}
+      {/* --- Logout modal moved outside sidebar for full-screen --- */}
       {showLogoutConfirm && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black bg-opacity-50 backdrop-blur-sm transition-opacity duration-200">
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black bg-opacity-50 backdrop-blur-sm transition-opacity duration-200">
           <div className="bg-white dark:bg-gray-800 p-6 rounded-lg shadow-xl max-w-sm w-full mx-4 transform transition-all duration-300 scale-100">
             <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">
               Confirm Logout

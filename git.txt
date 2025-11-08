@@ -1,0 +1,11 @@
+# Go to your project folder
+cd C:\FProjects\hantisite\hantikaab
+
+# Stage all changes (new, modified, deleted)
+git add -A
+
+# Commit with a message
+git commit -m "Update whole project"
+
+# Push to GitHub
+git push origin main

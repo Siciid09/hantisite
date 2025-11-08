@@ -1,42 +1,69 @@
-// File: app/(main)/Header.tsx (A NEW file you must create)
 "use client";
 
-import React from "react";
-import { Menu } from "lucide-react"; // Using lucide like your other files
+import React, { useState } from "react";
 import Link from "next/link";
+import Image from "next/image";
 
 interface HeaderProps {
   onMenuToggle: () => void;
 }
 
 const Header: React.FC<HeaderProps> = ({ onMenuToggle }) => {
+  const [open, setOpen] = useState(false);
+
+  const toggleMenu = () => {
+    setOpen(!open);
+    onMenuToggle();
+  };
+
   return (
     <header
       className="
         sticky top-0 z-40 
-        flex md:hidden // <-- IMPORTANT: Only shows on mobile (hidden on md:)
+        flex md:hidden 
         items-center justify-between 
         h-16 px-4 
-        bg-white dark:bg-gray-800 
-        border-b border-gray-200 dark:border-gray-700
+        bg-white dark:bg-gray-900 
+        border-b border-gray-200 dark:border-gray-800
       "
     >
-      {/* Hamburger Icon Button */}
+      {/* --- Animated Hamburger Icon --- */}
       <button
-        onClick={onMenuToggle}
-        className="text-gray-600 dark:text-gray-300"
-        aria-label="Open sidebar"
+        onClick={toggleMenu}
+        aria-label="Toggle menu"
+        className="relative flex flex-col justify-center w-8 h-8 focus:outline-none group"
       >
-        <Menu className="h-6 w-6" />
+        <span
+          className={`h-0.5 w-6 rounded bg-gray-700 dark:bg-gray-200 transform transition duration-300 ease-in-out ${
+            open ? "rotate-45 translate-y-1.5" : ""
+          }`}
+        />
+        <span
+          className={`h-0.5 w-6 rounded bg-gray-700 dark:bg-gray-200 my-1 transition-all duration-300 ease-in-out ${
+            open ? "opacity-0" : "opacity-100"
+          }`}
+        />
+        <span
+          className={`h-0.5 w-6 rounded bg-gray-700 dark:bg-gray-200 transform transition duration-300 ease-in-out ${
+            open ? "-rotate-45 -translate-y-1.5" : ""
+          }`}
+        />
       </button>
 
-      {/* Your App Name */}
-      <Link href="/dashboard" className="text-lg font-bold text-blue-500">
-        Hantikaab
+      {/* --- Logo (from /public/mobile.png) --- */}
+      <Link href="/dashboard" className="flex items-center justify-center">
+        <Image
+          src="/mobile.png"
+          alt="Hantikaab Logo"
+          width={120}
+          height={40}
+          priority
+          className="object-contain"
+        />
       </Link>
 
-      {/* A placeholder to keep the title centered */}
-      <div className="w-6"></div>
+      {/* Placeholder to keep logo centered */}
+      <div className="w-8"></div>
     </header>
   );
 };

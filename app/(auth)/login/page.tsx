@@ -9,10 +9,19 @@ import { FaWhatsapp } from 'react-icons/fa'; // Your REAL icon
 
 // This is a placeholder for your logo. 
 // You can replace this with an <Image> component from Next.js.
+import Image from "next/image"; // ✅ Make sure to import at top of file
+
 const Logo = () => (
   <div className="flex items-center space-x-2">
-    <div className="p-3 bg-white/20 rounded-xl">
-      <ShieldCheck className="w-8 h-8 text-white" />
+    <div className="w-12 h-12 bg-white rounded-lg flex items-center justify-center shadow-md p-1">
+      <Image
+        src="/logo1.png"       // ✅ Path to your logo in public folder
+        alt="Hantikaab Logo"
+        width={40}
+        height={40}
+        className="object-contain"
+        priority
+      />
     </div>
     <span className="text-3xl font-bold text-white">Hantikaab BizPOS</span>
   </div>
