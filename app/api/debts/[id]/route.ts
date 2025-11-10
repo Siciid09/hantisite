@@ -1,130 +1,332 @@
-// File: app/api/customers/[id]/route.ts
+// File: app/api/debts/[id]/route.ts
 //
-// --- LATEST FIX (Data Bug) ---
-// 1. (CRITICAL FIX) The `debitsHistory` map now looks for
-//    `data.amountDue` (not data.amount) and
-//    `data.reason` (not data.invoiceId).
-// 2. (FIX) This will fix the "N/A" and "Debt for undefined" errors.
-// 3. (KEPT FIX) All timestamps are still converted to ISO strings.
+// --- LATEST FIX (TypeScript) ---
+// 1. (FIXED) Added a check for `if (debtData)` inside the DELETE
+//    transaction to fix the "'debtData' is possibly 'undefined'"
+//    TypeScript error.
+// 2. (KEPT) All previous fixes for customer balance sync and
+//    reading the URL params are included.
 // -----------------------------------------------------------------------------
 
 import { NextResponse, NextRequest } from "next/server";
 import { firestoreAdmin, authAdmin } from "@/lib/firebaseAdmin";
-import { Timestamp } from "firebase-admin/firestore";
+import { FieldValue, Timestamp, DocumentData } from "firebase-admin/firestore"; // Import DocumentData
 
-// --- Helper: checkAuth ---
-async function checkAuth(request: NextRequest) {
-  if (!authAdmin) throw new Error("Auth Admin is not initialized.");
-  if (!firestoreAdmin) throw new Error("Firestore Admin is not initialized.");
+// Helper function to get the user's storeId
+async function getAuth(request: NextRequest) {
+  const authHeader = request.headers.get("Authorization");
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    throw new Error("Unauthorized.");
+  }
+  const token = authHeader.split("Bearer ")[1];
+  const decodedToken = await authAdmin.verifyIdToken(token);
+  const uid = decodedToken.uid;
+  const userDoc = await firestoreAdmin.collection("users").doc(uid).get();
+  if (!userDoc.exists) throw new Error("User not found.");
 
-  const authHeader = request.headers.get("Authorization");
-  const token = authHeader?.split("Bearer ")[1];
-  if (!token) throw new Error("Unauthorized.");
-  
-  const decodedToken = await authAdmin.verifyIdToken(token);
-  const uid = decodedToken.uid;
-  const userDoc = await firestoreAdmin.collection("users").doc(uid).get();
-  const storeId = userDoc.data()?.storeId;
-  if (!storeId) throw new Error("User has no store.");
-  
-  return { uid, storeId, userName: userDoc.data()?.name || "System User" };
+  const userData = userDoc.data()!;
+  const storeId = userData.storeId;
+  if (!storeId) throw new Error("User has no store.");
+
+  return { storeId, uid, userName: userData.name || "System" };
 }
 
-// =============================================================================
-// 📦 GET - Get a single customer's data hub (FAST)
-// =============================================================================
-export async function GET(
-  request: NextRequest,
-  { params }: { params: { id: string } } // <-- This is NOT a Promise, removed await
+// Helper to format currency
+const formatCurrency = (amount: number, currency: string): string => {
+  if (currency === "USD") {
+    return new Intl.NumberFormat("en-US", {
+      style: "currency",
+      currency: "USD",
+    }).format(amount);
+  }
+  return `${currency} ${new Intl.NumberFormat("en-US", {
+    maximumFractionDigits: 0,
+  }).format(amount)}`;
+};
+
+// -----------------------------------------------------------------------------
+// 💰 PUT - Record a Payment
+// -----------------------------------------------------------------------------
+export async function PUT(
+  request: NextRequest,
+  { params }: { params: { id: string } }
 ) {
-  if (!firestoreAdmin) {
-    return NextResponse.json({ error: "Admin SDK not configured." }, { status: 500 });
-  }
+  if (!authAdmin || !firestoreAdmin) {
+    return NextResponse.json(
+      { error: "Admin SDK not configured." },
+      { status: 500 }
+    );
+  }
 
-  try {
-    const { storeId } = await checkAuth(request);
-    const { id: customerId } = params; // <-- Removed await
-
-    const db = firestoreAdmin;
-
-
-    // 1. Get Customer Details (This now contains our KPIs)
-    const customerRef = db.collection("customers").doc(customerId);
-    const customerDoc = await customerRef.get();
-
-    if (!customerDoc.exists || customerDoc.data()?.storeId !== storeId) {
-      return NextResponse.json({ error: "Customer not found." }, { status: 404 });
+  try {
+    const { storeId, uid, userName } = await getAuth(request);
+    
+    let debtId = params.id;
+    if (!debtId) {
+      console.warn("Params.id failed, trying URL parsing...");
+      const url = new URL(request.url);
+      const pathSegments = url.pathname.split('/');
+      debtId = pathSegments[pathSegments.length - 1];
     }
-    const customerData = customerDoc.data();
 
-    // 2. Get Sales History (Still needed for the table)
-    const salesQuery = db.collection("sales")
-      .where("storeId", "==", storeId)
-      .where("customerId", "==", customerId)
-      .orderBy("createdAt", "desc")
-      .limit(20);
+    const body = await request.json();
+    const { amountPaid, paymentMethod } = body;
+    const paidAmount = parseFloat(amountPaid);
 
-    // 3. Get Debits History (Still needed for the table)
-    const debitsQuery = db.collection("debits")
-      .where("storeId", "==", storeId)
-      .where("customerId", "==", customerId)
-      .orderBy("createdAt", "desc")
-      .limit(20);
+    if (!debtId || debtId === "[id]") {
+      return NextResponse.json({ error: "Debt ID missing from URL." }, { status: 400 });
+    }
+    if (isNaN(paidAmount) || paidAmount <= 0) {
+      return NextResponse.json({ error: "Invalid amount." }, { status: 400 });
+    }
 
-    const [salesSnap, debitsSnap] = await Promise.all([
-      salesQuery.get(),
-      debitsQuery.get()
-    ]);
+    const debtRef = firestoreAdmin.collection("debits").doc(debtId);
+    let newStatus = "partial"; // Default
 
-    const salesHistory = salesSnap.docs.map(doc => {
-        const data = doc.data();
-        return { 
-            id: doc.id,
-            invoiceId: data.invoiceId,
-            createdAt: (data.createdAt as Timestamp).toDate().toISOString(),
-            totalAmount: data.totalAmount,
-            status: data.paymentStatus, // Use the correct field 'paymentStatus'
-            currency: data.invoiceCurrency // Use the correct field 'invoiceCurrency'
-        };
-    });
+    // --- Use a Transaction with all READS before all WRITES ---
+    await firestoreAdmin.runTransaction(async (transaction) => {
+      // --- START OF READS ---
+      const debtDoc = await transaction.get(debtRef); // READ 1: The Debt
+
+      if (!debtDoc.exists) {
+        throw new Error("Debt not found.");
+      }
+
+      const debtData = debtDoc.data(); // This is DocumentData | undefined
+      if (!debtData || debtData.storeId !== storeId) { // Check debtData exists
+        throw new Error("Access denied or debt data missing.");
+      }
+      
+      // READ 2: The related Sale (if any)
+      const relatedSaleId = debtData.relatedSaleId;
+      let saleRef: FirebaseFirestore.DocumentReference | null = null;
+      let saleDoc: FirebaseFirestore.DocumentSnapshot | null = null;
+      if (relatedSaleId) {
+        saleRef = firestoreAdmin.collection("sales").doc(relatedSaleId);
+        saleDoc = await transaction.get(saleRef);
+      }
+      
+      // READ 3: The related Customer (if any)
+      const customerId = debtData.customerId;
+      let customerRef: FirebaseFirestore.DocumentReference | null = null;
+      if (customerId) {
+        customerRef = firestoreAdmin.collection("customers").doc(customerId);
+        await transaction.get(customerRef); // Add customer to the "read" list
+      }
+      // --- END OF READS ---
+
+
+      // --- START OF CALCULATIONS ---
+      const newTotalPaid = (debtData.totalPaid || 0) + paidAmount;
+      const newAmountDue = debtData.totalAmount - newTotalPaid;
+      newStatus = newAmountDue <= 0.01 ? "paid" : "partial";
+
+      if (newAmountDue < -0.01) {
+        throw new Error("Payment exceeds amount due.");
+      }
+      // --- END OF CALCULATIONS ---
+
+
+      // --- START OF WRITES ---
+      // WRITE 1: Update the debt document
+      transaction.update(debtRef, {
+        totalPaid: newTotalPaid,
+        amountDue: newAmountDue,
+        status: newStatus,
+        isPaid: newStatus === "paid",
+        paymentHistory: FieldValue.arrayUnion({
+          amount: paidAmount,
+          date: Timestamp.now(),
+          method: paymentMethod || "Cash",
+          recordedBy: uid,
+        }),
+        updatedAt: Timestamp.now(),
+      });
+
+      // WRITE 2: Create an income record for this payment
+      const incomeRef = firestoreAdmin.collection("incomes").doc();
+      transaction.set(incomeRef, {
+        amount: paidAmount,
+        category: "Debt Payment",
+        description: `Payment for debt from ${debtData.clientName} (Debt ID: ${debtId})`,
+        currency: debtData.currency,
+        storeId,
+        userId: uid,
+        createdAt: Timestamp.now(),
+        notes: `Payment method: ${paymentMethod || "Cash"}`,
+        relatedDebtId: debtId,
+      });
+
+      // WRITE 3: Create activity log
+      const logRef = firestoreAdmin.collection("activity_logs").doc();
+      transaction.set(logRef, {
+        storeId,
+        userId: uid,
+        userName,
+        timestamp: Timestamp.now(),
+        actionType: "UPDATE",
+        collectionAffected: "debits",
+        details: `Recorded payment of ${formatCurrency(
+          paidAmount,
+          debtData.currency
+        )} for ${debtData.clientName}. New status: ${newStatus.toUpperCase()}`,
+      });
+
+      // WRITE 4: Update the related Sale document (if any)
+      if (relatedSaleId && saleRef && saleDoc && saleDoc.exists) {
+        const saleData = saleDoc.data(); // This is DocumentData | undefined
+        if (saleData) { // Check if saleData exists
+            const newSaleAmountPaid = (saleData.amountPaid || 0) + paidAmount;
+            const newSaleDebtAmount = saleData.totalAmount - newSaleAmountPaid;
+            const newSaleStatus = newSaleDebtAmount <= 0.01 ? "paid" : "partial";
+
+            transaction.update(saleRef, {
+              amountPaid: newSaleAmountPaid,
+              debtAmount: newSaleDebtAmount,
+              status: newSaleStatus,
+              updatedAt: Timestamp.now(),
+            });
+        }
+      }
+      
+      // WRITE 5: Update the Customer's balance
+      if (customerRef) {
+        const currencyKey = `totalOwed.${debtData.currency}`;
+        transaction.update(customerRef, {
+          [currencyKey]: FieldValue.increment(-paidAmount) // Subtract the payment
+        });
+      }
+      // --- END OF WRITES ---
+    }); // --- End of Transaction ---
+
+    return NextResponse.json({ success: true, status: newStatus });
+
+  } catch (error: any) {
+    console.error("[Debts API PUT] Error:", error.stack || error.message);
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+}
+
+// -----------------------------------------------------------------------------
+// ❌ DELETE - Delete a Debt
+// -----------------------------------------------------------------------------
+export async function DELETE(
+  request: NextRequest,
+  { params }: { params: { id: string } }
+) {
+  if (!authAdmin || !firestoreAdmin) {
+    return NextResponse.json(
+      { error: "Admin SDK not configured." },
+      { status: 500 }
+    );
+  }
+
+  try {
+    const { storeId, uid, userName } = await getAuth(request);
+
+    let debtId = params.id;
+    if (!debtId) {
+      console.warn("Params.id failed, trying URL parsing...");
+      const url = new URL(request.url);
+      const pathSegments = url.pathname.split('/');
+      debtId = pathSegments[pathSegments.length - 1];
+    }
+
+    if (!debtId || debtId === "[id]") {
+      return NextResponse.json({ error: "Debt ID missing from URL." }, { status: 400 });
+    }
+
+    const debtRef = firestoreAdmin.collection("debits").doc(debtId);
     
-    // --- (CRITICAL FIX) ---
-    // The fields were wrong. It's `data.reason` and `data.amountDue`.
-    const debitsHistory = debitsSnap.docs.map(doc => {
-        const data = doc.data();
-        return { 
-            id: doc.id,
-            reason: data.reason || "Debt", // <-- (FIX 1) Use data.reason
-            createdAt: (data.createdAt as Timestamp).toDate().toISOString(),
-            amountDue: data.amountDue, // <-- (FIX 2) Use data.amountDue
-            status: data.status || (data.isPaid ? 'paid' : 'unpaid'),
-            currency: data.currency
-        };
-    });
-    // --- END FIX ---
+    // --- Deleting a debt must also be a transaction ---
+    await firestoreAdmin.runTransaction(async (transaction) => {
+      // --- READ PHASE ---
+      // READ 1: The Debt
+      const debtDoc = await transaction.get(debtRef);
 
-    // 4. (FIX) Get KPIs DIRECTLY from customer doc
-    const kpis = {
-        totalSpent: customerData?.totalSpent || {},
-        totalOwed: customerData?.totalOwed || {},
-        totalSales: salesHistory.length,
-        outstandingDebts: debitsHistory.filter(d => d.status !== 'paid' && d.status !== 'voided').length
-    };
-    
-    // 5. Return all data
-    return NextResponse.json({
-      customer: {
-        id: customerDoc.id,
-        ...customerData,
-        createdAt: (customerData?.createdAt as Timestamp)?.toDate().toISOString(),
-      },
-      kpis,
-      salesHistory,
-      debitsHistory
-    });
+      if (!debtDoc.exists) {
+        throw new Error("Debt not found.");
+      }
 
-  } catch (error: any) {
-    console.error("[Customer[id] API GET] Error:", error.message);
-    return NextResponse.json({ error: error.message }, { status: 500 });
-  }
+      // --- (CRITICAL FIX) Check debtData exists right after getting it ---
+      const debtData: DocumentData | undefined = debtDoc.data();
+      if (!debtData || debtData.storeId !== storeId) {
+        throw new Error("Access denied or debt data missing.");
+      }
+      // --- END FIX ---
+
+      // READ 2: The related Sale (if any)
+      const relatedSaleId = debtData.relatedSaleId;
+      let saleRef: FirebaseFirestore.DocumentReference | null = null;
+      let saleDoc: FirebaseFirestore.DocumentSnapshot | null = null;
+      if (relatedSaleId) {
+        saleRef = firestoreAdmin.collection("sales").doc(relatedSaleId);
+        saleDoc = await transaction.get(saleRef);
+      }
+      
+      // READ 3: The related Customer (if any)
+      const customerId = debtData.customerId;
+      let customerRef: FirebaseFirestore.DocumentReference | null = null;
+      if (customerId) {
+        customerRef = firestoreAdmin.collection("customers").doc(customerId);
+        await transaction.get(customerRef);
+      }
+      // --- END OF READS ---
+      
+      
+      // --- WRITE PHASE ---
+      // WRITE 1: Delete the debt
+      transaction.delete(debtRef);
+
+      // WRITE 2: Create activity log
+      const logRef = firestoreAdmin.collection("activity_logs").doc();
+      transaction.set(logRef, {
+        storeId,
+        userId: uid,
+        userName,
+        timestamp: Timestamp.now(),
+        actionType: "DELETE",
+        collectionAffected: "debits",
+        details: `Deleted debt for ${
+          debtData.clientName
+        } (${formatCurrency(debtData.totalAmount, debtData.currency)})`,
+        in: "DELETED",
+        Tender: "DELETED",
+      });
+
+      // WRITE 3: Re-calculate the related Sale
+      if (saleRef && saleDoc && saleDoc.exists) {
+        const saleData = saleDoc.data(); // This is DocumentData | undefined
+        if (saleData) { // Check if saleData exists
+            const newTotalAmount = saleData.totalAmount - debtData.totalAmount;
+            const newAmountPaid = saleData.amountPaid - debtData.totalPaid;
+            const newDebtAmount = newTotalAmount - newAmountPaid;
+            const newStatus = newDebtAmount <= 0.01 ? "paid" : "partial";
+
+            transaction.update(saleRef, {
+              totalAmount: newTotalAmount,
+              amountPaid: newAmountPaid,
+              debtAmount: newDebtAmount,
+              status: newStatus,
+              notes: FieldValue.arrayUnion(`[System] Debt ${debtId} deleted by ${userName}`),
+            });
+        }
+      }
+      
+      // WRITE 4: Update the Customer's balance
+      // (FIX) The 'debtData' check is now implicit because we checked it at the top
+      if (customerRef) {
+        const currencyKey = `totalOwed.${debtData.currency}`;
+        transaction.update(customerRef, {
+          [currencyKey]: FieldValue.increment(-debtData.amountDue) // Subtract the outstanding debt
+        });
+      }
+      // --- END OF WRITES ---
+    }); // --- End of Transaction ---
+
+    return NextResponse.json({ success: true });
+  } catch (error: any) {
+    console.error("[Debts API DELETE] Error:", error.stack || error.message);
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
 }

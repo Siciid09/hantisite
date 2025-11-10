@@ -2,7 +2,8 @@
 "use client";
 
 import React, { Suspense } from "react";
-import { useParams, useRouter } from "next/navigation";
+// --- (NEW) --- Import useSearchParams
+import { useParams, useRouter, useSearchParams } from "next/navigation"; 
 import Link from "next/link";
 import useSWR from "swr";
 import { useAuth } from "@/app/contexts/AuthContext";
@@ -21,20 +22,31 @@ import {
   TrendingUp,
 } from "lucide-react";
 
+// --- (NEW) ---
+// Import the REAL modal component from your sales components file
+import { ViewSaleModal } from "@/app/(main)/sales/components"; 
+// We will also need your Debt modal component
+// import { DebtDetailsModal } from "@/app/(main)/debts/components"; // <-- ADD THIS LATER
+// --- (END NEW) ---
+
+
 // --- Fetcher ---
 const fetcher = async (url: string) => {
   const user = auth.currentUser;
   if (!user) throw new Error("User is not authenticated.");
   const token = await user.getIdToken();
   const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
-  if (!res.ok) throw new Error(`API Error: ${res.status}`);
+  if (!res.ok) {
+    const errorBody = await res.json();
+    throw new Error(errorBody.error || `API Error: ${res.status}`);
+  }
   return res.json();
 };
 
 // --- Currency Formatter ---
 const formatCurrency = (amount: number | undefined | null, currency: string): string => {
   if (amount == null) return "N/A";
-  const style = ["USD", "EURO"].includes(currency) ? "currency" : "decimal";
+  const style = ["USD", "EUR"].includes(currency) ? "currency" : "decimal"; // <-- (FIX) Changed EURO to EUR
   const options: Intl.NumberFormatOptions = {
     style,
     minimumFractionDigits: ["SLSH", "SOS", "BIRR"].includes(currency) ? 0 : 2,
@@ -51,6 +63,7 @@ const formatCurrency = (amount: number | undefined | null, currency: string): st
 // --- Suspense Wrapper ---
 export default function CustomerDetailPageWrapper() {
   return (
+    // Wrap the main page in Suspense to allow useSearchParams
     <Suspense fallback={<LoadingSpinner />}>
       <CustomerDetailPage />
     </Suspense>
@@ -63,10 +76,31 @@ function CustomerDetailPage() {
   const router = useRouter();
   const { id } = useParams() as { id: string };
 
+  // --- (NEW) --- Get URL search params
+  const searchParams = useSearchParams();
+  const saleIdToShow = searchParams.get("viewSale");
+  const debtIdToShow = searchParams.get("viewDebt");
+  // --- (END NEW) ---
+
   const { data, error, isLoading } = useSWR(
     id && !authLoading ? `/api/customers/${id}` : null,
     fetcher
   );
+  
+  // --- (NEW) --- Helper function to close modals
+  const closeModal = () => {
+    // Pushes the URL without query params, e.g., /customers/[id]
+    router.push(`/customers/${id}`); 
+  };
+  
+  // --- (NEW) --- Placeholder Print Function
+  const handlePrint = (sale: any) => {
+     // You need to import and call your PDF service here
+     // import { generateInvoicePdf } from "@/lib/pdfService";
+     // generateInvoicePdf(sale);
+     console.log("Printing sale:", sale);
+  };
+  // --- (END NEW) ---
 
   if (authLoading || isLoading) return <LoadingSpinner />;
   if (error) return <ErrorDisplay error={error} />;
@@ -134,16 +168,85 @@ function CustomerDetailPage() {
         {/* Tables */}
         <div className="grid gap-6 lg:grid-cols-2">
           <Section title="Recent Sales">
-            <SalesHistoryTable sales={salesHistory} />
+            {/* --- (NEW) --- Pass customerId to the table */}
+            <SalesHistoryTable sales={salesHistory} customerId={id} />
           </Section>
           <Section title="Recent Debts">
-            <DebitsHistoryTable debits={debitsHistory} />
+            {/* --- (NEW) --- Pass customerId to the table */}
+            <DebitsHistoryTable debits={debitsHistory} customerId={id} />
           </Section>
         </div>
       </div>
+      
+      {/* --- (NEW) --- MODAL RENDERING --- */}
+      {/* This renders the wrapper if the URL param exists */}
+      <Suspense fallback={null}>
+        {saleIdToShow && (
+          <SaleDetailModalWrapper
+            saleId={saleIdToShow}
+            onClose={closeModal}
+            onPrint={handlePrint}
+          />
+        )}
+      </Suspense>
+
+      
+      {/* --- (END NEW) --- */}
+      
     </div>
   );
 }
+
+// -----------------------------------------------------------------------------
+// 🧩 (NEW) Self-Fetching Modal Wrapper
+// -----------------------------------------------------------------------------
+function SaleDetailModalWrapper({ saleId, onClose, onPrint }: {
+  saleId: string;
+  onClose: () => void;
+  onPrint: (sale: any) => void;
+}) {
+  // This wrapper fetches the full sale data, 
+  // because the customer page only has a summary.
+  
+  // NOTE: This assumes you have an API endpoint at /api/sales/[id]
+  // If you don't, we must create one or change this fetch URL.
+  const { data, error, isLoading } = useSWR(
+    `/api/sales/${saleId}`, // <-- ASSUMPTION
+    fetcher
+  );
+
+  if (isLoading) {
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+        <Loader2 className="h-10 w-10 animate-spin text-white" />
+      </div>
+    );
+  }
+  
+  if (error || !data) {
+    // A simple error state
+    return (
+       <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={onClose}>
+         <div className="rounded-lg bg-white p-6 dark:bg-gray-800">
+            <h3 className="font-semibold text-red-600">Error</h3>
+            <p className="text-gray-700 dark:text-gray-300">Could not load sale details.</p>
+            <p className="text-sm text-gray-500">{error?.message}</p>
+         </div>
+       </div>
+    );
+  }
+
+  // Once data is loaded, render the REAL modal with the full sale object
+  return (
+    <ViewSaleModal
+      isOpen={true}
+      onClose={onClose}
+      sale={data.sale} // Assuming the API returns { sale: {...} }
+      onPrint={onPrint}
+    />
+  );
+}
+
 
 // -----------------------------------------------------------------------------
 // 🧩 Reusable Components
@@ -230,7 +333,8 @@ const TableEmptyState = ({ message }: { message: string }) => (
 );
 
 // --- Tables ---
-const SalesHistoryTable = ({ sales }: { sales: any[] }) => {
+// --- (NEW) --- Added 'customerId' prop
+const SalesHistoryTable = ({ sales, customerId }: { sales: any[]; customerId: string; }) => {
   if (!sales?.length) return <TableEmptyState message="No sales history found." />;
   return (
     <div className="overflow-hidden rounded-xl border border-gray-200 dark:border-gray-700">
@@ -247,9 +351,15 @@ const SalesHistoryTable = ({ sales }: { sales: any[] }) => {
           {sales.map((sale) => (
             <tr key={sale.id} className="hover:bg-gray-50 dark:hover:bg-gray-900/20">
               <Td>
-                <Link href={`/sales/${sale.id}`} className="text-blue-600 hover:underline">
+                {/* --- (NEW) --- Updated Link href to set URL param */}
+                <Link 
+                  href={`/customers/${customerId}?viewSale=${sale.id}`} 
+                  scroll={false} 
+                  className="text-blue-600 hover:underline"
+                >
                   {sale.invoiceId}
                 </Link>
+                {/* --- (END NEW) --- */}
               </Td>
               <Td>{dayjs(sale.createdAt).format("DD MMM YYYY")}</Td>
               <Td>{formatCurrency(sale.totalAmount, sale.currency)}</Td>
@@ -264,7 +374,8 @@ const SalesHistoryTable = ({ sales }: { sales: any[] }) => {
   );
 };
 
-const DebitsHistoryTable = ({ debits }: { debits: any[] }) => {
+// --- (NEW) --- Added 'customerId' prop
+const DebitsHistoryTable = ({ debits, customerId }: { debits: any[]; customerId: string; }) => {
   if (!debits?.length) return <TableEmptyState message="No debt history found." />;
   return (
     <div className="overflow-hidden rounded-xl border border-gray-200 dark:border-gray-700">
@@ -281,9 +392,15 @@ const DebitsHistoryTable = ({ debits }: { debits: any[] }) => {
           {debits.map((debt) => (
             <tr key={debt.id} className="hover:bg-gray-50 dark:hover:bg-gray-900/20">
               <Td>
-                <Link href={`/debts/${debt.id}`} className="text-blue-600 hover:underline">
+                {/* --- (NEW) --- Updated Link href to set URL param */}
+                <Link 
+                  href={`/customers/${customerId}?viewDebt=${debt.id}`} 
+                  scroll={false} 
+                  className="text-blue-600 hover:underline"
+                >
                   {debt.reason}
                 </Link>
+                {/* --- (END NEW) --- */}
               </Td>
               <Td>{dayjs(debt.createdAt).format("DD MMM YYYY")}</Td>
               <Td>{formatCurrency(debt.amountDue, debt.currency)}</Td>
