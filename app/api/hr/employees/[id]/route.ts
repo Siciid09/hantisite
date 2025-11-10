@@ -1,5 +1,10 @@
 // File: app/api/hr/employees/[id]/route.ts
-// Description: API route for managing a *specific* employee (Edit, Delete).
+//
+// --- LATEST FIX (TypeScript & Bug) ---
+// 1. (BUILD FIX) Changed signatures for PUT/DELETE to accept `params: Promise`
+//    to match Next.js 16 (Turbopack) requirements.
+// 2. (BUG FIX) Changed PUT function to use the secure `storeId` from `getAuth`
+//    instead of the insecure `body.storeId` when updating salaries.
 // -----------------------------------------------------------------------------
 
 import { NextResponse, NextRequest } from "next/server";
@@ -35,18 +40,24 @@ function getStoreCollection(storeId: string, collectionName: string) {
 // -----------------------------------------------------------------------------
 // ✏️ PUT - Update Employee
 // -----------------------------------------------------------------------------
-export async function PUT(request: NextRequest, { params }: { params: { id: string } }) {
+export async function PUT(
+  request: NextRequest, 
+  context: { params: Promise<{ id: string }> } // <-- (BUILD FIX) Accept Promise
+) {
   if (!authAdmin || !firestoreAdmin) {
     return NextResponse.json({ error: "Admin SDK not configured." }, { status: 500 });
   }
 
-  const employeeId = params.id;
+  const params = await context.params; // <-- (BUILD FIX) Await params
+  const employeeId = params.id; // <-- (BUILD FIX) Use resolved params
+
   if (!employeeId) {
     return NextResponse.json({ error: "Employee ID is required." }, { status: 400 });
   }
 
   try {
-    const { role } = await getAuth(request);
+    // <-- (BUG FIX) Get storeId from auth *first*
+    const { storeId, role } = await getAuth(request);
 
     // --- Permission Check ---
     if (role !== "admin" && role !== "manager") {
@@ -81,7 +92,8 @@ export async function PUT(request: NextRequest, { params }: { params: { id: stri
 
     // 3. Update salary record
     if (baseSalary !== undefined) {
-        const salaryQuery = getStoreCollection(body.storeId, "salaries").where("userId", "==", employeeId).limit(1);
+        // <-- (BUG FIX) Use the secure `storeId` from auth, not `body.storeId`
+        const salaryQuery = getStoreCollection(storeId, "salaries").where("userId", "==", employeeId).limit(1);
         const salarySnap = await salaryQuery.get();
         if (!salarySnap.empty) {
             const salaryDoc = salarySnap.docs[0];
@@ -104,12 +116,17 @@ export async function PUT(request: NextRequest, { params }: { params: { id: stri
 // -----------------------------------------------------------------------------
 // 🗑️ DELETE - Remove Employee
 // -----------------------------------------------------------------------------
-export async function DELETE(request: NextRequest, { params }: { params: { id: string } }) {
+export async function DELETE(
+  request: NextRequest, 
+  context: { params: Promise<{ id: string }> } // <-- (BUILD FIX) Accept Promise
+) {
   if (!authAdmin || !firestoreAdmin) {
     return NextResponse.json({ error: "Admin SDK not configured." }, { status: 500 });
   }
 
-  const employeeId = params.id;
+  const params = await context.params; // <-- (BUILD FIX) Await params
+  const employeeId = params.id; // <-- (BUILD FIX) Use resolved params
+
   if (!employeeId) {
     return NextResponse.json({ error: "Employee ID is required." }, { status: 400 });
   }
