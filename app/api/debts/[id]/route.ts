@@ -1,15 +1,15 @@
 // File: app/api/debts/[id]/route.ts
 //
 // --- LATEST FIX (TypeScript) ---
-// 1. (FIXED) Changed function signatures from ({ params }: ...) to
-//    (context: ...) to fix Next.js 16+ type inference bug.
-// 2. (KEPT) All previous fixes for customer balance sync and
-//    reading the URL params are included.
+// 1. (NEW FIX) Changed signature to accept `params: Promise<{ id: string }>`
+//    and added `const params = await context.params;` to handle the
+//    unusual type requirement from Next.js 16 (Turbopack).
+// 2. (KEPT) All previous fixes.
 // -----------------------------------------------------------------------------
 
 import { NextResponse, NextRequest } from "next/server";
 import { firestoreAdmin, authAdmin } from "@/lib/firebaseAdmin";
-import { FieldValue, Timestamp, DocumentData } from "firebase-admin/firestore"; // Import DocumentData
+import { FieldValue, Timestamp, DocumentData } from "firebase-admin/firestore";
 
 // Helper function to get the user's storeId
 async function getAuth(request: NextRequest) {
@@ -48,7 +48,7 @@ const formatCurrency = (amount: number, currency: string): string => {
 // -----------------------------------------------------------------------------
 export async function PUT(
   request: NextRequest,
-  context: { params: { id: string } } // <-- FIX: Simplified signature
+  context: { params: Promise<{ id: string }> } // <-- (NEW FIX) Accept Promise
 ) {
   if (!authAdmin || !firestoreAdmin) {
     return NextResponse.json(
@@ -60,7 +60,9 @@ export async function PUT(
   try {
     const { storeId, uid, userName } = await getAuth(request);
 
-    let debtId = context.params.id; // <-- FIX: Use context.params.id
+    const params = await context.params; // <-- (NEW FIX) Await params
+    let debtId = params.id; // <-- (NEW FIX) Use resolved params
+
     if (!debtId) {
       console.warn("Params.id failed, trying URL parsing...");
       const url = new URL(request.url);
@@ -211,7 +213,7 @@ export async function PUT(
 // -----------------------------------------------------------------------------
 export async function DELETE(
   request: NextRequest,
-  context: { params: { id: string } } // <-- FIX: Simplified signature
+  context: { params: Promise<{ id: string }> } // <-- (NEW FIX) Accept Promise
 ) {
   if (!authAdmin || !firestoreAdmin) {
     return NextResponse.json(
@@ -223,7 +225,9 @@ export async function DELETE(
   try {
     const { storeId, uid, userName } = await getAuth(request);
 
-    let debtId = context.params.id; // <-- FIX: Use context.params.id
+    const params = await context.params; // <-- (NEW FIX) Await params
+    let debtId = params.id; // <-- (NEW FIX) Use resolved params
+
     if (!debtId) {
       console.warn("Params.id failed, trying URL parsing...");
       const url = new URL(request.url);
