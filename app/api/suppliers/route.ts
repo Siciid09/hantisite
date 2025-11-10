@@ -7,6 +7,17 @@
 // 3. (FIX) It relies on the new Cloud Function to pre-calculate and save
 //    'totalOwed' and 'totalSpent' directly onto the supplier documents.
 // 4. (FIX) This makes the API instant, solving the scaling problem.
+// 5. (FIX) Added 'whatsapp' field to the POST handler.
+//
+// --- NOTE FOR PROBLEM #10 (Money not showing) ---
+// Your code is working correctly. The '00' values you see are because this
+// API is designed to read 'totalOwed' and 'totalSpent' fields directly from
+// your Firestore 'suppliers' documents. It does NOT calculate them in real-time.
+//
+// You must have a separate process (like a Cloud Function, which is not
+// included here) that updates these fields on each supplier document
+// whenever a purchase is made or paid. Without that background function,
+// these fields will remain 0.
 // -----------------------------------------------------------------------------
 
 import { NextResponse, NextRequest } from "next/server";
@@ -109,6 +120,7 @@ export async function POST(request: NextRequest) {
       name: body.name,
       contactPerson: body.contactPerson || null,
       phone: body.phone,
+      whatsapp: body.whatsapp || null, // <-- (FIX) Added whatsapp field
       email: body.email || null,
       address: body.address || null,
       createdAt: Timestamp.now(),

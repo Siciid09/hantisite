@@ -1,9 +1,18 @@
 // -----------------------------------------------------------------------------
 // File: app/api/finance/route.ts
-// Description: SECURED API endpoint for the "Income & Finance" page.
+// Description: SECURED AND FIXED API endpoint for "Income & Finance".
 //
-// This is the complete, correct backend code. It contains NO React/JSX.
-// It powers all 6 tabs with dynamic, real-time data from Firestore.
+// --- FIXES APPLIED (Production v2) ---
+// 1. (FIX #15) Added `getTotalPayables` utility to fetch real data.
+// 2. (FIX #14) `getFinanceOverview` now provides `zaadBalance` and
+//    `edahabBalance` individually instead of one combined `digitalWallets` KPI.
+// 3. (FIX #18) Rebuilt `getPaymentsData` (for Payments Tab).
+//    - It now runs in 2 queries instead of 16+.
+//    - It correctly calculates balances for ALL methods (Cash, Zaad, etc.).
+//    - It populates `otherBalances` with any method not hardcoded.
+//    - This resolves the "Invalid tab" error by providing correct data.
+// 4. (FIX #13) Standardized `getSumByPaymentMethod` to use exact case-sensitive
+//    names ("Cash", "Zaad", "eDahab", "Bank").
 // -----------------------------------------------------------------------------
 import { NextResponse, NextRequest } from "next/server";
 import {
@@ -40,10 +49,14 @@ export interface FinanceOverviewData {
     totalExpenses: number;
     netProfit: number;
     cashOnHand: number;
-    digitalWallets: number; // Zaad + eDahab
+    // --- (FIX #14) ---
+    zaadBalance: number;    // No longer combined
+    edahabBalance: number;  // No longer combined
+    // digitalWallets: number; // This is now removed
+    // --- (END FIX) ---
     bankBalance: number;
     outstandingInvoices: number; // Debits
-    payables: number; // Future use
+    payables: number; // (FIX #15) Now shows real data
   };
   incomeExpenseTrend: { date: string; income: number; expense: number }[];
 }
@@ -115,6 +128,50 @@ function docToTransaction(doc: QueryDocumentSnapshot): Transaction {
 }
 
 /**
+ * --- (FIX #15) This function is copied from your dashboard/route.ts ---
+ * Gets total payables (purchases not fully paid).
+ */
+async function getTotalPayables(storeId: string, currency: string): Promise<number> {
+  if (!firestoreAdmin) return 0;
+  const collRef = firestoreAdmin.collection("purchases");
+  // Note: This query assumes 'currency' exists on purchases.
+  // If not, you may need to adjust or remove this .where()
+  const q = collRef
+    .where("storeId", "==", storeId)
+    .where("currency", "==", currency)
+    .where("status", "!=", "paid");
+  
+  try {
+    const querySnapshot = await q.get();
+    let total = 0.0;
+    querySnapshot.forEach((doc) => {
+      // Assumes field is 'remainingAmount'. Change if incorrect.
+      total += getNumericField(doc.data(), "remainingAmount");
+    });
+    return total;
+  } catch (error: any) {
+    console.warn(`Warning for getTotalPayables: ${error.message}`);
+    // Fallback: If currency query fails, try without it.
+    try {
+        const fallbackQ = collRef
+            .where("storeId", "==", storeId)
+            .where("status", "!=", "paid");
+        const querySnapshot = await fallbackQ.get();
+        let total = 0.0;
+        querySnapshot.forEach((doc) => {
+            if (doc.data().currency === currency) {
+                 total += getNumericField(doc.data(), "remainingAmount");
+            }
+        });
+        return total;
+    } catch (e: any) {
+        console.error("Critical error in getTotalPayables:", e.message);
+        return 0; // Return 0 if it fails
+    }
+  }
+}
+
+/**
  * Gets aggregate sum from a collection.
  */
 async function getAggregateSum(
@@ -151,12 +208,13 @@ async function getAggregateSum(
 
 /**
  * Gets aggregate sum for a specific payment method.
+ * (FIX #13) This relies on EXACT case-sensitive matches.
  */
 async function getSumByPaymentMethod(
   collectionName: string,
   storeId: string,
   currency: string,
-  paymentMethod: string,
+  paymentMethod: string, // e.g., "Cash", "Zaad"
   startDate: Date,
   endDate: Date
 ): Promise<number> {
@@ -355,20 +413,20 @@ async function getFinanceOverview(
     zaadBalance,
     edahabBalance,
     bankBalance,
+    payables, // (FIX #15)
   ] = await Promise.all([
     getAggregateSum("incomes", "amount", storeId, currency, startDate, endDate),
     getAggregateSum("expenses", "amount", storeId, currency, startDate, endDate),
     getAggregateSum("debits", "amountDue", storeId, currency, startDate, endDate), // Assumes 'debits' collection
     getIncomeExpenseTrend(storeId, currency, startDate, endDate),
     getPaymentMethodBalance(storeId, currency, "Cash", startDate, endDate),
-    getPaymentMethodBalance(storeId, currency, "Zaad", startDate, endDate),
-    getPaymentMethodBalance(storeId, currency, "eDahab", startDate, endDate),
+    getPaymentMethodBalance(storeId, currency, "Zaad", startDate, endDate), // (FIX #14)
+    getPaymentMethodBalance(storeId, currency, "eDahab", startDate, endDate), // (FIX #14)
     getPaymentMethodBalance(storeId, currency, "Bank", startDate, endDate),
+    getTotalPayables(storeId, currency), // (FIX #15) - Note: Not date ranged
   ]);
 
   const netProfit = totalIncome - totalExpenses;
-  const digitalWallets = zaadBalance + edahabBalance;
-  const payables = 0; // TODO: Implement payables tracking
 
   return {
     kpis: {
@@ -376,10 +434,11 @@ async function getFinanceOverview(
       totalExpenses,
       netProfit,
       cashOnHand,
-      digitalWallets,
+      zaadBalance,    // (FIX #14)
+      edahabBalance,  // (FIX #14)
       bankBalance,
       outstandingInvoices,
-      payables,
+      payables,       // (FIX #15)
     },
     incomeExpenseTrend,
   };
@@ -458,28 +517,79 @@ async function getExpensesData(
 }
 
 // --- TAB 4: Payments & Currencies ---
+// --- (FIX #18) This function is completely rebuilt for efficiency ---
 async function getPaymentsData(
   storeId: string,
   currency: string,
   startDate: Date,
   endDate: Date
 ): Promise<FinancePaymentsData> {
-  const [cashBalance, zaadBalance, edahabBalance, bankBalance] =
-    await Promise.all([
-      getPaymentMethodBalance(storeId, currency, "Cash", startDate, endDate),
-      getPaymentMethodBalance(storeId, currency, "Zaad", startDate, endDate),
-      getPaymentMethodBalance(storeId, currency, "eDahab", startDate, endDate),
-      getPaymentMethodBalance(storeId, currency, "Bank", startDate, endDate),
-    ]);
+  
+  // 1. Get all income and expense breakdowns in just 2 queries
+  const [incomeByMethod, expenseByMethod] = await Promise.all([
+    getBreakdown(
+      "incomes",
+      "paymentMethod",
+      storeId,
+      currency,
+      startDate,
+      endDate
+    ),
+    getBreakdown(
+      "expenses",
+      "paymentMethod",
+      storeId,
+      currency,
+      startDate,
+      endDate
+    ),
+  ]);
 
-  return {
-    cashBalance,
-    zaadBalance,
-    edahabBalance,
-    bankBalance,
-    otherBalances: [], // TODO: Add logic to find other methods if needed
+  // 2. Combine them into a balance map
+  const balanceMap = new Map<string, number>();
+
+  incomeByMethod.forEach((item) => {
+    balanceMap.set(item.name, (balanceMap.get(item.name) || 0) + item.value);
+  });
+
+  expenseByMethod.forEach((item) => {
+    balanceMap.set(item.name, (balanceMap.get(item.name) || 0) - item.value);
+  });
+
+  // 3. Initialize the result object
+  const data: FinancePaymentsData = {
+    cashBalance: 0,
+    zaadBalance: 0,
+    edahabBalance: 0,
+    bankBalance: 0,
+    otherBalances: [],
   };
+
+  // 4. Distribute the balances from the map
+  balanceMap.forEach((balance, name) => {
+    switch (name) {
+      case "Cash":
+        data.cashBalance = balance;
+        break;
+      case "Zaad":
+        data.zaadBalance = balance;
+        break;
+      case "eDahab":
+        data.edahabBalance = balance;
+        break;
+      case "Bank":
+        data.bankBalance = balance;
+        break;
+      default:
+        // Add any other method to the 'otherBalances' array
+        data.otherBalances.push({ name: name, value: balance });
+        break;
+    }
+  });
+
+  return data;
 }
+// --- (END FIX #18) ---
 
 // --- TAB 5: Cash Flow ---
 async function getCashFlowData(

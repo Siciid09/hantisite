@@ -407,11 +407,18 @@ const OverviewTab = ({
         color="text-teal-500"
         isLoading={isLoading}
       />
-      <KpiCard
-        title="Digital Wallets (Zaad+eDahab)"
-        value={formatCurrency(data?.kpis?.digitalWallets)}
+     <KpiCard
+        title="Zaad Balance"
+        value={formatCurrency(data?.kpis?.zaadBalance)}
         icon={Smartphone}
         color="text-blue-500"
+        isLoading={isLoading}
+      />
+      <KpiCard
+        title="eDahab Balance"
+        value={formatCurrency(data?.kpis?.edahabBalance)}
+        icon={Smartphone}
+        color="text-yellow-500"
         isLoading={isLoading}
       />
       <KpiCard

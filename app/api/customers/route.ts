@@ -1,7 +1,11 @@
 // -----------------------------------------------------------------------------
 // File: app/api/customers/route.ts
-// Description: SECURED API endpoint for the "Customers" module.
-// Handles GET, POST, PUT, DELETE for customers and their balances (debits).
+//
+// --- LATEST FIX (Query & Date) ---
+// 1. (CRITICAL FIX) Replaced the double "not-equal" query in "balances"
+//    with a correct "in" query. This fixes the 'INVALID_ARGUMENT' error.
+// 2. (FIXED) All timestamps (`createdAt`) are now converted to ISO strings
+//    to prevent "Invalid Date" errors on the frontend.
 // -----------------------------------------------------------------------------
 import { NextResponse, NextRequest } from "next/server";
 import { DocumentData, Timestamp, FieldValue } from "firebase-admin/firestore";
@@ -39,21 +43,37 @@ export async function GET(request: NextRequest) {
       case "list": {
         const snapshot = await firestoreAdmin.collection("customers")
           .where("storeId", "==", storeId)
-          .orderBy("createdAt", "desc")
+          .orderBy("name", "asc")
           .get();
-        data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        data = snapshot.docs.map(doc => {
+          const docData = doc.data();
+          return { 
+            id: doc.id, 
+            ...docData,
+            createdAt: (docData.createdAt as Timestamp)?.toDate().toISOString() || null
+          };
+        });
         break;
       }
 
       // --- TAB 2: Customer Balances / Credits ---
-      // This reads from your existing 'debits' collection
       case "balances": {
         const snapshot = await firestoreAdmin.collection("debits")
           .where("storeId", "==", storeId)
-          .where("isPaid", "==", false) //
+          // --- (CRITICAL FIX) Use "in" instead of multiple "not-equal" ---
+          .where("status", "in", ["unpaid", "partial"])
           .orderBy("createdAt", "desc")
           .get();
-        data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+          
+        data = snapshot.docs.map(doc => {
+          const docData = doc.data();
+          return {
+            id: doc.id,
+            ...docData,
+            // --- (FIX) Convert timestamp to string before sending ---
+            createdAt: (docData.createdAt as Timestamp).toDate().toISOString()
+          };
+        });
         break;
       }
 
@@ -63,7 +83,8 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json(data, { status: 200 });
 
-  } catch (error: any) {
+  } catch (error: any)
+  {
     console.error("[Customers API GET] Unhandled error:", error.stack || error.message);
     return NextResponse.json({ error: `Failed to load data. ${error.message}` }, { status: 500 });
   }
@@ -90,31 +111,25 @@ export async function POST(request: NextRequest) {
 
     // 2. Get Request Body
     const body = await request.json();
-    const type = body.type;
-
-    // 3. Route to correct create logic
-    switch (type) {
-      // --- Create a new Customer ---
-      case "new_customer": {
-        const { name, phone, email, address } = body;
-        if (!name || !phone) {
-          return NextResponse.json({ error: "Name and Phone are required" }, { status: 400 });
-        }
-        
-        const docRef = await firestoreAdmin.collection("customers").add({
-          name,
-          phone: phone || null,
-          email: email || null,
-          address: address || null,
-          storeId,
-          createdAt: Timestamp.now(),
-        });
-        return NextResponse.json({ id: docRef.id, ...body }, { status: 201 });
-      }
-
-      default:
-        return NextResponse.json({ error: "Invalid POST type" }, { status: 400 });
+    
+    // 3. Create a new Customer
+    const { name, phone, email, address } = body;
+    if (!name || !phone) {
+      return NextResponse.json({ error: "Name and Phone are required" }, { status: 400 });
     }
+    
+    const docRef = await firestoreAdmin.collection("customers").add({
+      name,
+      phone: phone || null,
+      email: email || null,
+      address: address || null,
+      storeId,
+      createdAt: Timestamp.now(),
+      totalSpent: {}, // Initialize KPI
+      totalOwed: {}, // Initialize KPI
+    });
+    return NextResponse.json({ id: docRef.id, ...body }, { status: 201 });
+
   } catch (error: any) {
     console.error("[Customers API POST] Unhandled error:", error.stack || error.message);
     return NextResponse.json({ error: `Failed to create item. ${error.message}` }, { status: 500 });
@@ -167,15 +182,36 @@ export async function PUT(request: NextRequest) {
         if (!debitId) return NextResponse.json({ error: "Debit ID is required" }, { status: 400 });
 
         const docRef = firestoreAdmin.collection("debits").doc(debitId);
-        const doc = await docRef.get();
-        if (!doc.exists || doc.data()?.storeId !== storeId) {
-          return NextResponse.json({ error: "Debit not found" }, { status: 404 });
-        }
+        
+        // --- (FIX) Use a transaction to update debit and customer ---
+        await firestoreAdmin.runTransaction(async (transaction) => {
+          const doc = await transaction.get(docRef);
+          if (!doc.exists || doc.data()?.storeId !== storeId) {
+            throw new Error("Debit not found");
+          }
 
-        await docRef.update({
-          isPaid: true,
-          paidAt: Timestamp.now(),
+          const debtData = doc.data();
+          if (!debtData) throw new Error("Debit data is missing");
+
+          // 1. Update the debit
+          transaction.update(docRef, {
+            isPaid: true,
+            status: "paid",
+            amountDue: 0,
+            paidAt: Timestamp.now(),
+          });
+
+          // 2. Update the customer's balance
+          if (debtData.customerId) {
+            const customerRef = firestoreAdmin.collection("customers").doc(debtData.customerId);
+            const currencyKey = `totalOwed.${debtData.currency}`;
+            transaction.update(customerRef, {
+              [currencyKey]: FieldValue.increment(-debtData.amountDue)
+            });
+          }
         });
+        // --- End Fix ---
+        
         return NextResponse.json({ success: true }, { status: 200 });
       }
 

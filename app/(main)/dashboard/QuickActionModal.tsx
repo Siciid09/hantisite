@@ -2,22 +2,33 @@
 // -----------------------------------------------------------------------------
 // File: app/(main)/dashboard/QuickActionModal.tsx
 //
-// --- LATEST UPDATES ---
-// 1. (FIX) Currency dropdowns now include "EUR", "KSH", and "BIRR".
-// 2. (FIX) "Description" field is now optional. If left blank, a default
-//    value is sent to the API to pass validation.
-// 3. (FIX) Modal background is changed to `bg-gray-900/70` to fix the
-//    "black screen" bug.
+// --- LATEST UPDATES (v3.0 - API Fix) ---
+// 1. (CRITICAL FIX) AddIncomeForm now POSTs to `/api/incomes` instead of `/api/debts`.
+// 2. (CRITICAL FIX) AddExpenseForm now POSTs to `/api/expenses` instead of `/api/debts`.
+// 3. (CLEANUP) Removed the `type: "new_income"` field from the payload
+//    as it's no longer needed.
+// 4. (MODERN UI) All previous UI updates and category features are kept.
 // -----------------------------------------------------------------------------
 
 import React, { useState } from "react";
 import { useAuth } from "@/app/contexts/AuthContext";
 import { auth } from "@/lib/firebaseConfig";
-import { X as XIcon, Loader2 } from "lucide-react";
+import { X as XIcon, Loader2, Plus } from "lucide-react";
 import dayjs from "dayjs";
 
-// (FIX) All currencies
+// All currencies
 const ALL_CURRENCIES = ["USD", "SLSH", "SOS", "EUR", "KSH", "BIRR"];
+
+// Default categories
+const DEFAULT_INCOME_CATEGORIES = ["Sales", "Services", "Rent", "Other Income"];
+const DEFAULT_EXPENSE_CATEGORIES = [
+  "Office Supplies",
+  "Rent",
+  "Salaries",
+  "Utilities",
+  "Travel",
+  "Other",
+];
 
 // --- Main Modal Component ---
 export const QuickActionModal = ({
@@ -55,10 +66,20 @@ const AddIncomeForm = ({
   const [amount, setAmount] = useState("");
   const [currency, setCurrency] = useState("USD");
   const [description, setDescription] = useState("");
-  const [category, setCategory] = useState("Other Income");
+  const [incomeCategories, setIncomeCategories] = useState(
+    DEFAULT_INCOME_CATEGORIES
+  );
+  const [category, setCategory] = useState(incomeCategories[0]); // Default to first
   const [date, setDate] = useState(dayjs().format("YYYY-MM-DD"));
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const handleAddNewCategory = (newCategory: string) => {
+    if (newCategory.trim() && !incomeCategories.includes(newCategory.trim())) {
+      setIncomeCategories((prev) => [...prev, newCategory.trim()]);
+      setCategory(newCategory.trim());
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -66,9 +87,8 @@ const AddIncomeForm = ({
       setError("You must be logged in.");
       return;
     }
-    // (FIX) Description is no longer required client-side
-    if (!amount) {
-      setError("Amount is required.");
+    if (!amount || !category) {
+      setError("Amount and Category are required.");
       return;
     }
 
@@ -78,16 +98,16 @@ const AddIncomeForm = ({
     try {
       const token = await auth.currentUser.getIdToken();
       const payload = {
-        type: "new_income", // This type MUST match your Debts API
+        // type: "new_income", // <-- No longer needed
         amount: parseFloat(amount),
         currency,
-        // (FIX) Send a default description if empty
         description: description || `Quick Add Income on ${date}`,
         category,
         date,
       };
 
-      const res = await fetch("/api/debts", {
+      // --- (FIX) Send to the correct API route ---
+      const res = await fetch("/api/incomes", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -99,9 +119,10 @@ const AddIncomeForm = ({
       if (!res.ok) {
         const err = await res.json();
         throw new Error(err.error || "Failed to save income.");
+      } else {
+         onSuccess();
       }
 
-      onSuccess(); // Refresh dashboard
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -110,9 +131,14 @@ const AddIncomeForm = ({
   };
 
   return (
-    <form onSubmit={handleSubmit} className="mt-4 space-y-4">
-      {error && <p className="text-sm text-red-600">{error}</p>}
-      <div className="flex gap-3">
+    <form onSubmit={handleSubmit} className="mt-6 space-y-5">
+      {error && (
+         <div className="rounded-md bg-red-50 p-3 dark:bg-red-900/20">
+            <p className="text-sm font-medium text-red-700 dark:text-red-300">{error}</p>
+         </div>
+      )}
+      
+      <div className="grid grid-cols-2 gap-4">
         <FormInput
           label="Amount"
           type="number"
@@ -120,16 +146,17 @@ const AddIncomeForm = ({
           onChange={setAmount}
           placeholder="0.00"
           required
-          className="flex-1"
+          className="col-span-1"
         />
         <FormSelect
           label="Currency"
           value={currency}
           onChange={setCurrency}
-          className="flex-1"
+          className="col-span-1"
         >
-          {/* (FIX) All currencies */}
-          {ALL_CURRENCIES.map(c => <option key={c} value={c}>{c}</option>)}
+          {ALL_CURRENCIES.map((c) => (
+            <option key={c} value={c}>{c}</option>
+          ))}
         </FormSelect>
       </div>
       <FormInput
@@ -138,34 +165,34 @@ const AddIncomeForm = ({
         onChange={setDescription}
         placeholder="e.g., Office rent received"
       />
-      <div className="flex gap-3">
-        <FormInput
-          label="Category"
-          value={category}
-          onChange={setCategory}
-          placeholder="e.g., Other Income"
-          className="flex-1"
-        />
-        <FormInput
-          label="Date"
-          type="date"
-          value={date}
-          onChange={setDate}
-          className="flex-1"
-        />
-      </div>
+      
+      <CategoryInput
+        label="Category"
+        value={category}
+        onChange={setCategory}
+        categories={incomeCategories}
+        onAddNewCategory={handleAddNewCategory}
+      />
+      
+      <FormInput
+        label="Date"
+        type="date"
+        value={date}
+        onChange={setDate}
+      />
+      
       <div className="flex justify-end gap-3 pt-4">
         <button
           type="button"
           onClick={onClose}
-          className="rounded-lg border px-4 py-2 text-sm dark:border-gray-600"
+          className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
         >
           Cancel
         </button>
         <button
           type="submit"
           disabled={isSubmitting}
-          className="flex w-28 items-center justify-center rounded-lg bg-blue-600 px-4 py-2 text-sm text-white disabled:opacity-50"
+          className="flex w-32 items-center justify-center rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-blue-700 disabled:opacity-50"
         >
           {isSubmitting ? (
             <Loader2 className="h-5 w-5 animate-spin" />
@@ -190,10 +217,20 @@ const AddExpenseForm = ({
   const [amount, setAmount] = useState("");
   const [currency, setCurrency] = useState("USD");
   const [description, setDescription] = useState("");
-  const [category, setCategory] = useState("Office Supplies");
+  const [expenseCategories, setExpenseCategories] = useState(
+    DEFAULT_EXPENSE_CATEGORIES
+  );
+  const [category, setCategory] = useState(expenseCategories[0]);
   const [date, setDate] = useState(dayjs().format("YYYY-MM-DD"));
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const handleAddNewCategory = (newCategory: string) => {
+    if (newCategory.trim() && !expenseCategories.includes(newCategory.trim())) {
+      setExpenseCategories((prev) => [...prev, newCategory.trim()]);
+      setCategory(newCategory.trim());
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -201,9 +238,8 @@ const AddExpenseForm = ({
       setError("You must be logged in.");
       return;
     }
-    // (FIX) Description is no longer required client-side
-    if (!amount) {
-      setError("Amount is required.");
+    if (!amount || !category) {
+      setError("Amount and Category are required.");
       return;
     }
 
@@ -213,16 +249,16 @@ const AddExpenseForm = ({
     try {
       const token = await auth.currentUser.getIdToken();
       const payload = {
-        type: "new_expense", // This type MUST match your Debts API
+        // type: "new_expense", // <-- No longer needed
         amount: parseFloat(amount),
         currency,
-        // (FIX) Send a default description if empty
         description: description || `Quick Add Expense on ${date}`,
         category,
         date,
       };
 
-      const res = await fetch("/api/debts", {
+      // --- (FIX) Send to the correct API route ---
+      const res = await fetch("/api/expenses", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -234,9 +270,10 @@ const AddExpenseForm = ({
       if (!res.ok) {
         const err = await res.json();
         throw new Error(err.error || "Failed to save expense.");
+      } else {
+        onSuccess();
       }
 
-      onSuccess(); // Refresh dashboard
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -245,9 +282,14 @@ const AddExpenseForm = ({
   };
 
   return (
-    <form onSubmit={handleSubmit} className="mt-4 space-y-4">
-      {error && <p className="text-sm text-red-600">{error}</p>}
-      <div className="flex gap-3">
+    <form onSubmit={handleSubmit} className="mt-6 space-y-5">
+      {error && (
+         <div className="rounded-md bg-red-50 p-3 dark:bg-red-900/20">
+            <p className="text-sm font-medium text-red-700 dark:text-red-300">{error}</p>
+         </div>
+      )}
+      
+      <div className="grid grid-cols-2 gap-4">
         <FormInput
           label="Amount"
           type="number"
@@ -255,52 +297,54 @@ const AddExpenseForm = ({
           onChange={setAmount}
           placeholder="0.00"
           required
-          className="flex-1"
+          className="col-span-1"
         />
         <FormSelect
           label="Currency"
           value={currency}
           onChange={setCurrency}
-          className="flex-1"
+          className="col-span-1"
         >
-          {/* (FIX) All currencies */}
-          {ALL_CURRENCIES.map(c => <option key={c} value={c}>{c}</option>)}
+          {ALL_CURRENCIES.map((c) => (
+            <option key={c} value={c}>{c}</option>
+          ))}
         </FormSelect>
       </div>
+
       <FormInput
         label="Description (Optional)"
         value={description}
         onChange={setDescription}
         placeholder="e.g., Printer paper and ink"
       />
-      <div className="flex gap-3">
-        <FormInput
-          label="Category"
-          value={category}
-          onChange={setCategory}
-          placeholder="e.g., Office Supplies"
-          className="flex-1"
-        />
-        <FormInput
-          label="Date"
-          type="date"
-          value={date}
-          onChange={setDate}
-          className="flex-1"
-        />
-      </div>
+      
+      <CategoryInput
+        label="Category"
+        value={category}
+        onChange={setCategory}
+        categories={expenseCategories}
+        onAddNewCategory={handleAddNewCategory}
+      />
+
+      <FormInput
+        label="Date"
+        type="date"
+        value={date}
+        onChange={setDate}
+      />
+      
       <div className="flex justify-end gap-3 pt-4">
         <button
           type="button"
           onClick={onClose}
-          className="rounded-lg border px-4 py-2 text-sm dark:border-gray-600"
+          className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
         >
           Cancel
         </button>
         <button
           type="submit"
           disabled={isSubmitting}
-          className="flex w-28 items-center justify-center rounded-lg bg-blue-600 px-4 py-2 text-sm text-white disabled:opacity-50"
+          className="flex w-32 items-center justify-center rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-blue-700 disabled:opacity-50"
         >
           {isSubmitting ? (
             <Loader2 className="h-5 w-5 animate-spin" />
@@ -313,8 +357,104 @@ const AddExpenseForm = ({
   );
 };
 
-// --- Reusable UI Components (Copied from your other modules for consistency) ---
+// --- (Re-usable components below are unchanged) ---
 
+// --- Reusable Category Input Component ---
+const CategoryInput = ({
+  label,
+  value,
+  onChange,
+  categories,
+  onAddNewCategory,
+}: {
+  label: string;
+  value: string;
+  onChange: (val: string) => void;
+  categories: string[];
+  onAddNewCategory: (newCategory: string) => void;
+}) => {
+  const [showNewInput, setShowNewInput] = useState(false);
+  const [newCategoryName, setNewCategoryName] = useState("");
+
+  const handleAddNew = () => {
+    if (newCategoryName.trim()) {
+      onAddNewCategory(newCategoryName.trim());
+      onChange(newCategoryName.trim());
+      setNewCategoryName("");
+      setShowNewInput(false);
+    }
+  };
+
+  const handleCancelNew = () => {
+    setNewCategoryName("");
+    setShowNewInput(false);
+  };
+
+  return (
+    <div>
+      <label className="mb-1.5 block text-sm font-medium">{label}</label>
+      
+      <div className="flex items-center gap-2">
+        <FormSelect
+          label=""
+          value={value}
+          onChange={onChange}
+          className="flex-1"
+          hideLabel={true}
+        >
+          {categories.map((c) => (
+            <option key={c} value={c}>
+              {c}
+            </option>
+          ))}
+        </FormSelect>
+        <button
+          type="button"
+          onClick={() => setShowNewInput(true)}
+          className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg border border-gray-300 bg-gray-50 text-gray-600 shadow-sm transition-colors hover:bg-gray-100 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
+          title="Add new category"
+        >
+          <Plus className="h-5 w-5" />
+        </button>
+      </div>
+
+      {showNewInput && (
+        <div className="mt-2 flex items-center gap-2 rounded-lg border border-gray-300 bg-gray-50 p-2 dark:border-gray-600 dark:bg-gray-700/50">
+          <input
+            type="text"
+            placeholder="New category name"
+            value={newCategoryName}
+            onChange={(e) => setNewCategoryName(e.target.value)}
+            className="flex-1 rounded-md border-gray-300 p-2 text-sm shadow-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 dark:border-gray-500 dark:bg-gray-600 dark:text-white"
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                handleAddNew();
+              }
+            }}
+          />
+          <button
+            type="button"
+            onClick={handleAddNew}
+            className="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white shadow-sm hover:bg-blue-700"
+          >
+            Save
+          </button>
+          <button
+            type="button"
+            onClick={handleCancelNew}
+            className="rounded-md px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-200 dark:text-gray-300 dark:hover:bg-gray-600"
+          >
+            Cancel
+          </button>
+        </div>
+      )}
+    </div>
+  );
+};
+
+
+// --- Reusable UI Components ---
 const ModalBase = ({
   title,
   onClose,
@@ -324,14 +464,19 @@ const ModalBase = ({
   onClose: () => void;
   children: React.ReactNode;
 }) => (
-  // (FIX) Changed background to fix "black screen" bug
-  <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/70 backdrop-blur-sm">
-    <div className="w-full max-w-lg rounded-lg bg-white p-6 shadow-xl dark:bg-gray-800">
+  <div 
+    className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/70 p-4 backdrop-blur-sm"
+    onClick={onClose}
+  >
+    <div 
+      className="w-full max-w-lg rounded-xl bg-white p-6 shadow-xl dark:bg-gray-800"
+      onClick={(e) => e.stopPropagation()}
+    >
       <div className="flex items-center justify-between">
         <h3 className="text-lg font-semibold">{title}</h3>
         <button
           onClick={onClose}
-          className="rounded-full p-1 text-gray-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-700"
+          className="rounded-full p-1 text-gray-500 transition-colors hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gamma-700"
         >
           <XIcon className="h-5 w-5" />
         </button>
@@ -345,19 +490,23 @@ const FormInput = ({
   label,
   value,
   onChange,
+  hideLabel = false,
   ...props
 }: {
   label: string;
   value: string;
   onChange: (val: string) => void;
+  hideLabel?: boolean;
   [key: string]: any;
 }) => (
   <div className={props.className}>
-    <label className="mb-1 block text-sm font-medium">{label}</label>
+    {!hideLabel && (
+      <label className="mb-1.5 block text-sm font-medium">{label}</label>
+    )}
     <input
       value={value}
       onChange={(e) => onChange(e.target.value)}
-      className="w-full rounded-lg border border-gray-300 p-2 dark:border-gray-600 dark:bg-gray-700"
+      className="w-full rounded-lg border border-gray-300 p-2.5 text-sm shadow-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700 dark:text-white dark:placeholder-gray-400 dark:focus:border-blue-500 dark:focus:ring-blue-500"
       {...props}
     />
   </div>
@@ -368,20 +517,24 @@ const FormSelect = ({
   value,
   onChange,
   children,
+  hideLabel = false,
   ...props
 }: {
-  label:string;
+  label: string;
   value: string;
   onChange: (val: string) => void;
   children: React.ReactNode;
+  hideLabel?: boolean;
   [key: string]: any;
 }) => (
   <div className={props.className}>
-    <label className="mb-1 block text-sm font-medium">{label}</label>
+     {!hideLabel && (
+      <label className="mb-1.5 block text-sm font-medium">{label}</label>
+     )}
     <select
       value={value}
       onChange={(e) => onChange(e.target.value)}
-      className="w-full rounded-lg border border-gray-300 p-2 dark:border-gray-600 dark:bg-gray-700"
+      className="w-full rounded-lg border border-gray-300 p-2.5 text-sm shadow-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700 dark:text-white dark:focus:border-blue-500 dark:focus:ring-blue-500"
       {...props}
     >
       {children}

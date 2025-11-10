@@ -7,7 +7,7 @@
 // -----------------------------------------------------------------------------
 
 "use client";
-
+ 
 import React, { useState, useEffect, Suspense, useMemo, Fragment } from "react";
 import { useSearchParams } from "next/navigation";
 import useSWR from "swr";
@@ -30,8 +30,11 @@ import { generateInvoicePdf } from "@/lib/pdfService";
 // =============================================================================
 // 📝 Main Sales Page Component
 // =============================================================================
+// =============================================================================
+// 📝 Main Sales Page Component
+// =============================================================================
 function SalesPage() {
-  const { user, loading: authLoading } = useAuth();
+  const { user, loading: authLoading, subscription } = useAuth(); // <-- FIX: Add `subscription` here
   const searchParams = useSearchParams();
   const view = searchParams.get("view") || "dashboard";
 
@@ -94,8 +97,15 @@ function SalesPage() {
   };
 
   const handlePrintSale = (sale: any) => {
-    generateInvoicePdf(sale); 
+  // --- (FIX) Get store info from `subscription` object ---
+  const storeInfo = {
+    // Check your Firestore 'stores' collection for the exact field names
+    name: PushSubscription?.name || subscription?.storeName || "Your Store",
+    address: subscription?.address || subscription?.storeAddress || "Your Address",
+    phone: subscription?.phone || subscription?.storePhone || "Your Phone"
   };
+  generateInvoicePdf(sale, storeInfo); 
+};
   
   // Handlers for the "New Return" modal
   const handleOpenReturnModal = (sale: any | null = null) => {
@@ -188,6 +198,7 @@ function SalesPage() {
     </>
   );
 }
+
 
 // =============================================================================
 // 📦 Suspense Wrapper

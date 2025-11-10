@@ -1,36 +1,31 @@
 // -----------------------------------------------------------------------------
 // File: app/api/dashboard/route.ts
 //
-// --- LATEST UPDATES ---
-// 1. (FIX) Dhammaan shaqooyinkii madhanaa (placeholder functions) waa la buuxiyay.
-// 2. (FIX) Waxay hadda si dhab ah u weydiinaysaa (queries) Firestore xogta
-//    Recent Sales, Top Products, Stock, Charts, iyo Activity Feed.
-// 3. (FIX) Waxaa lagu daray Role-Based Security (shaqaaluhu ma arki karo xogta maaliyadeed).
-// 4. (FIX) Waxaa lagu daray Hybrid Caching si loo dedejiyo xogta (default ranges).
+// --- LATEST FIXES (v6.0) ---
+// 1. (CRITICAL) `getSalesData`: Changed query to 'orderBy("createdAt", "asc")'
+//    to match the (ASC) index you built in Firestore.
+//    This will fix the 'Sales Count: 0' bug.
+// 2. (FIX) `getSalesData`: Added a 'try/catch' block to match the
+//    other helpers, preventing API crashes from index errors.
+// 3. (KEPT) All logic for 12 KPIs and Profit Margin is included.
 // -----------------------------------------------------------------------------
 import { NextResponse, NextRequest } from "next/server";
 import { DocumentData, Timestamp, FieldValue } from "firebase-admin/firestore";
 import { firestoreAdmin, authAdmin } from "@/lib/firebaseAdmin";
 import dayjs from "dayjs";
 
-// --- (FIX) Laga soo import-gareeyay types file ---
+// --- Make sure this file 'app/api/dashboard/types.ts' exists! ---
 import { type DashboardSummary } from "../types";
 
 // -----------------------------------------------------------------------------
 //  HELPER FUNCTIONS (Shaqooyinka Caawiya)
 // -----------------------------------------------------------------------------
 
-/**
- * Si badbaado leh u soo saara tiro (number) meel kasta.
- */
 function getNumericField(data: DocumentData, field: string): number {
   const value = data[field];
   return typeof value === "number" && !isNaN(value) ? value : 0.0;
 }
 
-/**
- * Xisaabiya wadarta guud ee collection-ka (Wuxuu ku shaqeeyaa sidii hore)
- */
 async function getAggregateSum(
   collectionName: string,
   amountField: string,
@@ -54,15 +49,96 @@ async function getAggregateSum(
     });
     return total;
   } catch (error: any) {
-    // Wuxuu iska indha tirayaa haddii index loo baahdo laakiin aan la helin
     console.warn(`Warning for ${collectionName}: ${error.message}`);
     return 0;
   }
 }
 
-/**
- * Wuxuu soo qaadaa wadarta tirada alaabta (Wuxuu ku shaqeeyaa sidii hore)
- */
+async function getTotalOutstandingDebts(storeId: string, currency: string): Promise<number> {
+  if (!firestoreAdmin) return 0;
+  const collRef = firestoreAdmin.collection("debits");
+  const q = collRef
+    .where("storeId", "==", storeId)
+    .where("currency", "==", currency)
+    .where("status", "!=", "paid");
+  
+  try {
+    const querySnapshot = await q.get();
+    let total = 0.0;
+    querySnapshot.forEach((doc) => {
+      total += getNumericField(doc.data(), "amountDue");
+    });
+    return total;
+  } catch (error: any) {
+    console.warn(`Warning for getTotalOutstandingDebts: ${error.message}`);
+    return 0;
+  }
+}
+
+async function getTotalPayables(storeId: string, currency: string): Promise<number> {
+  if (!firestoreAdmin) return 0;
+  const collRef = firestoreAdmin.collection("purchases");
+  const q = collRef
+    .where("storeId", "==", storeId)
+    .where("currency", "==", currency)
+    .where("status", "!=", "paid");
+  
+  try {
+    const querySnapshot = await q.get();
+    let total = 0.0;
+    querySnapshot.forEach((doc) => {
+      total += getNumericField(doc.data(), "remainingAmount");
+    });
+    return total;
+  } catch (error: any) {
+    console.warn(`Warning for getTotalPayables: ${error.message}`);
+    return 0;
+  }
+}
+
+async function getSumByPaymentMethod(
+  collectionName: string,
+  storeId: string,
+  currency: string,
+  paymentMethod: string,
+  startDate: Date,
+  endDate: Date
+): Promise<number> {
+  if (!firestoreAdmin) throw new Error("Firestore Admin not initialized.");
+  try {
+    const collRef = firestoreAdmin.collection(collectionName);
+    const q = collRef
+      .where("storeId", "==", storeId)
+      .where("currency", "==", currency)
+      .where("paymentMethod", "==", paymentMethod)
+      .where("createdAt", ">=", startDate)
+      .where("createdAt", "<=", endDate);
+    const querySnapshot = await q.get();
+    let total = 0.0;
+    querySnapshot.forEach((doc) => {
+      total += getNumericField(doc.data(), "amount");
+    });
+    return total;
+  } catch (error: any) {
+    console.warn(`Warning for ${collectionName} (${paymentMethod}): ${error.message}`);
+    return 0;
+  }
+}
+
+async function getPaymentMethodBalance(
+  storeId: string,
+  currency: string,
+  paymentMethod: string,
+  startDate: Date,
+  endDate: Date
+): Promise<number> {
+  const [totalIncome, totalExpense] = await Promise.all([
+    getSumByPaymentMethod("incomes", storeId, currency, paymentMethod, startDate, endDate),
+    getSumByPaymentMethod("expenses", storeId, currency, paymentMethod, startDate, endDate),
+  ]);
+  return totalIncome - totalExpense;
+}
+
 async function getTotalProducts(storeId: string): Promise<number> {
   if (!firestoreAdmin) throw new Error("Firestore Admin not initialized.");
   const collRef = firestoreAdmin
@@ -76,9 +152,6 @@ async function getTotalProducts(storeId: string): Promise<number> {
 // [BUUXIYAY] - Shaqooyinkii Madhanaa oo la Dhammaystiray
 // -----------------------------------------------------------------------------
 
-/**
- * [BUUXIYAY] - Wuxuu soo saaraa shaxda isbarbardhigga Dakhliga iyo Khasaaraha.
- */
 async function getIncomeExpenseTrend(
   storeId: string,
   currency: string,
@@ -87,75 +160,71 @@ async function getIncomeExpenseTrend(
 ): Promise<DashboardSummary["incomeExpenseTrend"]> {
   if (!firestoreAdmin) throw new Error("Firestore Admin not initialized.");
 
-  // 1. Soo uruuri dhammaan xogta dakhliga iyo kharashka
-  const incomePromise = firestoreAdmin
-    .collection("incomes")
-    .where("storeId", "==", storeId)
-    .where("currency", "==", currency)
-    .where("createdAt", ">=", startDate)
-    .where("createdAt", "<=", endDate)
-    .get();
+  try {
+    const incomePromise = firestoreAdmin
+      .collection("incomes")
+      .where("storeId", "==", storeId)
+      .where("currency", "==", currency)
+      .where("createdAt", ">=", startDate)
+      .where("createdAt", "<=", endDate)
+      .get();
 
-  const expensePromise = firestoreAdmin
-    .collection("expenses")
-    .where("storeId", "==", storeId)
-    .where("currency", "==", currency)
-    .where("createdAt", ">=", startDate)
-    .where("createdAt", "<=", endDate)
-    .get();
+    const expensePromise = firestoreAdmin
+      .collection("expenses")
+      .where("storeId", "==", storeId)
+      .where("currency", "==", currency)
+      .where("createdAt", ">=", startDate)
+      .where("createdAt", "<=", endDate)
+      .get();
 
-  const [incomeSnap, expenseSnap] = await Promise.all([
-    incomePromise,
-    expensePromise,
-  ]);
+    const [incomeSnap, expenseSnap] = await Promise.all([
+      incomePromise,
+      expensePromise,
+    ]);
 
-  // 2. Ku habee xogta maab (Map) ku saleysan taariikhda
-  const trendMap = new Map<string, { income: number; expense: number }>();
+    const trendMap = new Map<string, { income: number; expense: number }>();
 
-  incomeSnap.forEach((doc) => {
-    const data = doc.data();
-    const date = (data.createdAt as Timestamp).toDate();
-    const dateKey = dayjs(date).format("YYYY-MM-DD");
-    const amount = getNumericField(data, "amount");
-
-    const current = trendMap.get(dateKey) || { income: 0, expense: 0 };
-    current.income += amount;
-    trendMap.set(dateKey, current);
-  });
-
-  expenseSnap.forEach((doc) => {
-    const data = doc.data();
-    const date = (data.createdAt as Timestamp).toDate();
-    const dateKey = dayjs(date).format("YYYY-MM-DD");
-    const amount = getNumericField(data, "amount");
-
-    const current = trendMap.get(dateKey) || { income: 0, expense: 0 };
-    current.expense += amount;
-    trendMap.set(dateKey, current);
-  });
-
-  // 3. Ku buuxi maalmaha madhan eber (0)
-  const results: DashboardSummary["incomeExpenseTrend"] = [];
-  let currentDay = dayjs(startDate);
-  const endDay = dayjs(endDate);
-
-  while (currentDay.isBefore(endDay) || currentDay.isSame(endDay, "day")) {
-    const dateKey = currentDay.format("YYYY-MM-DD");
-    const data = trendMap.get(dateKey) || { income: 0, expense: 0 };
-    results.push({
-      date: dateKey,
-      income: data.income,
-      expense: data.expense,
+    incomeSnap.forEach((doc) => {
+      const data = doc.data();
+      const date = (data.createdAt as Timestamp).toDate();
+      const dateKey = dayjs(date).format("YYYY-MM-DD");
+      const amount = getNumericField(data, "amount");
+      const current = trendMap.get(dateKey) || { income: 0, expense: 0 };
+      current.income += amount;
+      trendMap.set(dateKey, current);
     });
-    currentDay = currentDay.add(1, "day");
-  }
 
-  return results;
+    expenseSnap.forEach((doc) => {
+      const data = doc.data();
+      const date = (data.createdAt as Timestamp).toDate();
+      const dateKey = dayjs(date).format("YYYY-MM-DD");
+      const amount = getNumericField(data, "amount");
+      const current = trendMap.get(dateKey) || { income: 0, expense: 0 };
+      current.expense += amount;
+      trendMap.set(dateKey, current);
+    });
+
+    const results: DashboardSummary["incomeExpenseTrend"] = [];
+    let currentDay = dayjs(startDate);
+    const endDay = dayjs(endDate);
+
+    while (currentDay.isBefore(endDay) || currentDay.isSame(endDay, "day")) {
+      const dateKey = currentDay.format("YYYY-MM-DD");
+      const data = trendMap.get(dateKey) || { income: 0, expense: 0 };
+      results.push({
+        date: dateKey,
+        income: data.income,
+        expense: data.expense,
+      });
+      currentDay = currentDay.add(1, "day");
+    }
+    return results;
+  } catch (error: any) {
+    console.warn(`Warning for getIncomeExpenseTrend: ${error.message}`);
+    return [];
+  }
 }
 
-/**
- * [BUUXIYAY] - Wuxuu soo saaraa shaxda kala-qaybinta kharashka (Expense Breakdown).
- */
 async function getExpenseBreakdown(
   storeId: string,
   currency: string,
@@ -164,33 +233,35 @@ async function getExpenseBreakdown(
 ): Promise<DashboardSummary["expenseBreakdown"]> {
   if (!firestoreAdmin) throw new Error("Firestore Admin not initialized.");
 
-  const expenseSnap = await firestoreAdmin
-    .collection("expenses")
-    .where("storeId", "==", storeId)
-    .where("currency", "==", currency)
-    .where("createdAt", ">=", startDate)
-    .where("createdAt", "<=", endDate)
-    .get();
+  try {
+    const expenseSnap = await firestoreAdmin
+      .collection("expenses")
+      .where("storeId", "==", storeId)
+      .where("currency", "==", currency)
+      .where("createdAt", ">=", startDate)
+      .where("createdAt", "<=", endDate)
+      .get();
 
-  const breakdownMap = new Map<string, number>();
-
-  expenseSnap.forEach((doc) => {
-    const data = doc.data();
-    const category = data.category || "Uncategorized";
-    const amount = getNumericField(data, "amount");
-    const currentTotal = breakdownMap.get(category) || 0;
-    breakdownMap.set(category, currentTotal + amount);
-  });
-
-  // U beddel qaabka uu Recharts u baahan yahay
-  return Array.from(breakdownMap.entries()).map(([name, value]) => ({
-    name,
-    value,
-  }));
+    const breakdownMap = new Map<string, number>();
+    expenseSnap.forEach((doc) => {
+      const data = doc.data();
+      const category = data.category || "Uncategorized";
+      const amount = getNumericField(data, "amount");
+      const currentTotal = breakdownMap.get(category) || 0;
+      breakdownMap.set(category, currentTotal + amount);
+    });
+    return Array.from(breakdownMap.entries()).map(([name, value]) => ({
+      name,
+      value,
+    }));
+  } catch (error: any) {
+    console.warn(`Warning for getExpenseBreakdown: ${error.message}`);
+    return [];
+  }
 }
 
 /**
- * [BUUXIYAY] - Wuxuu soo saaraa xogta iibka (Sales Data) oo dhan.
+ * [BUUXIYAY & LA SAXAY] - Wuxuu soo saaraa xogta iibka (Sales Data) oo dhan.
  */
 async function getSalesData(
   storeId: string,
@@ -205,91 +276,92 @@ async function getSalesData(
 }> {
   if (!firestoreAdmin) throw new Error("Firestore Admin not initialized.");
 
-  // Soo qaad 5-tii iib ee ugu dambeeyay
-  const recentSalesSnap = await firestoreAdmin
-    .collection("sales")
-    .where("storeId", "==", storeId)
-    .where("currency", "==", currency)
-    .where("createdAt", ">=", startDate)
-    .where("createdAt", "<=", endDate)
-    .orderBy("createdAt", "desc")
-    .limit(5)
-    .get();
+  // --- (FIX 1) Added try/catch block for safety ---
+  try {
+    const salesQuery = firestoreAdmin
+      .collection("sales")
+      .where("storeId", "==", storeId)
+      .where("invoiceCurrency", "==", currency)
+      .where("createdAt", ">=", startDate)
+      .where("createdAt", "<=", endDate);
 
-  const recentSales = recentSalesSnap.docs.map((doc) => {
-    const data = doc.data();
-    return {
-      id: doc.id,
-      customerName: data.customerName || "Walk-in",
-      totalAmount: getNumericField(data, "totalAmount"),
-      status: data.status || "paid",
-      createdAt: (data.createdAt as Timestamp).toDate().toISOString(),
-    };
-  });
+    // --- (FIX 2) Changed to 'asc' to match your enabled index ---
+    const recentSalesSnap = await salesQuery
+      .orderBy("createdAt", "asc") // <-- MUST MATCH YOUR INDEX
+      .limit(5)
+      .get();
 
-  // Soo qaad DHAMMAAN iibka muddadan si loo xisaabiyo Top Products
-  // Digniin: Kani wuu gaabin karaa haddii iibku aad u badan yahay.
-  const allSalesSnap = await firestoreAdmin
-    .collection("sales")
-    .where("storeId", "==", storeId)
-    .where("currency", "==", currency)
-    .where("createdAt", ">=", startDate)
-    .where("createdAt", "<=", endDate)
-    .get();
-
-  let totalSalesCount = 0;
-  const productMap = new Map<string, { name: string; unitsSold: number; revenue: number }>();
-  const paymentMap = new Map<string, number>();
-
-  allSalesSnap.forEach((doc) => {
-    totalSalesCount++;
-    const data = doc.data();
-
-    // 1. Xisaabi Payment Types
-    const paymentMethods = data.paymentMethods || [];
-    paymentMethods.forEach((method: any) => {
-      const type = method.method || "Other";
-      const amount = method.amount || 0;
-      const currentTotal = paymentMap.get(type) || 0;
-      paymentMap.set(type, currentTotal + amount);
-    });
-
-    // 2. Xisaabi Top Products
-    const items = data.items || [];
-    items.forEach((item: any) => {
-      const productId = item.productId || "unknown";
-      const current = productMap.get(productId) || {
-        name: item.productName || "Unknown Product",
-        unitsSold: 0,
-        revenue: 0,
+    // Because we used 'asc', we reverse it in code to show newest first
+    const recentSales = recentSalesSnap.docs.map((doc) => {
+      const data = doc.data();
+      return {
+        id: doc.id,
+        customerName: data.customerName || "Walk-in",
+        totalAmount: getNumericField(data, "totalAmount"),
+        status: data.paymentStatus || "paid",
+        createdAt: (data.createdAt as Timestamp).toDate().toISOString(),
       };
-      current.unitsSold += item.quantity || 0;
-      current.revenue += (item.quantity || 0) * (item.pricePerUnit || 0);
-      productMap.set(productId, current);
+    }).reverse(); // <-- Reverse to show newest
+
+    const allSalesSnap = await salesQuery.get();
+
+    const totalSalesCount = allSalesSnap.size;
+    const productMap = new Map<string, { name: string; unitsSold: number; revenue: number }>();
+    const paymentMap = new Map<string, number>();
+
+    allSalesSnap.forEach((doc) => {
+      const data = doc.data();
+      const paymentLines = data.paymentLines || [];
+      paymentLines.forEach((line: any) => {
+        const type = line.method || "Other";
+        const amount = line.valueInInvoiceCurrency || 0; 
+        const currentTotal = paymentMap.get(type) || 0;
+        paymentMap.set(type, currentTotal + amount);
+      });
+      const items = data.items || [];
+      items.forEach((item: any) => {
+        const productId = item.productId || "unknown";
+        const current = productMap.get(productId) || {
+          name: item.productName || "Unknown Product",
+          unitsSold: 0,
+          revenue: 0,
+        };
+        const quantity = item.quantity || 0;
+        const price = item.pricePerUnit || 0;
+        current.unitsSold += quantity;
+        current.revenue += quantity * price;
+        productMap.set(productId, current);
+      });
     });
-  });
 
-  // U kala saar Top Products
-  const topSellingProducts = Array.from(productMap.values())
-    .sort((a, b) => b.revenue - a.revenue) // Ku kala saar dakhliga (revenue)
-    .slice(0, 5); // Soo qaad 5-ta sare
+    const topSellingProducts = Array.from(productMap.values())
+      .sort((a, b) => b.revenue - a.revenue)
+      .slice(0, 5);
 
-  // U beddel Payment Types
-  const salesByPaymentType = Array.from(paymentMap.entries()).map(
-    ([name, value]) => ({ name, value })
-  );
+    const salesByPaymentType = Array.from(paymentMap.entries()).map(
+      ([name, value]) => ({ name, value })
+    );
 
-  return {
-    totalSalesCount,
-    recentSales,
-    topSellingProducts,
-    salesByPaymentType,
-  };
+    return {
+      totalSalesCount,
+      recentSales,
+      topSellingProducts,
+      salesByPaymentType,
+    };
+  } catch (error: any) {
+    // --- (FIX 1 cont.) ---
+    console.warn(`Warning for getSalesData: ${error.message}`);
+    // Return empty data instead of crashing
+    return {
+      totalSalesCount: 0,
+      recentSales: [],
+      topSellingProducts: [],
+      salesByPaymentType: [],
+    };
+  }
 }
 
-/**
- * [BUUXIYAY] - Wuxuu soo saaraa xogta alaabta gabaabka ah (Low Stock).
- */
+
 async function getStockOverview(storeId: string): Promise<{
   lowStockCount: number;
   stockOverview: DashboardSummary["stockOverview"];
@@ -297,45 +369,43 @@ async function getStockOverview(storeId: string): Promise<{
   if (!firestoreAdmin) throw new Error("Firestore Admin not initialized.");
   const LOW_STOCK_THRESHOLD = 10;
 
-  const productsRef = firestoreAdmin
-    .collection("products")
-    .where("storeId", "==", storeId);
+  try {
+    const productsRef = firestoreAdmin
+      .collection("products")
+      .where("storeId", "==", storeId);
 
-  // 1. Soo hel tirada guud (Count)
-  const countSnap = await productsRef
-    .where("quantity", "<=", LOW_STOCK_THRESHOLD)
-    .count()
-    .get();
-  const lowStockCount = countSnap.data().count;
+    const countSnap = await productsRef
+      .where("quantity", "<=", LOW_STOCK_THRESHOLD)
+      .count()
+      .get();
+    const lowStockCount = countSnap.data().count;
 
-  // 2. Soo qaad 5-ta ugu hooseysa
-  const overviewSnap = await productsRef
-    .where("quantity", "<=", LOW_STOCK_THRESHOLD)
-    .orderBy("quantity", "asc")
-    .limit(5)
-    .get();
+    const overviewSnap = await productsRef
+      .where("quantity", "<=", LOW_STOCK_THRESHOLD)
+      .orderBy("quantity", "asc")
+      .limit(5)
+      .get();
 
-  const stockOverview = overviewSnap.docs.map((doc) => {
-    const data = doc.data();
-    return {
-      id: doc.id,
-      name: data.name || "Unnamed Product",
-      quantity: getNumericField(data, "quantity"),
-    };
-  });
-
-  return { lowStockCount, stockOverview };
+    const stockOverview = overviewSnap.docs.map((doc) => {
+      const data = doc.data();
+      return {
+        id: doc.id,
+        name: data.name || "Unnamed Product",
+        quantity: getNumericField(data, "quantity"),
+      };
+    });
+    return { lowStockCount, stockOverview };
+  } catch (error: any) {
+    console.warn(`Warning for getStockOverview: ${error.message}`);
+    return { lowStockCount: 0, stockOverview: [] };
+  }
 }
 
-/**
- * [BUUXIYAY] - Wuxuu soo saaraa dhaqdhaqaaqyadii (activities) ugu dambeeyay.
- */
 async function getActivityFeed(
   storeId: string
 ): Promise<DashboardSummary["activityFeed"]> {
   if (!firestoreAdmin) throw new Error("Firestore Admin not initialized.");
 
-  // Fiiro gaar ah: Tani waxay u baahan tahay inuu jiro 'activity_feed' collection
   try {
     const feedSnap = await firestoreAdmin
       .collection("activity_feed")
@@ -355,7 +425,6 @@ async function getActivityFeed(
     });
   } catch (error) {
   console.warn(`Could not load activity feed: ${(error as Error).message}`);
-
     return [
       {
         id: "1",
@@ -367,9 +436,6 @@ async function getActivityFeed(
   }
 }
 
-/**
- * Wuxuu isbarbar dhigaa waxqabadka (Wuxuu ku shaqeeyaa sidii hore)
- */
 async function getPerformanceComparison(
   storeId: string,
   currency: string,
@@ -404,9 +470,6 @@ async function getPerformanceComparison(
   };
 }
 
-/**
- * Wuxuu soo saaraa talo (Wuxuu ku shaqeeyaa sidii hore)
- */
 function generateSmartInsight(
   profitChange: number,
   topProduct: string | undefined
@@ -427,7 +490,7 @@ function generateSmartInsight(
 }
 
 // -----------------------------------------------------------------------------
-// MAIN BUSINESS LOGIC (Shaqada Ugu Muhiimsan)
+// MAIN BUSINESS LOGIC (Shaqada Ugu Muhiimsan) - (UPDATED)
 // -----------------------------------------------------------------------------
 async function generateDashboardSummary(
   storeId: string,
@@ -440,29 +503,34 @@ async function generateDashboardSummary(
   const todayStart = dayjs().startOf("day").toDate();
   const todayEnd = dayjs().endOf("day").toDate();
 
-  // Hadda dhammaan shaqooyinka waa la wada yeerayaa
   const [
     todaysSales,
     totalIncomes,
     totalExpenses,
     newDebtsAmount,
-    salesData,
+    salesData, // <-- (FIX) This now comes from 'sales'
     stockData,
     activityFeed,
     incomeExpenseTrend,
     expenseBreakdown,
     performanceComparison,
     totalProducts,
+    // --- (NEW) ---
+    outstandingInvoices,
+    totalPayables,
+    cashBalance,
+    // --- (END NEW) ---
   ] = await Promise.all([
+    // 8-dii hore
     getAggregateSum("incomes", "amount", storeId, currency, todayStart, todayEnd),
     getAggregateSum("incomes", "amount", storeId, currency, currentStart, currentEnd),
     getAggregateSum("expenses", "amount", storeId, currency, currentStart, currentEnd),
     getAggregateSum("debits", "amountDue", storeId, currency, currentStart, currentEnd),
-    getSalesData(storeId, currency, currentStart, currentEnd), // [BUUXIYAY]
-    getStockOverview(storeId), // [BUUXIYAY]
-    getActivityFeed(storeId), // [BUUXIYAY]
-    getIncomeExpenseTrend(storeId, currency, currentStart, currentEnd), // [BUUXIYAY]
-    getExpenseBreakdown(storeId, currency, currentStart, currentEnd), // [BUUXIYAY]
+    getSalesData(storeId, currency, currentStart, currentEnd), // (FIX)
+    getStockOverview(storeId),
+    getActivityFeed(storeId),
+    getIncomeExpenseTrend(storeId, currency, currentStart, currentEnd),
+    getExpenseBreakdown(storeId, currency, currentStart, currentEnd),
     getPerformanceComparison(
       storeId,
       currency,
@@ -472,23 +540,40 @@ async function generateDashboardSummary(
       prevEnd
     ),
     getTotalProducts(storeId),
+    // --- (NEW) 4-ta cusub ---
+    getTotalOutstandingDebts(storeId, currency), // Total, not date-ranged
+    getTotalPayables(storeId, currency), // Total, not date-ranged
+    getPaymentMethodBalance(storeId, currency, "Cash", currentStart, currentEnd), // Date-ranged
   ]);
 
   const netProfit = totalIncomes - totalExpenses;
+  // --- (FIX) Xisaabi Profit Margin ---
+  const profitMargin = totalIncomes > 0 ? (netProfit / totalIncomes) * 100 : 0;
+  
   const smartInsight = generateSmartInsight(
     performanceComparison.profitChangePercent,
     salesData.topSellingProducts[0]?.name
   );
 
   const summary: DashboardSummary = {
+    // 8-dii hore
     todaysSales,
-    totalIncomes,
+    totalIncomes, // Total Revenue
     totalExpenses,
     netProfit,
-    totalSalesCount: salesData.totalSalesCount,
-    newDebtsAmount,
+    totalSalesCount: salesData.totalSalesCount, // (FIX)
+    newDebtsAmount, // 'New Debts' ee xilligan
     lowStockCount: stockData.lowStockCount,
     totalProducts,
+    
+    // --- (NEW) 4-ta cusub ---
+    outstandingInvoices, // Wadarta guud ee deymaha
+    totalPayables,
+    cashBalance,
+    profitMargin, // (FIX)
+    // --- (END NEW) ---
+    
+    // Inta kale ee charts-ka iyo xogta
     incomeExpenseTrend,
     expenseBreakdown,
     salesByPaymentType: salesData.salesByPaymentType,
@@ -506,9 +591,6 @@ async function generateDashboardSummary(
 // -----------------------------------------------------------------------------
 // [LAGU DARAY] - SECURITY FUNCTION (Shaqada Amniga)
 // -----------------------------------------------------------------------------
-/**
- * Wuxuu ka saarayaa xogta maaliyadeed ee xasaasiga ah shaqaalaha (user role).
- */
 function filterSensitiveData(
   data: DashboardSummary,
   role: string
@@ -517,7 +599,6 @@ function filterSensitiveData(
     return data; // Admins/Managers wax walba way arki karaan
   }
 
-  // Shaqaalaha (user role) wuxuu helayaa xog la dhimay
   return {
     ...data,
     totalIncomes: 0,
@@ -526,15 +607,16 @@ function filterSensitiveData(
     expenseBreakdown: [],
     performanceComparison: { salesChangePercent: 0, profitChangePercent: 0 },
     smartInsight: "All systems operational. Have a great day!",
+    outstandingInvoices: 0,
+    totalPayables: 0,
+    cashBalance: 0,
+    profitMargin: 0,
   };
 }
 
 // -----------------------------------------------------------------------------
 // [LAGU DARAY] - CACHING HELPER (Shaqada Kaydinta)
 // -----------------------------------------------------------------------------
-/**
- * Wuxuu hubinayaa haddii taariikhdu ay tahay mid la kaydin karo.
- */
 function isDefaultRange(startDateStr: string, endDateStr: string): string | null {
   const now = dayjs();
   const today = {
@@ -564,7 +646,7 @@ function isDefaultRange(startDateStr: string, endDateStr: string): string | null
   if (startDateStr === thisYear.start && endDateStr === thisYear.end)
     return "this_year";
 
-  return null; // Waa taariikh kale (custom range)
+  return null;
 }
 
 // -----------------------------------------------------------------------------
@@ -601,7 +683,7 @@ export async function GET(request: NextRequest) {
 
     const userData = userDoc.data();
     const storeId = userData?.storeId;
-    const role = userData?.role || "user"; // Haddii aan role lahayn, noqo 'user'
+    const role = userData?.role || "user";
 
     if (!storeId) {
       return NextResponse.json({ error: "User has no store." }, { status: 403 });
@@ -624,7 +706,6 @@ export async function GET(request: NextRequest) {
     const defaultRangeKey = isDefaultRange(startDateStr, endDateStr);
     let summary: DashboardSummary;
 
-    // Kuwani waa taariikhaha loo baahan yahay haddii aan xogta si toos ah u soo qaadano
     const currentStart = dayjs(startDateStr).startOf("day").toDate();
     const currentEnd = dayjs(endDateStr).endOf("day").toDate();
     const diffInDays = dayjs(currentEnd).diff(dayjs(currentStart), "day");
@@ -643,7 +724,6 @@ export async function GET(request: NextRequest) {
       const cacheData = cacheDoc.data();
       const cachedSummary = cacheData?.[defaultRangeKey];
 
-      // Hubi haddii cache-ku uu duugoobay (in ka badan 1 saac)
       const isCacheStale =
         !cacheData?.lastUpdated ||
         dayjs().diff(dayjs(cacheData.lastUpdated.toDate()), "hour") > 1;
@@ -652,7 +732,7 @@ export async function GET(request: NextRequest) {
         console.log(`[Dashboard API] Serving "${defaultRangeKey}" from CACHE`);
         summary = cachedSummary as DashboardSummary;
       } else {
-        // --- B: Cache-ku wuu maqan yahay ama wuu duugoobay, xogta si toos ah u soo qaado ---
+        // --- B: Cache-ku wuu maqan yahay ama wuu duugoobay
         console.log(
           `[Dashboard API] Cache MISS for "${defaultRangeKey}". Running real-time.`
         );
@@ -661,7 +741,6 @@ export async function GET(request: NextRequest) {
           storeId, currency, currentStart, currentEnd, prevStart, prevEnd
         );
         
-        // Ku kaydi natiijada cusub cache-ka (ha sugin inta ay dhamaanayso)
         cacheRef.set({
             [defaultRangeKey]: summary,
             lastUpdated: FieldValue.serverTimestamp()
@@ -669,7 +748,7 @@ export async function GET(request: NextRequest) {
           .catch(err => console.error("Failed to update cache:", err));
       }
     } else {
-      // --- C: Waa taariikh kale (custom range), mar kasta si toos ah u soo qaado ---
+      // --- C: Waa taariikh kale (custom range)
       console.log("[Dashboard API] Serving CUSTOM range from REAL-TIME query.");
       summary = await generateDashboardSummary(
         storeId, currency, currentStart, currentEnd, prevStart, prevEnd

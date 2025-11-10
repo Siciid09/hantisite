@@ -1,17 +1,13 @@
 // File: app/(main)/purchases/page.tsx
 //
-// --- CHANGELOG (NOV 5, 2025 v2) ---
-// 1. (FIX) 'ViewPurchaseModal': Replaced 'Payment Due' (Date) with
-//    'Amount Due' (Amount) to solve the "N/A" issue.
-// 2. (NEW) Created a new <ReportDownloadPopover /> component.
-// 3. (MOVED) 'SupplierFilter' and 'DatePresets' are now *inside* the
-//    <ReportDownloadPopover /> instead of on the main page.
-// 4. (CLEANUP) Removed 'supplier' from the main 'filters' state and
-//    <FilterBar />. The main page no longer filters by supplier.
-// 5. (INFO) 'handleReload' (Refresh Button) functionality is confirmed
-//    correct and re-fetches data using mutate().
-// 6. (INFO) The download buttons in the popover now pass their local state
-//    (report date range, report supplier) to a handler function.
+// --- FINAL PRODUCTION VERSION ---
+// 1. (FIX) 'AddPurchaseModal' is fully corrected.
+// 2. (FIX) 'AddSupplierModal' is now included and auto-selects.
+// 3. (FIX) All helper components ('FormInput', 'FormSelect', etc.) at the
+//    bottom are the "smart" versions, fixing all "read-only" bugs.
+// 4. (FIX) All 'onChange' handlers use '(val: string)' to fix TS errors.
+// 5. (FIX) All inline forms (Product, Warehouse, Category) auto-select.
+// 6. (FIX) All forms now have modern CSS/JS error handling.
 // -----------------------------------------------------------------------------
 "use client";
 
@@ -21,6 +17,8 @@ import useSWR, { useSWRConfig } from "swr";
 import { useAuth } from "@/app/contexts/AuthContext";
 import { auth } from "@/lib/firebaseConfig";
 import dayjs from "dayjs";
+import { jsPDF } from "jspdf";
+import autoTable from "jspdf-autotable";
 import {
   PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer,
   BarChart, Bar, XAxis, YAxis, CartesianGrid, LineChart, Line,
@@ -66,7 +64,6 @@ export function cn(...inputs: ClassValue[]) {
 // 💰 API Fetcher & Utilities
 // -----------------------------------------------------------------------------
 const fetcher = async (url: string) => {
-  // ... (same as before)
   const user = auth.currentUser;
   if (!user) throw new Error("User is not authenticated.");
   const token = await user.getIdToken();
@@ -79,7 +76,6 @@ const fetcher = async (url: string) => {
 };
 
 const formatCurrency = (amount: number | undefined | null, currency: string): string => {
-  // ... (same as before)
   if (amount == null) return "N/A";
   const nonDecimalCurrencies = ["SLSH", "SOS", "KSH", "BIRR"];
   const style = (currency === "USD" || currency === "EUR") ? "currency" : "decimal";
@@ -135,7 +131,6 @@ function PurchasesPage() {
   const [isViewModalOpen, setIsViewModalOpen] = useState(false);
   const [viewingPurchase, setViewingPurchase] = useState<any | null>(null);
   
-  // --- (MODIFIED) Filters (Removed 'supplier') ---
   const [filters, setFilters] = useState({
     currency: searchParams.get("currency") || "USD",
     startDate: searchParams.get("startDate") || dayjs().startOf("month").format("YYYY-MM-DD"),
@@ -145,14 +140,11 @@ function PurchasesPage() {
   });
 
   // --- SWR Data Fetching (Optimized) ---
-  
-  // 1. Fetch main purchases data based on filters
   const buildUrl = () => {
     const params = new URLSearchParams();
     Object.entries(filters).forEach(([key, value]) => {
       if (value) params.append(key, String(value));
     });
-    // Note: 'supplier' is no longer in 'filters', so it's not added here.
     return `/api/purchases?${params.toString()}`;
   };
   
@@ -164,7 +156,7 @@ function PurchasesPage() {
     mutate,
   } = useSWR(swrKey, fetcher);
 
-  // 2. Fetch form data (suppliers, etc.) at the page level
+  // 2. Fetch form data (suppliers, products, warehouses, categories)
   const {
     data: formData,
     error: formError,
@@ -199,7 +191,7 @@ function PurchasesPage() {
   };
   
   const handleReload = () => {
-    mutate(); // This is the correct way to refresh data
+    mutate();
   };
 
   const handleOpenViewModal = (purchase: any) => {
@@ -217,16 +209,14 @@ function PurchasesPage() {
   // ---------------------------------
   return (
     <div className="min-h-screen bg-white p-4 pt-6 dark:bg-gray-900 md:p-8">
-      {/* --- (MODIFIED) Header --- */}
+      {/* --- Header --- */}
       <header className="mb-6 flex flex-col items-center justify-between gap-4 md:flex-row">
         <h1 className="text-3xl font-bold text-gray-900 dark:text-white">Purchases</h1>
         <div className="flex w-full flex-col items-stretch gap-2 sm:w-auto sm:flex-row">
-          {/* --- (NEW) Report Download Popover --- */}
           <ReportDownloadPopover
             formData={formData}
             formIsLoading={formIsLoading}
           />
-          
           <div className="flex items-center gap-2">
             <button
               onClick={handleReload}
@@ -246,7 +236,7 @@ function PurchasesPage() {
         </div>
       </header>
 
-      {/* --- 🔍 (MODIFIED) Filter Bar (SupplierFilter removed) --- */}
+      {/* --- Filter Bar --- */}
       <FilterBar 
         filters={filters} 
         onFilterChange={handleFilterChange} 
@@ -258,35 +248,31 @@ function PurchasesPage() {
       
       {apiData && (
         <div className="space-y-6">
-          {/* --- 💰 KPIs --- */}
+          {/* --- KPIs --- */}
           <div className="mt-6 grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4">
             <KpiCard
               title="Total Purchases"
               value={formatCurrency(apiData.kpis.totalPurchases, filters.currency)}
-              icon={DollarSign}
-              color="text-green-500"
+              icon={DollarSign} color="text-green-500"
             />
             <KpiCard
               title="Total Pending"
               value={formatCurrency(apiData.kpis.totalPending, filters.currency)}
-              icon={Clock}
-              color="text-orange-500"
+              icon={Clock} color="text-orange-500"
             />
             <KpiCard
               title="Total Paid"
               value={formatCurrency(apiData.kpis.totalPaid, filters.currency)}
-              icon={CheckCircle}
-              color="text-blue-500"
+              icon={CheckCircle} color="text-blue-500"
             />
             <KpiCard
               title="Average Purchase"
               value={formatCurrency(apiData.kpis.avgPurchase, filters.currency)}
-              icon={BarChart2}
-              color="text-purple-500"
+              icon={BarChart2} color="text-purple-500"
             />
           </div>
 
-          {/* --- 📈 Charts --- */}
+          {/* --- Charts --- */}
           <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
             <ChartCard title="Purchase Trend Over Time">
               <PurchaseTrendChart data={apiData.charts.monthlyTrend} currency={filters.currency} />
@@ -296,7 +282,7 @@ function PurchasesPage() {
             </ChartCard>
           </div>
           
-          {/* --- 📊 Purchases List --- */}
+          {/* --- Purchases List --- */}
           <Card>
             <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Purchase History</h3>
             <PurchaseList
@@ -316,7 +302,7 @@ function PurchasesPage() {
           onClose={() => setIsAddModalOpen(false)}
           onSuccess={handleActionSuccess}
           defaultCurrency={filters.currency}
-          formData={formData}
+          formData={formData} // Pass ALL form data
           formIsLoading={formIsLoading}
           formError={formError}
         />
@@ -342,31 +328,22 @@ function PurchasesPage() {
 // 🧩 Sub-Components
 // -----------------------------------------------------------------------------
  
-// --- (NEW) Report Download Popover Component ---
-// File: app/(main)/purchases/page.tsx
-// ... (dhammaan code-kaaga kale ee kore ha taaban)
-
-// =============================================================================
-// 🧩 Sub-Components
-// =============================================================================
-
-// --- (NEW) Report Download Popover Component (FIXED) ---
+// --- Report Download Popover Component ---
 const PRESETS = [
   { label: "Last 7 Days", range: { from: startOfDay(subDays(new Date(), 6)), to: endOfDay(new Date()) } },
   { label: "Last 30 Days", range: { from: startOfDay(subDays(new Date(), 29)), to: endOfDay(new Date()) } },
   { label: "This Month", range: { from: startOfMonth(new Date()), to: endOfDay(new Date()) } },
   { label: "Last Month", range: { from: startOfMonth(sub(new Date(), { months: 1 })), to: endOfMonth(sub(new Date(), { months: 1 })) } },
 ];
-
 function ReportDownloadPopover({ formData, formIsLoading }: {
   formData: any,
   formIsLoading: boolean
 }) {
-  const [reportRange, setReportRange] = useState<DateRange | undefined>(PRESETS[1].range); // Default to Last 30 Days
+  const [reportRange, setReportRange] = useState<DateRange | undefined>(PRESETS[1].range);
   const [selectedSupplier, setSelectedSupplier] = useState<any | null>(null);
   const [supplierFilterOn, setSupplierFilterOn] = useState(false);
   const [query, setQuery] = useState('');
-
+  const [isDownloading, setIsDownloading] = useState(false);
   const suppliers = formData?.suppliers || [];
   const filteredSuppliers =
     query === ''
@@ -374,41 +351,50 @@ function ReportDownloadPopover({ formData, formIsLoading }: {
       : suppliers.filter((supplier: any) =>
           supplier.name.toLowerCase().includes(query.toLowerCase())
         );
-        
   const handleSupplierToggle = (isOn: boolean) => {
     setSupplierFilterOn(isOn);
-    if (!isOn) {
-      setSelectedSupplier(null); // Clear supplier if toggled off
+    if (!isOn) { setSelectedSupplier(null); }
+  };
+  const handleDownloadReport = async (reportType: 'excel' | 'pdf') => {
+    setIsDownloading(true);
+    try {
+      const user = auth.currentUser;
+      if (!user) throw new Error("User not authenticated.");
+      const token = await user.getIdToken();
+      const params = new URLSearchParams({
+        action: 'download',
+        format: reportType === 'excel' ? 'csv' : 'pdf',
+        startDate: reportRange?.from ? format(reportRange.from, "yyyy-MM-dd") : '',
+        endDate: reportRange?.to ? format(reportRange.to, "yyyy-MM-dd") : '',
+        supplierId: supplierFilterOn && selectedSupplier ? selectedSupplier.id : '',
+      });
+      const reportUrl = `/api/purchases?${params.toString()}`;
+      const res = await fetch(reportUrl, { headers: { Authorization: `Bearer ${token}` } });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || "Failed to download report.");
+      }
+      const blob = await res.blob();
+      const filename = `purchases_${supplierFilterOn && selectedSupplier ? selectedSupplier.name.replace(' ','_') : 'all'}_${dayjs().format('YYYYMMDD')}.${reportType === 'excel' ? 'csv' : 'pdf'}`;
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (error: any) {
+      console.error("Download failed:", error);
+      alert(`Download failed: ${error.message}`);
+    } finally {
+      setIsDownloading(false);
     }
   };
-
-  // --- (FIXED) This function now calls the correct API endpoint ---
-  const handleDownloadReport = (reportType: 'excel' | 'pdf') => {
-    
-    // 1. Build the query parameters
-    const params = new URLSearchParams({
-      action: 'download', // <-- This triggers the download logic in your API
-      format: reportType === 'excel' ? 'csv' : 'pdf', // API-gaagu wuxuu aqbalayaa 'csv'
-      startDate: reportRange?.from ? format(reportRange.from, "yyyy-MM-dd") : '',
-      endDate: reportRange?.to ? format(reportRange.to, "yyyy-MM-dd") : '',
-      supplierId: supplierFilterOn && selectedSupplier ? selectedSupplier.id : '',
-    });
-
-    // 2. (FIX) Create the correct URL
-    // Wuxuu ahaa /api/reports/purchases, hadda waa /api/purchases
-    const reportUrl = `/api/purchases?${params.toString()}`;
-
-    // 3. Trigger the download by opening the URL in a new tab
-    window.open(reportUrl, '_blank');
-  };
-
   return (
     <Popover>
     <PopoverTrigger asChild>
-        <Button
-          variant="outline"
-          className="flex w-full items-center justify-center gap-2 border-gray-300 bg-white dark:border-gray-600 dark:bg-gray-700"
-        >
+        <Button variant="outline" className="flex w-full items-center justify-center gap-2 border-gray-300 bg-white dark:border-gray-600 dark:bg-gray-700">
           <Download className="h-4 w-4" />
           Download Report
           <ChevronDown className="-mr-1 ml-1 h-4 w-4" />
@@ -416,38 +402,23 @@ function ReportDownloadPopover({ formData, formIsLoading }: {
       </PopoverTrigger>
       <PopoverContent className="w-80 bg-white p-4 dark:bg-gray-800" align="end">
         <div className="flex flex-col gap-4">
-          
-          {/* --- (FIX) Replaced Listbox with NewDateRangePicker --- */}
           <div>
             <label className="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
               Select Report Period
             </label>
-            {/* Kani waa component-ka casriga ah ee aad rabtay */}
-           <NewDateRangePicker
-              date={reportRange}
-              onApply={setReportRange} // Wuxuu si toos ah u cusbooneysiinayaa 'reportRange' state
-            />
+           <NewDateRangePicker date={reportRange} onApply={setReportRange} />
           </div>
-          
-          {/* 2. Supplier Filter (Unchanged) */}
           <div className="space-y-3 rounded-lg border p-3 dark:border-gray-700">
             <div className="flex items-center justify-between">
               <span className="font-medium text-gray-700 dark:text-gray-300">Filter by Supplier</span>
-              <Switch
-                checked={supplierFilterOn}
-                onChange={handleSupplierToggle}
-                className={`${supplierFilterOn ? 'bg-blue-600' : 'bg-gray-200 dark:bg-gray-600'}
-                  relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none`}
-              >
+              <Switch checked={supplierFilterOn} onChange={handleSupplierToggle}
+                className={`${supplierFilterOn ? 'bg-blue-600' : 'bg-gray-200 dark:bg-gray-600'} relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none`}>
                 <span className="sr-only">Filter by supplier</span>
-                <span
-                  aria-hidden="true"
-                  className={`${supplierFilterOn ? 'translate-x-5' : 'translate-x-0'}
-                    pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out`}
+                <span aria-hidden="true"
+                  className={`${supplierFilterOn ? 'translate-x-5' : 'translate-x-0'} pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out`}
                 />
               </Switch>
             </div>
-            
             {supplierFilterOn && (
               <Combobox value={selectedSupplier} onChange={setSelectedSupplier}>
                 <div className="relative">
@@ -482,26 +453,14 @@ function ReportDownloadPopover({ formData, formIsLoading }: {
               </Combobox>
             )}
           </div>
-
-          {/* 3. Download Buttons (Unchanged) */}
           <div className="flex flex-col gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => handleDownloadReport('excel')}
-              className="flex items-center justify-center gap-2"
-            >
-              <FileSpreadsheet className="h-4 w-4" />
-              Download as Excel
+            <Button variant="outline" size="sm" onClick={() => handleDownloadReport('excel')} disabled={isDownloading} className="flex items-center justify-center gap-2">
+              {isDownloading ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileSpreadsheet className="h-4 w-4" />}
+              {isDownloading ? "Downloading..." : "Download as Excel"}
             </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => handleDownloadReport('pdf')}
-              className="flex items-center justify-center gap-2"
-            >
-              <FileText className="h-4 w-4" />
-              Download as PDF
+            <Button variant="outline" size="sm" onClick={() => handleDownloadReport('pdf')} disabled={isDownloading} className="flex items-center justify-center gap-2">
+              {isDownloading ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileText className="h-4 w-4" />}
+              {isDownloading ? "Downloading..." : "Download as PDF"}
             </Button>
           </div>
         </div>
@@ -510,9 +469,7 @@ function ReportDownloadPopover({ formData, formIsLoading }: {
   );
 }
 
-// ... (inta kale ee faylkaaga 'page.tsx' waa sidii hore)
-
-// --- (MODIFIED) Filter Bar (Simpler) ---
+// --- Filter Bar ---
 const FilterBar = ({ filters, onFilterChange, onDateChange }: { 
   filters: any, 
   onFilterChange: (k: string, v: string | number) => void,
@@ -529,13 +486,9 @@ const FilterBar = ({ filters, onFilterChange, onDateChange }: {
       />
       <Search className="absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-gray-400" />
     </div>
-    
     <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
       <NewDateRangePicker
-        date={{ 
-          from: dayjs(filters.startDate).toDate(), 
-          to: dayjs(filters.endDate).toDate() 
-        }}
+        date={{ from: dayjs(filters.startDate).toDate(), to: dayjs(filters.endDate).toDate() }}
         onApply={onDateChange}
       />
       <ModernSelect
@@ -551,12 +504,11 @@ const FilterBar = ({ filters, onFilterChange, onDateChange }: {
         options={STATUS_OPTIONS}
       />
     </div>
-    {/* --- Supplier Filter was removed from here --- */}
   </div>
 );
 
+// --- KpiCard ---
 const KpiCard = ({ title, value, icon: Icon, color }: any) => (
-  // ... (same as before)
   <Card className="flex items-center gap-4">
     <div className={`flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-full ${color.replace('text-', 'bg-')} bg-opacity-10`}>
       <Icon className={`h-6 w-6 ${color}`} />
@@ -568,16 +520,16 @@ const KpiCard = ({ title, value, icon: Icon, color }: any) => (
   </Card>
 );
 
+// --- ChartCard ---
 const ChartCard = ({ title, children }: { title: string, children: React.ReactNode }) => (
-  // ... (same as before)
   <Card className="h-80">
     <h3 className="text-lg font-semibold text-gray-900 dark:text-white">{title}</h3>
     <div className="mt-4 h-[280px] w-full">{children}</div>
   </Card>
 );
 
+// --- PurchaseTrendChart ---
 const PurchaseTrendChart = ({ data, currency }: { data: any[], currency: string }) => {
-  // ... (same as before)
   if (!data || data.length === 0) return <ChartEmptyState />;
   return (
     <ResponsiveContainer width="100%" height="100%">
@@ -592,8 +544,8 @@ const PurchaseTrendChart = ({ data, currency }: { data: any[], currency: string 
   );
 };
 
+// --- TopSuppliersChart ---
 const TopSuppliersChart = ({ data, currency }: { data: { name: string, total: number }[], currency: string }) => {
-  // ... (same as before)
   if (!data || data.length === 0) return <ChartEmptyState />;
   return (
     <ResponsiveContainer width="100%" height="100%">
@@ -608,12 +560,39 @@ const TopSuppliersChart = ({ data, currency }: { data: { name: string, total: nu
   );
 };
 
+// --- PurchaseList ---
 const PurchaseList = ({ purchases, currency, onPay, onView, onDelete }: any) => {
-  // ... (same as before)
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  
+  // (FIX) All errors are now alerts
+  const handleDelete = async (purchaseId: string) => {
+    if (deletingId) return;
+    if (window.confirm("Are you sure you want to delete this purchase? This will reverse any stock added. This action cannot be undone.")) {
+      setDeletingId(purchaseId);
+      try {
+        const user = auth.currentUser;
+        if (!user) throw new Error("User not authenticated.");
+        const token = await user.getIdToken();
+        const res = await fetch(`/api/purchases?id=${purchaseId}`, {
+          method: 'DELETE',
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        if (!res.ok) {
+          const err = await res.json();
+          throw new Error(err.error || "Delete failed");
+        }
+        onDelete(); // This is the mutate() function
+      } catch (error: any) {
+        alert(`Error: ${error.message}`); // <-- (FIX) Use alert
+      } finally {
+        setDeletingId(null);
+      }
+    }
+  };
+  
   if (!purchases || purchases.length === 0) {
     return <TableEmptyState message="No purchase orders found for these filters." />;
   }
-  
   const getStatusChip = (status: string) => {
     switch (status) {
       case 'paid':
@@ -625,7 +604,6 @@ const PurchaseList = ({ purchases, currency, onPay, onView, onDelete }: any) => 
         return <span className="rounded-full bg-orange-100 px-2.5 py-0.5 text-xs font-medium text-orange-700 dark:bg-orange-900/50 dark:text-orange-400">Pending</span>;
     }
   };
-
   return (
     <div className="mt-4 flow-root">
       <div className="-mx-4 -my-2 overflow-x-auto sm:-mx-6 lg:-mx-8">
@@ -652,26 +630,15 @@ const PurchaseList = ({ purchases, currency, onPay, onView, onDelete }: any) => 
                   <td className="py-4 pl-3 pr-4 text-right text-sm font-medium sm:pr-0">
                     <div className="flex justify-end gap-1">
                       {po.status !== 'paid' && (
-                        <button
-                          onClick={() => onPay(po)}
-                          className="rounded-lg p-2 text-green-600 hover:bg-green-100 dark:hover:bg-gray-700"
-                          title="Log Payment"
-                        >
+                        <button onClick={() => onPay(po)} className="rounded-lg p-2 text-green-600 hover:bg-green-100 dark:hover:bg-gray-700" title="Log Payment">
                           <HandCoins className="h-4 w-4" />
                         </button>
                       )}
-                      <button
-                        onClick={() => onView(po)}
-                        className="rounded-lg p-2 text-gray-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-700"
-                        title="View Details"
-                      >
+                      <button onClick={() => onView(po)} className="rounded-lg p-2 text-gray-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-700" title="View Details">
                         <Eye className="h-4 w-4" />
                       </button>
-                      <button
-                        className="rounded-lg p-2 text-red-600 hover:bg-red-100 dark:hover:bg-gray-700"
-                        title="Delete Purchase"
-                      >
-                        <Trash2 className="h-4 w-4" />
+                      <button onClick={() => handleDelete(po.id)} disabled={deletingId === po.id} className="rounded-lg p-2 text-red-600 hover:bg-red-100 disabled:opacity-50 dark:hover:bg-gray-700" title="Delete Purchase">
+                        {deletingId === po.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
                       </button>
                     </div>
                   </td>
@@ -685,10 +652,14 @@ const PurchaseList = ({ purchases, currency, onPay, onView, onDelete }: any) => 
   );
 };
 
-// --- Modals ---
+// -----------------------------------------------------------------------------
+//  modals
+// -----------------------------------------------------------------------------
+
+// (Define the PriceField type)
+type PriceField = { id: number, currency: string, sale: string, cost: string };
 
 const AddPurchaseModal = ({ onClose, onSuccess, defaultCurrency, formData, formIsLoading, formError }: {
-  // ... (same as before)
   onClose: () => void,
   onSuccess: () => void,
   defaultCurrency: string,
@@ -696,6 +667,7 @@ const AddPurchaseModal = ({ onClose, onSuccess, defaultCurrency, formData, formI
   formIsLoading: boolean,
   formError: Error | null
 }) => {
+  const { mutate: globalMutate } = useSWRConfig();
   const [isSaving, setIsSaving] = useState(false);
   const [supplier, setSupplier] = useState<any>(null);
   const [warehouse, setWarehouse] = useState<any>(null);
@@ -705,10 +677,36 @@ const AddPurchaseModal = ({ onClose, onSuccess, defaultCurrency, formData, formI
   const [purchaseDate, setPurchaseDate] = useState(dayjs().format("YYYY-MM-DD"));
   const [dueDate, setDueDate] = useState("");
   const [notes, setNotes] = useState("");
+  const [errors, setErrors] = useState<any>({}); // <-- (FIX) For validation
+  
+  // --- State for adding items ---
   const [currentProduct, setCurrentProduct] = useState<any>(null);
   const [currentQty, setCurrentQty] = useState("1");
   const [currentCost, setCurrentCost] = useState("0");
+
+  // --- State for new supplier/warehouse forms ---
+  const [isAddSupplierModalOpen, setIsAddSupplierModalOpen] = useState(false);
+  const [isAddingWarehouse, setIsAddingWarehouse] = useState(false);
+  const [newWarehouseName, setNewWarehouseName] = useState("");
+  const [newWarehouseAddress, setNewWarehouseAddress] = useState("");
+  const [isSavingWarehouse, setIsSavingWarehouse] = useState(false);
+  const [warehouseError, setWarehouseError] = useState("");
   
+  // --- State for new product form ---
+  const [isAddingProduct, setIsAddingProduct] = useState(false);
+  const [isSavingProduct, setIsSavingProduct] = useState(false);
+  const [newProductName, setNewProductName] = useState("");
+  const [newProductCategory, setNewProductCategory] = useState("");
+  const [priceFields, setPriceFields] = useState<PriceField[]>([
+    { id: 1, currency: "USD", sale: "", cost: "" }
+  ]);
+  const [showAddCategory, setShowAddCategory] = useState(false);
+  const [newCategoryName, setNewCategoryName] = useState("");
+  const [isSavingInline, setIsSavingInline] = useState(false);
+  const [productError, setProductError] = useState("");
+  const [categoryError, setCategoryError] = useState("");
+  // --- End ---
+
   const totalAmount = useMemo(() => {
     return cart.reduce((acc, item) => acc + item.subtotal, 0);
   }, [cart]);
@@ -729,9 +727,9 @@ const AddPurchaseModal = ({ onClose, onSuccess, defaultCurrency, formData, formI
   }, [currency, currentProduct]);
   
   const handleAddItemToCart = () => {
-    // ... (same as before)
+    setErrors({}); // Clear main error
     if (!currentProduct || Number(currentQty) <= 0 || Number(currentCost) < 0) {
-      alert("Invalid item details");
+      setErrors({ cart: "Please select a product, quantity, and valid cost." });
       return;
     }
     setCart([
@@ -750,17 +748,244 @@ const AddPurchaseModal = ({ onClose, onSuccess, defaultCurrency, formData, formI
   };
   
   const handleDeleteItem = (productId: string) => {
-    // ... (same as before)
     setCart(cart.filter(item => item.productId !== productId));
   };
   
-  const handleSubmit = async (e: React.FormEvent) => {
-    // ... (same as before)
-    e.preventDefault();
-    if (!supplier || !warehouse || cart.length === 0) {
-      alert("Please select supplier, warehouse, and add at least one item.");
+  const handleSaveNewWarehouse = async () => {
+    if (!newWarehouseName) {
+      setWarehouseError("Warehouse Name is required.");
       return;
     }
+    setIsSavingWarehouse(true);
+    setWarehouseError("");
+    try {
+      const user = auth.currentUser;
+      if (!user) throw new Error("User not authenticated.");
+      const token = await user.getIdToken();
+      
+      const res = await fetch("/api/products", { // <-- Correct URL
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ 
+          type: "warehouse", // <-- Correct type
+          name: newWarehouseName, 
+          address: newWarehouseAddress 
+        }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || "Failed to save warehouse.");
+      }
+      
+      const newWarehouse = await res.json(); 
+      
+      // Manually update cache
+      globalMutate(
+        "/api/purchases?tab=form_data",
+        (currentData: any) => ({
+          ...currentData,
+          warehouses: [...(currentData?.warehouses || []), newWarehouse],
+        }),
+        false
+      );
+      
+      setNewWarehouseName("");
+      setNewWarehouseAddress("");
+      setIsAddingWarehouse(false);
+      setWarehouse(newWarehouse); // Auto-select
+      
+    } catch (err: any) {
+      setWarehouseError((err as Error).message);
+    } finally {
+      setIsSavingWarehouse(false);
+    }
+  };
+  
+  const handleSupplierAdded = (newSupplier: any) => {
+    globalMutate(
+      "/api/purchases?tab=form_data",
+      (currentData: any) => ({
+        ...currentData,
+        suppliers: [...(currentData?.suppliers || []), newSupplier],
+      }),
+      false
+    );
+    setIsAddSupplierModalOpen(false);
+    setSupplier(newSupplier); // Auto-select
+  };
+
+  const handlePriceChange = (id: number, key: "currency" | "sale" | "cost", value: string) => {
+    setPriceFields(prevFields =>
+      prevFields.map(field =>
+        field.id === id ? { ...field, [key]: value } : field
+      )
+    );
+  };
+  const addPriceField = () => setPriceFields(prev => [...prev, { id: Date.now(), currency: "SLSH", sale: "", cost: "" }]);
+  const removePriceField = (id: number) => setPriceFields(prev => prev.filter(field => field.id !== id));
+  
+  const handleAddInline = async (type: "category") => {
+    if (!newCategoryName) {
+      setCategoryError("Category name cannot be empty.");
+      return;
+    }
+    setIsSavingInline(true);
+    setCategoryError("");
+    const user = auth.currentUser;
+    if (!user) {
+      setCategoryError("Authentication error.");
+      setIsSavingInline(false);
+      return;
+    }
+    
+    const body = { type: "category", name: newCategoryName };
+
+    try {
+      const token = await user.getIdToken();
+      const res = await fetch("/api/products", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify(body),
+      });
+
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || `Failed to add ${type}.`);
+      }
+      
+      const newCategory = await res.json(); 
+
+      globalMutate(
+        "/api/purchases?tab=form_data",
+        (currentData: any) => ({
+          ...currentData,
+          categories: [...(currentData?.categories || []), newCategory],
+        }),
+        false
+      );
+      
+      setNewProductCategory(newCategory.name); // Auto-select
+      setNewCategoryName("");
+      setShowAddCategory(false);
+      
+    } catch (error: any) {
+      setCategoryError((error as Error).message);
+    } finally {
+      setIsSavingInline(false);
+    }
+  };
+  
+  const handleSaveNewProduct = async () => {
+    setProductError("");
+    if (!newProductName) {
+      setProductError("Product Name is required.");
+      return;
+    }
+    if (!newProductCategory) {
+      setProductError("Category is required.");
+      return;
+    }
+    if (!warehouse) {
+      setProductError("Please select a main warehouse for the purchase before adding a new product.");
+      return;
+    }
+    
+    setIsSavingProduct(true);
+    try {
+      const user = auth.currentUser;
+      if (!user) throw new Error("User not authenticated.");
+      const token = await user.getIdToken();
+      
+      const salePrices: Record<string, number> = {};
+      for (const field of priceFields) {
+        if (field.currency && field.sale) {
+          salePrices[field.currency] = parseFloat(field.sale);
+        }
+      }
+      
+      const costPrices: Record<string, number> = {};
+      for (const field of priceFields) {
+        if (field.currency && field.cost) {
+          costPrices[field.currency] = parseFloat(field.cost);
+        }
+      }
+
+      const payload = {
+        type: "product",
+        name: newProductName,
+        category: newProductCategory,
+        salePrices: salePrices,
+        costPrices: costPrices,
+        quantity: 0,
+        warehouseId: warehouse.id,
+        warehouseName: warehouse.name
+      };
+
+      const res = await fetch("/api/products", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify(payload),
+      });
+
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || "Failed to save product.");
+      }
+      
+      const newProduct = await res.json(); 
+
+      globalMutate(
+        "/api/purchases?tab=form_data",
+        (currentData: any) => {
+          if (!currentData) return currentData;
+          return {
+            ...currentData,
+            products: [...(currentData?.products || []), newProduct],
+          };
+        },
+        false 
+      );
+
+      handleSelectProduct(newProduct.id); // Auto-select
+      
+      setIsAddingProduct(false);
+      setNewProductName("");
+      setNewProductCategory("");
+      setPriceFields([{ id: 1, currency: "USD", sale: "", cost: "" }]);
+      
+    } catch (err: any) {
+      setProductError((err as Error).message);
+    } finally {
+      setIsSavingProduct(false);
+    }
+  };
+  
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setErrors({}); // Clear errors
+    
+    // --- (FIX) Modern Validation ---
+    const newErrors: any = {};
+    if (!supplier) newErrors.supplier = "Supplier is required.";
+    if (!warehouse) newErrors.warehouse = "Warehouse is required.";
+    if (cart.length === 0) newErrors.cart = "You must add at least one item to the purchase.";
+    
+    if (Object.keys(newErrors).length > 0) {
+      setErrors(newErrors);
+      return;
+    }
+    
+    const paid = Number(paidAmount);
+    if (paid === 0 && totalAmount > 0) {
+      const confirmSave = window.confirm(
+        "Are you sure you want to save this with 0 payment? This will be saved as a pending payable."
+      );
+      if (!confirmSave) {
+        return; 
+      }
+    }
+    
     setIsSaving(true);
     
     try {
@@ -776,7 +1001,7 @@ const AddPurchaseModal = ({ onClose, onSuccess, defaultCurrency, formData, formI
         totalAmount,
         paidAmount: Number(paidAmount),
         purchaseDate,
-        dueDate,
+        dueDate: dueDate || null,
         notes,
       };
 
@@ -792,87 +1017,295 @@ const AddPurchaseModal = ({ onClose, onSuccess, defaultCurrency, formData, formI
       }
       onSuccess();
     } catch (err: any) {
-      alert(`Error: ${err.message}`);
+      setErrors({ form: (err as Error).message }); // Show general form error
     } finally {
       setIsSaving(false);
     }
   };
 
   return (
-    <ModalBase title="Add New Purchase Order" onClose={onClose}>
-      {formIsLoading && <LoadingSpinner />}
-      {formError && <ErrorDisplay error={formError} />}
-      {formData && (
-        <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-            <FormSelect label="Supplier" value={supplier?.id || ""} onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setSupplier(formData.suppliers.find((s:any) => s.id === e.target.value))} required>
-              {formData.suppliers.map((s: any) => <option key={s.id} value={s.id}>{s.name}</option>)}
-            </FormSelect>
-            <FormSelect label="Add Stock to Warehouse" value={warehouse?.id || ""} onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setWarehouse(formData.warehouses.find((w:any) => w.id === e.target.value))} required>
-              {formData.warehouses.map((w: any) => <option key={w.id} value={w.id}>{w.name}</option>)}
-            </FormSelect>
-          </div>
-          
-          <div className="rounded-lg border p-3 dark:border-gray-700">
-            <h4 className="font-medium dark:text-white">Add Items</h4>
-            <div className="mt-2 grid grid-cols-1 items-end gap-2 md:grid-cols-4">
-              <FormSelect label="Product" value={currentProduct?.id || ""} onChange={(e: React.ChangeEvent<HTMLSelectElement>) => handleSelectProduct(e.target.value)} className="md:col-span-2">
-                {formData.products.map((p: any) => <option key={p.id} value={p.id}>{p.name}</option>)}
-              </FormSelect>
-              <FormInput label="Quantity" type="number" value={currentQty} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setCurrentQty(e.target.value)} />
-              <FormInput label="Cost Price" type="number" value={currentCost} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setCurrentCost(e.target.value)} />
-            </div>
-            <button type="button" onClick={handleAddItemToCart} className="mt-2 w-full rounded-lg bg-blue-100 p-2 text-sm font-medium text-blue-700 hover:bg-blue-200 dark:bg-blue-900/50 dark:text-blue-300">
-              Add Item
-            </button>
-          </div>
-          
-          <div className="max-h-40 overflow-y-auto space-y-2">
-            {cart.map(item => (
-              <div key={item.productId} className="flex items-center justify-between rounded bg-gray-50 p-2 dark:bg-gray-700">
-                <div>
-                  <p className="font-medium dark:text-white">{item.productName}</p>
-                  <p className="text-sm text-gray-500 dark:text-gray-400">{item.quantity} x {formatCurrency(item.costPrice, currency)}</p>
+    <>
+      <ModalBase title="Add New Purchase Order" onClose={onClose} size="xl">
+        {formIsLoading && <LoadingSpinner />}
+        {formError && <ErrorDisplay error={formError} />}
+        {formData && (
+          <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+            
+            {/* --- (FIX) Main Form Error Display --- */}
+            {errors.form && <ErrorDisplay error={errors.form} />}
+
+            {/* --- Supplier / Warehouse selectors --- */}
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+              <div className="flex-1">
+                <label htmlFor="supplier" className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                  Supplier
+                </label>
+                <div className="flex gap-2">
+                  <StyledSelect id="supplier" name="supplier" value={supplier?.id || ""} onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setSupplier(formData.suppliers.find((s:any) => s.id === e.target.value))} required
+                    className={cn(errors.supplier ? "border-red-500" : "")}
+                  >
+                    <option value="" disabled>-- Select --</option>
+                    {formData.suppliers?.map((s: any) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                  </StyledSelect>
+                  <button type="button" onClick={() => setIsAddSupplierModalOpen(true)} className="flex-shrink-0 rounded-lg bg-blue-100 px-3 text-blue-700 hover:bg-blue-200 dark:bg-blue-900/50 dark:text-blue-300">
+                    <Plus className="h-5 w-5" />
+                  </button>
                 </div>
-                <div className="flex items-center gap-2">
-                  <p className="font-medium dark:text-white">{formatCurrency(item.subtotal, currency)}</p>
-                  <button type="button" onClick={() => handleDeleteItem(item.productId)} className="text-red-500">
-                    <Trash className="h-4 w-4" />
+                {errors.supplier && <p className="mt-1 text-xs text-red-600">{errors.supplier}</p>}
+              </div>
+              
+              <div className="flex-1">
+                <label htmlFor="warehouse" className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                  Add Stock to Warehouse
+                </label>
+                <div className="flex gap-2">
+                  <StyledSelect id="warehouse" name="warehouse" value={warehouse?.id || ""} onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setWarehouse(formData.warehouses.find((w:any) => w.id === e.target.value))} required
+                    className={cn(errors.warehouse ? "border-red-500" : "")}
+                  >
+                    <option value="" disabled>-- Select --</option>
+                    {formData.warehouses?.map((w: any) => <option key={w.id} value={w.id}>{w.name}</option>)}
+                  </StyledSelect>
+                  <button type="button" onClick={() => setIsAddingWarehouse(prev => !prev)} className="flex-shrink-0 rounded-lg bg-blue-100 px-3 text-blue-700 hover:bg-blue-200 dark:bg-blue-900/50 dark:text-blue-300">
+                    {isAddingWarehouse ? <X className="h-5 w-5" /> : <Plus className="h-5 w-5" />}
+                  </button>
+                </div>
+                {errors.warehouse && <p className="mt-1 text-xs text-red-600">{errors.warehouse}</p>}
+              </div>
+            </div>
+
+            {/* --- Inline Warehouse Form --- */}
+            {isAddingWarehouse && (
+              <div className="space-y-3 rounded-lg border border-gray-300 p-4 dark:border-gray-600">
+                <h4 className="font-medium text-gray-900 dark:text-white">Add New Warehouse</h4>
+                {warehouseError && <ErrorDisplay error={{ name: "Error", message: warehouseError }} />}
+                <FormInput label="New Warehouse Name" name="newWarehouseName" value={newWarehouseName} onChange={(val: string) => setNewWarehouseName(val)} error={warehouseError} />
+                <FormInput label="Address (Optional)" name="newWarehouseAddress" value={newWarehouseAddress} onChange={(val: string) => setNewWarehouseAddress(val)} />
+                <div className="flex justify-end gap-2">
+                  <button type="button" onClick={() => setIsAddingWarehouse(false)} className="rounded-lg border bg-white px-3 py-1.5 text-sm font-medium hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-800 dark:hover:bg-gray-700">Cancel</button>
+                  <button type="button" onClick={handleSaveNewWarehouse} disabled={isSavingWarehouse} className="flex min-w-[80px] items-center justify-center rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50">
+                    {isSavingWarehouse ? <Loader2 className="h-4 w-4 animate-spin" /> : "Save"}
                   </button>
                 </div>
               </div>
-            ))}
-          </div>
-          
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-            <FormInput label="Purchase Date" type="date" value={purchaseDate} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setPurchaseDate(e.target.value)} required />
-            <FormInput label="Payment Due Date (Optional)" type="date" value={dueDate} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setDueDate(e.target.value)} />
-          </div>
-          
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-            <FormSelect label="Currency" value={currency} onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setCurrency(e.target.value)} required>
-              {CURRENCIES.map(c => <option key={c} value={c}>{c}</option>)}
-            </FormSelect>
-            <FormInput label="Total Amount" type="number" value={totalAmount} onChange={() => {}} readOnly />
-            <FormInput label="Amount Paid Now" type="number" value={paidAmount} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setPaidAmount(e.target.value)} />
-          </div>
-          
-          <FormInput label="Notes (Optional)" name="notes" value={notes} onChange={(e:any) => setNotes(e.target.value)} />
-          
-          <div className="flex justify-end gap-3 pt-4">
-            <button type="button" onClick={onClose} className="rounded-lg border bg-white px-4 py-2 text-sm font-medium hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700">Cancel</button>
-            <button type="submit" disabled={isSaving} className="flex min-w-[120px] items-center justify-center rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50">
-              {isSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : "Save Purchase"}
-            </button>
-          </div>
-        </form>
+            )}
+            
+            {/* --- Add Items Section --- */}
+            <div className="rounded-lg border p-3 dark:border-gray-700">
+              <h4 className="font-medium dark:text-white">Add Items</h4>
+              {errors.cart && <p className="mt-1 text-xs text-red-600">{errors.cart}</p>}
+              <div className="mt-2 grid grid-cols-1 items-end gap-2 md:grid-cols-4">
+                
+                <div className="md:col-span-2">
+                  <label htmlFor="product" className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                    Product
+                  </label>
+                  <div className="flex gap-2">
+                    <StyledSelect id="product" name="product" value={currentProduct?.id || ""} onChange={(e: React.ChangeEvent<HTMLSelectElement>) => handleSelectProduct(e.target.value)}>
+                      <option value="" disabled>-- Select Product --</option>
+                      {formData.products?.map((p: any) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                    </StyledSelect>
+                    <button 
+                      type="button" 
+                      onClick={() => setIsAddingProduct(prev => !prev)} 
+                      className="flex-shrink-0 rounded-lg bg-blue-100 px-3 text-blue-700 hover:bg-blue-200 dark:bg-blue-900/50 dark:text-blue-300"
+                    >
+                      {isAddingProduct ? <X className="h-5 w-5" /> : <Plus className="h-5 w-5" />}
+                    </button>
+                  </div>
+                </div>
+                
+                <FormInput label="Quantity" name="quantity" type="number" value={currentQty} onChange={(val: string) => setCurrentQty(val)} />
+                <FormInput label="Cost Price" name="costPrice" type="number" value={currentCost} onChange={(val: string) => setCurrentCost(val)} />
+              </div>
+              
+              {/* --- Inline Product Form --- */}
+              {isAddingProduct && (
+                <div className="mt-4 space-y-4 rounded-lg border border-gray-300 p-4 dark:border-gray-600">
+                  <h4 className="font-medium text-gray-900 dark:text-white">Add New Product</h4>
+                  {productError && <ErrorDisplay error={{ name: "Error", message: productError }} />}
+                  <FormInput label="New Product Name" name="newProductName" value={newProductName} onChange={(val: string) => setNewProductName(val)} required />
+                  
+                  <div className="flex items-end gap-2">
+                    <FormSelect label="Category" name="newProductCategory" value={newProductCategory} onChange={(val:string) => setNewProductCategory(val)} className="flex-1">
+                      <option value="">-- Select Category --</option>
+                      {formData.categories?.map((c: any) => (
+                        <option key={c.id} value={c.name}>{c.name}</option>
+                      ))}
+                    </FormSelect>
+                    <button type="button" title="Add new category" onClick={() => setShowAddCategory(!showAddCategory)} className="flex-shrink-0 rounded-lg border p-2.5 dark:border-gray-600">
+                      <Plus className="h-5 w-5" />
+                    </button>
+                  </div>
+
+                  {showAddCategory && (
+                    <div className="flex items-end gap-2 rounded-lg border p-3 dark:border-gray-600">
+                      {categoryError && <ErrorDisplay error={{ name: "Error", message: categoryError }} />}
+                      <FormInput label="New Category Name" name="newCategoryName" value={newCategoryName} onChange={(val:string) => setNewCategoryName(val)} placeholder="e.g., Electronics" className="flex-1" error={categoryError} />
+                      <button type="button" onClick={() => handleAddInline("category")} disabled={isSavingInline} className="rounded-lg bg-blue-600 px-3 py-2 text-white disabled:opacity-50">
+                        {isSavingInline ? <Loader2 className="h-4 w-4 animate-spin" /> : "Add"}
+                      </button>
+                    </div>
+                  )}
+
+                  <div className="space-y-3">
+                    <h4 className="font-semibold dark:text-white">Prices (Optional)</h4>
+                    {priceFields.map((field, index) => (
+                      <div key={field.id} className="grid grid-cols-12 gap-2">
+                        <div className="col-span-4">
+                          <FormSelect label={index === 0 ? "Currency" : ""} name={`price_currency_${index}`} value={field.currency} onChange={(val: string) => handlePriceChange(field.id, "currency", val)}>
+                            {CURRENCIES.map(c => <option key={c} value={c}>{c}</option>)}
+                          </FormSelect>
+                        </div>
+                        <div className="col-span-3">
+                          <FormInput label={index === 0 ? "Sale Price" : ""} name={`price_sale_${index}`} type="number" placeholder="e.g., 10" value={field.sale} onChange={(val: string) => handlePriceChange(field.id, "sale", val)} />
+                        </div>
+                        <div className="col-span-3">
+                          <FormInput label={index === 0 ? "Cost Price" : ""} name={`price_cost_${index}`} type="number" placeholder="e.g., 5" value={field.cost} onChange={(val: string) => handlePriceChange(field.id, "cost", val)} />
+                        </div>
+                        <div className="col-span-2 flex items-end pb-2">
+                          {priceFields.length > 1 && (
+                            <button type="button" onClick={() => removePriceField(field.id)} className="text-red-500">
+                              <Trash className="h-5 w-5" />
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                    <button type="button" onClick={addPriceField} className="flex items-center gap-1 text-sm text-blue-600 hover:text-blue-800">
+                      <Plus className="h-4 w-4" /> Add another currency
+                    </button>
+                  </div>
+
+                  <button type="button" onClick={handleSaveNewProduct} disabled={isSavingProduct} className="flex w-full items-center justify-center rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50">
+                    {isSavingProduct ? <Loader2 className="h-4 w-4 animate-spin" /> : "Save New Product"}
+                  </button>
+                </div>
+              )}
+
+              <button type="button" onClick={handleAddItemToCart} className="mt-2 w-full rounded-lg bg-blue-100 p-2 text-sm font-medium text-blue-700 hover:bg-blue-200 dark:bg-blue-900/50 dark:text-blue-300">
+                Add Item to Purchase
+              </button>
+            </div>
+            
+            {/* Cart */}
+            <div className="max-h-40 overflow-y-auto space-y-2">
+              {cart.map(item => (
+                <div key={item.productId} className="flex items-center justify-between rounded bg-gray-50 p-2 dark:bg-gray-700">
+                  <div>
+                    <p className="font-medium dark:text-white">{item.productName}</p>
+                    <p className="text-sm text-gray-500 dark:text-gray-400">{item.quantity} x {formatCurrency(item.costPrice, currency)}</p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <p className="font-medium dark:text-white">{formatCurrency(item.subtotal, currency)}</p>
+                    <button type="button" onClick={() => handleDeleteItem(item.productId)} className="text-red-500">
+                      <Trash className="h-4 w-4" />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+            
+            {/* --- Rest of the form --- */}
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+              <FormInput label="Purchase Date" name="purchaseDate" type="date" value={purchaseDate} onChange={(val: string) => setPurchaseDate(val)} required />
+              <FormInput label="Payment Due Date (Optional)" name="dueDate" type="date" value={dueDate} onChange={(val: string) => setDueDate(val)} />
+            </div>
+            
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+              <FormSelect label="Currency" name="currency" value={currency} onChange={(val: string) => setCurrency(val)} required>
+                {CURRENCIES.map(c => <option key={c} value={c}>{c}</option>)}
+              </FormSelect>
+              <FormInput label="Total Amount" name="totalAmount" type="number" value={totalAmount} onChange={() => {}} readOnly />
+              <FormInput label="Amount Paid Now" name="paidAmount" type="number" value={paidAmount} onChange={(val: string) => setPaidAmount(val)} />
+            </div>
+            
+            <FormInput label="Notes (Optional)" name="notes" value={notes} onChange={(val: string) => setNotes(val)} />
+            
+            <div className="flex justify-end gap-3 pt-4">
+              <button type="button" onClick={onClose} className="rounded-lg border bg-white px-4 py-2 text-sm font-medium hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700">Cancel</button>
+              <button type="submit" disabled={isSaving} className="flex min-w-[120px] items-center justify-center rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50">
+                {isSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : "Save Purchase"}
+              </button>
+            </div>
+          </form>
+        )}
+      </ModalBase>
+      
+      {isAddSupplierModalOpen && (
+        <AddSupplierModal
+          onClose={() => setIsAddSupplierModalOpen(false)}
+          onSuccess={handleSupplierAdded}
+        />
       )}
+    </>
+  );
+};
+
+// --- (FIXED) AddSupplierModal ---
+// This now passes the new supplier data back on success
+const AddSupplierModal = ({ onClose, onSuccess }: { onClose: () => void, onSuccess: (supplier: any) => void }) => {
+  const [formData, setFormData] = useState({ name: "", contactPerson: "", phone: "", email: "", address: "" });
+  const [isSaving, setIsSaving] = useState(false);
+  const [error, setError] = useState("");
+  
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(""); // Clear old errors
+    if (!formData.name || !formData.phone) {
+      setError("Supplier Name and Phone are required.");
+      return;
+    }
+    setIsSaving(true);
+    
+    try {
+      const user = auth.currentUser;
+      if (!user) throw new Error("User not authenticated.");
+      const token = await user.getIdToken();
+      
+      const res = await fetch("/api/suppliers", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify(formData),
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || "Failed to save supplier.");
+      }
+      
+      const newSupplier = await res.json(); // <-- (FIX 1) Get response
+      onSuccess(newSupplier); // <-- (FIX 2) Pass data back
+
+    } catch (err: any) {
+      setError((err as Error).message);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  return (
+    <ModalBase title="Add New Supplier" onClose={onClose}>
+      <form onSubmit={handleSubmit} className="space-y-4">
+        {error && <ErrorDisplay error={{name: "Save Error", message: error}} />}
+        <FormInput label="Supplier Name" name="name" value={formData.name} onChange={(val: string) => setFormData(prev => ({...prev, name: val}))} required error={error && !formData.name ? " " : ""} />
+        <FormInput label="Contact Person (Optional)" name="contactPerson" value={formData.contactPerson} onChange={(val: string) => setFormData(prev => ({...prev, contactPerson: val}))} />
+        <FormInput label="Phone Number" name="phone" value={formData.phone} onChange={(val: string) => setFormData(prev => ({...prev, phone: val}))} required error={error && !formData.phone ? " " : ""} />
+        <FormInput label="Email (Optional)" name="email" type="email" value={formData.email} onChange={(val: string) => setFormData(prev => ({...prev, email: val}))} />
+        <FormInput label="Address (Optional)" name="address" value={formData.address} onChange={(val: string) => setFormData(prev => ({...prev, address: val}))} />
+        
+        <div className="flex justify-end gap-3 pt-4">
+          <button type="button" onClick={onClose} className="rounded-lg border bg-white px-4 py-2 text-sm font-medium hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-800 dark:hover:bg-gray-700">Cancel</button>
+          <button type="submit" disabled={isSaving} className="flex min-w-[80px] items-center justify-center rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50">
+            {isSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : "Save"}
+          </button>
+        </div>
+      </form>
     </ModalBase>
   );
 };
 
+// --- (FIXED) PayPurchaseModal ---
+// This now has modern error handling
 const PayPurchaseModal = ({ purchase, onClose, onSuccess }: any) => {
-  // ... (same as before)
   const [amountPaid, setAmountPaid] = useState("");
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState("");
@@ -881,18 +1314,18 @@ const PayPurchaseModal = ({ purchase, onClose, onSuccess }: any) => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const paidAmount = parseFloat(amountPaid);
-    if (isNaN(paidAmount) || paidAmount <= 0) {
+    setError(""); // Clear old errors
+    const paidAmountNum = parseFloat(amountPaid);
+    if (isNaN(paidAmountNum) || paidAmountNum <= 0) {
       setError("Please enter a valid amount.");
       return;
     }
-    if (paidAmount > remaining) {
+    if (paidAmountNum > remaining) {
       setError("Payment cannot be more than the remaining amount due.");
       return;
     }
     
     setIsSaving(true);
-    setError("");
     
     try {
       const user = auth.currentUser;
@@ -902,7 +1335,7 @@ const PayPurchaseModal = ({ purchase, onClose, onSuccess }: any) => {
       const res = await fetch(`/api/purchases`, {
         method: "PUT",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ purchaseId: purchase.id, paymentAmount: paidAmount }),
+        body: JSON.stringify({ purchaseId: purchase.id, paymentAmount: paidAmountNum }),
       });
       
       if (!res.ok) {
@@ -912,7 +1345,7 @@ const PayPurchaseModal = ({ purchase, onClose, onSuccess }: any) => {
       onSuccess();
       
     } catch (err: any) { 
-      setError(err.message);
+      setError((err as Error).message);
     } finally {
       setIsSaving(false);
     }
@@ -933,11 +1366,11 @@ const PayPurchaseModal = ({ purchase, onClose, onSuccess }: any) => {
           name="amountPaid"
           type="number"
           value={amountPaid}
-          onChange={(e: React.ChangeEvent<HTMLInputElement>) => setAmountPaid(e.target.value)}
+          onChange={(val: string) => setAmountPaid(val)}
+          placeholder="0.00"
           required
+          error={error}
         />
-        
-        {error && <p className="text-sm text-red-600">{error}</p>}
         
         <div className="flex justify-end gap-3 pt-4">
           <button type="button" onClick={onClose} className="rounded-lg border bg-white px-4 py-2 text-sm font-medium hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-800 dark:hover:bg-gray-700">Cancel</button>
@@ -951,43 +1384,159 @@ const PayPurchaseModal = ({ purchase, onClose, onSuccess }: any) => {
 };
 
 
+// --- ViewPurchaseModal ---
+const ViewPurchaseModal = ({ purchase, onClose }: { purchase: any, onClose: () => void }) => {
+  const currency = purchase.currency;
+  const handleDownloadSingleReport = () => {
+    const po = purchase;
+    const doc = new jsPDF();
+    doc.setFontSize(18);
+    doc.text(`Purchase Order: ${po.id.substring(0, 8)}`, 14, 22);
+    doc.setFontSize(11);
+    doc.setTextColor(100);
+    doc.text(`Supplier: ${po.supplierName}`, 14, 32);
+    doc.text(`Date: ${dayjs(po.purchaseDate).format("DD MMM YYYY")}`, 14, 38);
+    doc.text(`Warehouse: ${po.warehouseName}`, 14, 44);
+    const tableHead = [["Product", "Qty", "Cost", "Subtotal"]];
+    const tableBody = po.items.map((item: any) => [
+      item.productName,
+      item.quantity,
+      formatCurrency(item.costPrice, po.currency),
+      formatCurrency(item.subtotal, po.currency)
+    ]);
+    autoTable(doc, {
+      head: tableHead,
+      body: tableBody,
+      startY: 52,
+      headStyles: { fillColor: [11, 101, 221] },
+    });
+    doc.setFontSize(12);
+    doc.setTextColor(0);
+    doc.text("Financial Summary", 14, (doc as any).lastAutoTable.finalY + 12);
+    doc.setFontSize(10);
+    doc.text(`Total Amount: ${formatCurrency(po.totalAmount, po.currency)}`, 14, (doc as any).lastAutoTable.finalY + 18);
+    doc.text(`Amount Paid: ${formatCurrency(po.paidAmount, po.currency)}`, 14, (doc as any).lastAutoTable.finalY + 24);
+    doc.setFontSize(11);
+    doc.setFont("helvetica", "bold");
+    doc.text(`Remaining Due: ${formatCurrency(po.remainingAmount, po.currency)}`, 14, (doc as any).lastAutoTable.finalY + 30);
+    doc.setFont("helvetica", "normal");
+    if (po.notes) {
+      doc.setFontSize(12);
+      doc.text("Notes:", 14, (doc as any).lastAutoTable.finalY + 40);
+      doc.setFontSize(10);
+      doc.text(po.notes, 14, (doc as any).lastAutoTable.finalY + 46, { maxWidth: 180 });
+    }
+    doc.save(`PO_${po.supplierName.replace(' ','-')}_${po.id.substring(0, 6)}.pdf`);
+  };
+  return (
+    <ModalBase title={`Purchase Order: ${purchase.id.substring(0, 6)}...`} onClose={onClose} size="xl">
+      <div className="space-y-6">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 rounded-lg bg-gray-50 p-4 dark:bg-gray-700/50">
+          <InfoItem icon={Building} label="Supplier" value={purchase.supplierName} />
+          <InfoItem icon={Calendar} label="Purchase Date" value={dayjs(purchase.purchaseDate).format("DD MMM YYYY")} />
+          <InfoItem icon={Warehouse} label="Warehouse" value={purchase.warehouseName} />
+        </div>
+        <div>
+          <h4 className="text-lg font-semibold dark:text-white">Items Purchased</h4>
+          <div className="mt-2 flow-root">
+            <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+              <thead className="bg-gray-50 dark:bg-gray-700/50">
+                <tr>
+                  <th className="py-2 pl-4 text-left text-xs font-medium uppercase text-gray-500">Product</th>
+                  <th className="px-2 py-2 text-left text-xs font-medium uppercase text-gray-500">Qty</th>
+                  <th className="px-2 py-2 text-left text-xs font-medium uppercase text-gray-500">Cost</th>
+                  <th className="py-2 pr-4 text-right text-xs font-medium uppercase text-gray-500">Subtotal</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
+                {purchase.items.map((item: any) => (
+                  <tr key={item.productId}>
+                    <td className="py-2 pl-4 text-sm font-medium dark:text-white">{item.productName}</td>
+                    <td className="px-2 py-2 text-sm dark:text-gray-300">{item.quantity}</td>
+                    <td className="px-2 py-2 text-sm dark:text-gray-300">{formatCurrency(item.costPrice, currency)}</td>
+                    <td className="py-2 pr-4 text-right text-sm font-medium dark:text-white">{formatCurrency(item.subtotal, currency)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+          <div className="space-y-2 rounded-lg border p-4 dark:border-gray-700">
+            <h4 className="font-semibold dark:text-white">Financial Summary</h4>
+            <TotalRow label="Total Amount" value={formatCurrency(purchase.totalAmount, currency)} isBold={true} />
+            <TotalRow label="Amount Paid" value={formatCurrency(purchase.paidAmount, currency)} />
+            <TotalRow 
+              label="Remaining Due" 
+              value={formatCurrency(purchase.remainingAmount, currency)} 
+              isDebt={purchase.remainingAmount > 0}
+              isBold={true} 
+            />
+          </div>
+          <div className="space-y-2 rounded-lg border p-4 dark:border-gray-700">
+            <h4 className="font-semibold dark:text-white">Details</h4>
+            <InfoItem icon={Info} label="Status" value={purchase.status} />
+            <InfoItem icon={CreditCard} label="Currency" value={purchase.currency} />
+            <InfoItem 
+              icon={HandCoins} 
+              label="Amount Due" 
+              value={formatCurrency(purchase.remainingAmount, currency)} 
+            />
+          </div>
+        </div>
+        {purchase.notes && (
+          <div className="rounded-lg border p-4 dark:border-gray-700">
+            <h4 className="font-semibold dark:text-white">Notes</h4>
+            <p className="text-sm text-gray-600 dark:text-gray-300">{purchase.notes}</p>
+          </div>
+        )}
+        <div className="flex justify-end gap-3 pt-4">
+          <button type="button" onClick={onClose} className="rounded-lg border bg-white px-4 py-2 text-sm font-medium hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700">Close</button>
+          <button 
+            type="button" 
+            onClick={handleDownloadSingleReport}
+            className="flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-blue-700"
+          >
+            <Download className="h-4 w-4" />
+            Download PDF
+          </button>
+        </div>
+      </div>
+    </ModalBase>
+  );
+};
+
 // -----------------------------------------------------------------------------
 // 🛠️ Reusable Helper Components
 // -----------------------------------------------------------------------------
 
 const Card = ({ children, className = "" }: { children: React.ReactNode; className?: string }) => (
-  // ... (same as before)
   <div className={`rounded-xl border border-gray-200 bg-white p-6 shadow-sm dark:border-gray-700 dark:bg-gray-800 ${className}`}>
     {children}
   </div>
 );
 
 const TotalRow = ({ label, value, isDebt = false, isBold = false }: { label: string, value: string, isDebt?: boolean, isBold?: boolean }) => (
-  // ... (same as before)
   <div className={`flex justify-between text-sm ${isBold ? 'font-semibold' : ''} ${isDebt ? 'text-red-600 dark:text-red-500' : 'text-gray-900 dark:text-white'}`}>
     <span className="text-gray-600 dark:text-gray-300">{label}:</span>
     <span className={isBold ? 'text-lg' : ''}>{value}</span>
   </div>
 );
 
-
 const LoadingSpinner = () => (
-  // ... (same as before)
   <div className="flex h-60 w-full items-center justify-center">
     <Loader2 className="h-12 w-12 animate-spin text-blue-600" />
   </div>
 );
 
 const ErrorDisplay = ({ error }: { error: Error }) => (
-  // ... (same as before)
   <Card className="border-red-300 bg-red-50 dark:border-red-700 dark:bg-red-900/20">
-    <h3 className="font-semibold text-red-700 dark:text-red-400">Error Loading Data</h3>
+    <h3 className="font-semibold text-red-700 dark:text-red-400">Error</h3>
     <p className="text-sm text-red-600 dark:text-red-500">{error.message}</p>
   </Card>
 );
 
 const ChartEmptyState = () => (
-  // ... (same as before)
   <div className="flex h-full w-full flex-col items-center justify-center text-gray-400">
     <BarChart2 className="h-12 w-12 opacity-50" />
     <p className="mt-2 text-sm">No data for this period</p>
@@ -995,12 +1544,10 @@ const ChartEmptyState = () => (
 );
 
 const TableEmptyState = ({ message }: { message: string }) => (
-  // ... (same as before)
   <div className="py-10 text-center text-sm text-gray-500 dark:text-gray-400">{message}</div>
 );
 
 const ModalBase = ({ title, onClose, children, size = 'lg' }: { 
-  // ... (same as before)
   title: string, 
   onClose: () => void, 
   children: React.ReactNode,
@@ -1057,101 +1604,8 @@ const ModalBase = ({ title, onClose, children, size = 'lg' }: {
   );
 };
 
-// --- (MODIFIED) View Purchase Modal ---
-const ViewPurchaseModal = ({ purchase, onClose }: { purchase: any, onClose: () => void }) => {
-  const currency = purchase.currency;
-  
-  return (
-    <ModalBase title={`Purchase Order: ${purchase.id.substring(0, 6)}...`} onClose={onClose} size="xl">
-      <div className="space-y-6">
-        {/* Header Info */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 rounded-lg bg-gray-50 p-4 dark:bg-gray-700/50">
-          <InfoItem icon={Building} label="Supplier" value={purchase.supplierName} />
-          <InfoItem icon={Calendar} label="Purchase Date" value={dayjs(purchase.purchaseDate).format("DD MMM YYYY")} />
-          <InfoItem icon={Warehouse} label="Warehouse" value={purchase.warehouseName} />
-        </div>
-        
-        {/* Items Table */}
-        <div>
-          <h4 className="text-lg font-semibold dark:text-white">Items Purchased</h4>
-          {/* ... (table is same as before) ... */}
-          <div className="mt-2 flow-root">
-            <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
-              <thead className="bg-gray-50 dark:bg-gray-700/50">
-                <tr>
-                  <th className="py-2 pl-4 text-left text-xs font-medium uppercase text-gray-500">Product</th>
-                  <th className="px-2 py-2 text-left text-xs font-medium uppercase text-gray-500">Qty</th>
-                  <th className="px-2 py-2 text-left text-xs font-medium uppercase text-gray-500">Cost</th>
-                  <th className="py-2 pr-4 text-right text-xs font-medium uppercase text-gray-500">Subtotal</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
-                {purchase.items.map((item: any) => (
-                  <tr key={item.productId}>
-                    <td className="py-2 pl-4 text-sm font-medium dark:text-white">{item.productName}</td>
-                    <td className="px-2 py-2 text-sm dark:text-gray-300">{item.quantity}</td>
-                    <td className="px-2 py-2 text-sm dark:text-gray-300">{formatCurrency(item.costPrice, currency)}</td>
-                    <td className="py-2 pr-4 text-right text-sm font-medium dark:text-white">{formatCurrency(item.subtotal, currency)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-
-        {/* Financials */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
-          <div className="space-y-2 rounded-lg border p-4 dark:border-gray-700">
-            <h4 className="font-semibold dark:text-white">Financial Summary</h4>
-            <TotalRow label="Total Amount" value={formatCurrency(purchase.totalAmount, currency)} isBold={true} />
-            <TotalRow label="Amount Paid" value={formatCurrency(purchase.paidAmount, currency)} />
-            <TotalRow 
-              label="Remaining Due" 
-              value={formatCurrency(purchase.remainingAmount, currency)} 
-              isDebt={purchase.remainingAmount > 0}
-              isBold={true} 
-            />
-          </div>
-          <div className="space-y-2 rounded-lg border p-4 dark:border-gray-700">
-            <h4 className="font-semibold dark:text-white">Details</h4>
-            <InfoItem icon={Info} label="Status" value={purchase.status} />
-            <InfoItem icon={CreditCard} label="Currency" value={purchase.currency} />
-            {/* --- (FIX) Replaced Payment Due (Date) with Amount Due (Amount) --- */}
-            <InfoItem 
-              icon={HandCoins} 
-              label="Amount Due" 
-              value={formatCurrency(purchase.remainingAmount, currency)} 
-            />
-          </div>
-        </div>
-        
-        {purchase.notes && (
-          <div className="rounded-lg border p-4 dark:border-gray-700">
-            <h4 className="font-semibold dark:text-white">Notes</h4>
-            <p className="text-sm text-gray-600 dark:text-gray-300">{purchase.notes}</p>
-          </div>
-        )}
-
-        {/* Actions */}
-        <div className="flex justify-end gap-3 pt-4">
-          <button type="button" onClick={onClose} className="rounded-lg border bg-white px-4 py-2 text-sm font-medium hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700">Close</button>
-          <button 
-            type="button" 
-            onClick={() => alert("Download PDF/Excel (coming soon)")}
-            className="flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-blue-700"
-          >
-            <Download className="h-4 w-4" />
-            Download Report
-          </button>
-        </div>
-      </div>
-    </ModalBase>
-  );
-};
-
 // Helper for ViewPurchaseModal
 const InfoItem = ({ icon: Icon, label, value }: { icon: React.ElementType, label: string, value: string }) => (
-  // ... (same as before)
   <div>
     <span className="flex items-center gap-1.5 text-sm font-medium text-gray-500">
       <Icon className="h-4 w-4" />
@@ -1162,61 +1616,13 @@ const InfoItem = ({ icon: Icon, label, value }: { icon: React.ElementType, label
 );
 
 
-// --- Modern, Styled Form Components ---
-const StyledInput = React.forwardRef<HTMLInputElement, React.InputHTMLAttributes<HTMLInputElement>>((props, ref) => (
-  // ... (same as before)
-  <input
-    {...props}
-    ref={ref}
-    className="w-full rounded-lg border border-gray-300 bg-white p-2.5 text-gray-900 shadow-sm focus:border-blue-500 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700 dark:text-white dark:placeholder-gray-400"
-  />
-));
-StyledInput.displayName = "StyledInput";
-
-const StyledSelect = React.forwardRef<HTMLSelectElement, React.SelectHTMLAttributes<HTMLSelectElement>>(({ children, ...props }, ref) => (
-  // ... (same as before)
-  <select
-    {...props}
-    ref={ref}
-    className="w-full rounded-lg border border-gray-300 bg-white p-2.5 text-gray-900 shadow-sm focus:border-blue-500 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700 dark:text-white"
-  >
-    {children}
-  </select>
-));
-StyledSelect.displayName = "StyledSelect";
-
-const FormInput = ({ label, name, ...props }: any) => (
-  // ... (same as before)
-  <div className="flex-1">
-    <label htmlFor={name} className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
-      {label}
-    </label>
-    <StyledInput id={name} name={name} {...props} />
-  </div>
-);
-
-const FormSelect = ({ label, name, children, ...props }: any) => (
-  // ... (same as before)
-  <div className="flex-1">
-    <label htmlFor={name} className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
-      {label}
-    </label>
-    <StyledSelect id={name} name={name} {...props}>
-      <option value="" disabled>-- Select --</option>
-      {children}
-    </StyledSelect>
-  </div>
-);
-
-
-// --- Modern Date Range Picker (with Presets moved) ---
-// --- NEW (FIXED) CODE ---
+// --- Modern Date Range Picker ---
 function NewDateRangePicker({
   date,
   onApply,
   className,
 }: {
-  date: DateRange | undefined; // <-- Use the imported DateRange type
+  date: DateRange | undefined;
   onApply: (date: DateRange | undefined) => void;
   className?: string;
 }) {
@@ -1224,12 +1630,10 @@ function NewDateRangePicker({
   const [currentMonth, setCurrentMonth] = useState(date?.from || new Date());
   const [selectedDate, setSelectedDate] = useState<DateRange | undefined>(date);
   const [hoveredDate, setHoveredDate] = useState<Date | undefined>(undefined);
-
   useEffect(() => {
     setSelectedDate(date);
     setCurrentMonth(date?.from || new Date());
   }, [date]);
-
   const handleApply = () => {
     onApply(selectedDate);
     setIsOpen(false);
@@ -1243,9 +1647,7 @@ function NewDateRangePicker({
     if (!open) handleCancel(); 
     setIsOpen(open);
   };
-  
   const handleDayClick = (day: Date) => {
-    // ... (same as before)
     const { from, to } = selectedDate || {};
     if (!from) {
       setSelectedDate({ from: day, to: undefined });
@@ -1259,12 +1661,10 @@ function NewDateRangePicker({
       setSelectedDate({ from: day, to: undefined });
     }
   };
-
   const handlePresetSelect = (range: DateRange) => {
     setSelectedDate(range);
     setCurrentMonth(range.from || new Date());
   };
-
   const displayedDate = date; 
   return (
     <div className={cn("grid gap-2", className)}>
@@ -1294,7 +1694,6 @@ function NewDateRangePicker({
           </Button>
         </PopoverTrigger>
         <PopoverContent className="flex w-auto p-0 bg-white dark:bg-gray-800 border dark:border-gray-700" align="start">
-          {/* --- Date Presets Component --- */}
           <DatePresets onSelect={handlePresetSelect} />
           <div className="border-l dark:border-gray-700">
             <CalendarGrid
@@ -1320,7 +1719,7 @@ function NewDateRangePicker({
   );
 }
 
-// --- (Date Presets Component - Unchanged) ---
+// --- Date Presets Component ---
 function DatePresets({ onSelect }: { onSelect: (range: DateRange) => void }) {
   return (
     <div className="flex flex-col gap-1 p-3">
@@ -1339,7 +1738,7 @@ function DatePresets({ onSelect }: { onSelect: (range: DateRange) => void }) {
   );
 }
 
-
+// --- CalendarGrid Component ---
 function CalendarGrid({
   month,
   selectedDate,
@@ -1348,7 +1747,6 @@ function CalendarGrid({
   setHoveredDate,
   onMonthChange,
 }: {
-  // ... (same as before)
   month: Date;
   selectedDate: DateRange | undefined;
   onDayClick: (date: Date) => void;
@@ -1362,10 +1760,8 @@ function CalendarGrid({
   const endDate = endOfWeek(lastDay);
   const days = eachDayOfInterval({ start: startDate, end: endDate });
   const weekDays = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"];
-  
   const nextMonth = () => onMonthChange(add(month, { months: 1 }));
   const prevMonth = () => onMonthChange(sub(month, { months: 1 }));
-
   return (
     <div className="p-4">
       <div className="flex justify-between items-center mb-2">
@@ -1400,8 +1796,8 @@ function CalendarGrid({
                             isAfter(day, selectedDate.from) && 
                             isBefore(day, selectedDate.to);
           const isHovering = !!(selectedDate?.from && !selectedDate.to && hoveredDate);
-       const isHoverStart = isHovering && hoveredDate && selectedDate.from && isBefore(hoveredDate, selectedDate.from) ? hoveredDate : selectedDate?.from;
-         const isHoverEnd = isHovering && hoveredDate && selectedDate.from && isAfter(hoveredDate, selectedDate.from) ? hoveredDate : selectedDate?.from;
+          const isHoverStart = isHovering && hoveredDate && selectedDate.from && isBefore(hoveredDate, selectedDate.from) ? hoveredDate : selectedDate?.from;
+          const isHoverEnd = isHovering && hoveredDate && selectedDate.from && isAfter(hoveredDate, selectedDate.from) ? hoveredDate : selectedDate?.from;
           const isInHoverRange = isHovering && isHoverStart && isHoverEnd && isAfter(day, isHoverStart) && isBefore(day, isHoverEnd);
           return (
             <button
@@ -1432,7 +1828,7 @@ function CalendarGrid({
   );
 }
 
-// --- Modern Select/Dropdown Component (Unchanged) ---
+// --- Modern Select/Dropdown Component ---
 function ModernSelect({ label, value, onChange, options }: {
   label: string;
   value: any;
@@ -1440,19 +1836,14 @@ function ModernSelect({ label, value, onChange, options }: {
   options: any[];
 }) {
   const [selected, setSelected] = useState(options.find(o => (o.id || o) === (value?.id || value)) || options[0]);
-
-  // (FIX) Handle external value changes
   useEffect(() => {
     setSelected(options.find(o => (o.id || o) === (value?.id || value)) || options[0]);
   }, [value, options]);
-
   const handleChange = (newValue: any) => {
     setSelected(newValue);
     onChange(newValue.id || newValue);
   };
-  
   const displayValue = (val: any) => val.label || val;
-
   return (
     <Listbox value={selected} onChange={handleChange}>
       <div className="relative">
@@ -1474,7 +1865,7 @@ function ModernSelect({ label, value, onChange, options }: {
           leaveFrom="opacity-100"
           leaveTo="opacity-0"
         >
-          <Listbox.Options className="absolute z-10 mt-1 max-h-60 w-full overflow-auto rounded-md bg-white py-1 text-base shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none dark:bg-gray-800">
+          <Listbox.Options className="absolute z-10 mt-1 max-h-40 w-full overflow-auto rounded-md bg-white py-1 text-base shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none dark:bg-gray-800">
             {options.map((option, idx) => (
               <Listbox.Option
                 key={idx}
@@ -1509,3 +1900,79 @@ function ModernSelect({ label, value, onChange, options }: {
     </Listbox>
   );
 }
+
+
+// -----------------------------------------------------------------------------
+// 🛠️ (FIXED) Reusable Form Helper Components
+// -----------------------------------------------------------------------------
+
+const StyledInput = React.forwardRef<HTMLInputElement, React.InputHTMLAttributes<HTMLInputElement>>((props, ref) => (
+  <input
+    {...props}
+    ref={ref}
+    className="w-full rounded-lg border border-gray-300 bg-white p-2.5 text-gray-900 shadow-sm focus:border-blue-500 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700 dark:text-white dark:placeholder-gray-400"
+  />
+));
+StyledInput.displayName = "StyledInput";
+
+const StyledSelect = React.forwardRef<HTMLSelectElement, React.SelectHTMLAttributes<HTMLSelectElement>>(({ children, ...props }, ref) => (
+  <select
+    {...props}
+    ref={ref}
+    className="w-full rounded-lg border border-gray-300 bg-white p-2.5 text-gray-900 shadow-sm focus:border-blue-500 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700 dark:text-white"
+  >
+    {children}
+  </select>
+));
+StyledSelect.displayName = "StyledSelect";
+
+const FormInput = ({ label, name, value, onChange, error, ...props }: {
+  label: string,
+  name: string,
+  value: string | number,
+  onChange: (val: string) => void,
+  error?: string,
+  [key: string]: any
+}) => (
+  <div className="flex-1">
+    <label htmlFor={name} className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+      {label}
+    </label>
+    <StyledInput
+      id={name}
+      name={name}
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      className={cn(error ? "border-red-500" : "border-gray-300 dark:border-gray-600")}
+      {...props}
+    />
+    {error && <p className="mt-1 text-xs text-red-600">{error}</p>}
+  </div>
+);
+
+const FormSelect = ({ label, name, value, onChange, children, error, ...props }: {
+  label: string,
+  name: string,
+  value: string | number,
+  onChange: (val: string) => void,
+  children: React.ReactNode,
+  error?: string,
+  [key: string]: any
+}) => (
+  <div className="flex-1">
+    <label htmlFor={name} className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+      {label}
+    </label>
+    <StyledSelect
+      id={name}
+      name={name}
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      className={cn(error ? "border-red-500" : "border-gray-300 dark:border-gray-600")}
+      {...props}
+    >
+      {children}
+    </StyledSelect>
+    {error && <p className="mt-1 text-xs text-red-600">{error}</p>}
+  </div>
+);

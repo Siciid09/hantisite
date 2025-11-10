@@ -369,7 +369,7 @@ const RenderReportTab = ({ view, data, currency }: { view: string, data: any, cu
     const title = link?.label || "Reports";
     const icon = link?.icon || AlertTriangle;
     
-    let message = `Reports for the "${view}" module are in development.`;
+    let message = `Reports for the "${view}" module are in develo.`;
     if (view === 'custom') {
       message = "The custom report builder is a feature in development. Soon, you'll be able to build and export your own reports here."
     }
@@ -848,12 +848,7 @@ const HrReportsTab = ({ data, currency }: { data: any, currency: string }) => {
         />
       </div>
       
-      <Card className="border-yellow-300 bg-yellow-50 dark:border-yellow-700 dark:bg-yellow-900/20">
-        <h3 className="font-semibold text-yellow-700 dark:text-yellow-400">Note on Sales Analytics</h3>
-        <p className="text-sm text-yellow-600 dark:text-yellow-500">
-          To track **Sales by Staff**, please ensure the `sales` collection includes a `userId` field for each transaction. This report currently tracks Incomes and Expenses logged by staff.
-        </p>
-      </Card>
+      
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         <Card>

@@ -1,7 +1,11 @@
 // File: app/api/debts/route.ts
 // Description: API route for Debts module.
-// GET: Fetches all data for the debts dashboard (KPIs, charts, list).
-// POST: Creates a new debt record.
+//
+// --- LATEST FIX (KPI Mismatch) ---
+// 1. (FIXED) The `kpis` object now calculates `totalUnpaid` as the
+//    sum of `totalUnpaid` + `totalPartial`.
+// 2. (FIX) This ensures the "Total Unpaid Debts" KPI card matches
+//    the smart alerts and table totals (e.g., $124.00).
 // -----------------------------------------------------------------------------
 
 import { NextResponse, NextRequest } from "next/server";
@@ -85,8 +89,6 @@ export async function GET(request: NextRequest) {
     );
 
     // --- 1. Base Query (for KPIs, Charts, and List) ---
-    // We fetch all data for the selected currency and date range, then filter/paginate in memory
-    // This is necessary for the complex filters (search, amount range, tags)
     const baseDebtsQuery = firestoreAdmin
       .collection("debits")
       .where("storeId", "==", storeId)
@@ -98,7 +100,7 @@ export async function GET(request: NextRequest) {
     const allDebts = allDebtsSnapshot.docs.map((doc) => {
       const data = doc.data();
       return {
-        id: doc.id,
+        id: doc.id, // <-- IMPORTANT: Ensure ID is included
         ...data,
         createdAt: (data.createdAt as Timestamp).toDate().toISOString(),
         // Ensure fields exist for filtering
@@ -115,9 +117,9 @@ export async function GET(request: NextRequest) {
     });
 
     // --- 2. Process KPIs & Charts from 'allDebts' ---
-    let totalUnpaid = 0;
+    let totalUnpaid = 0; // Only 'unpaid' status
     let totalPaid = 0;
-    let totalPartial = 0;
+    let totalPartial = 0; // Only 'partial' status
     let overdueCount = 0;
     const topCreditorsMap = new Map<string, number>();
     const monthlyTrendMap = new Map<
@@ -159,7 +161,14 @@ export async function GET(request: NextRequest) {
       monthlyTrendMap.set(month, trend);
     });
 
-    const kpis = { totalUnpaid, totalPaid, totalPartial };
+    // --- (CRITICAL FIX) ---
+    // The main KPI for "Total Unpaid" should be the
+    // combination of 'unpaid' and 'partial' debts.
+    const kpis = {
+      totalUnpaid: totalUnpaid + totalPartial, // <-- FIX: This is the total outstanding
+      totalPaid,
+      totalPartial, // Keep this separate for the Pie Chart
+    };
 
     // --- 3. Query for "Total Debt by Currency" Chart (Optional) ---
     const allCurrencyQuery = firestoreAdmin
@@ -181,7 +190,8 @@ export async function GET(request: NextRequest) {
     // --- 4. Format Chart Data ---
     const charts = {
       paidVsUnpaid: [
-        { name: "Unpaid", value: totalUnpaid },
+        // Use the raw 'totalUnpaid' for the chart, not the combined one
+        { name: "Unpaid", value: totalUnpaid }, 
         { name: "Partial", value: totalPartial },
         { name: "Paid (Collected)", value: totalPaid },
       ],
@@ -198,6 +208,7 @@ export async function GET(request: NextRequest) {
     };
 
     // --- 5. Smart Alerts ---
+    // This calculation (totalUnpaid + totalPartial) was already correct.
     const smartAlerts = [];
     if (totalUnpaid + totalPartial > 0) {
       smartAlerts.push({
@@ -232,12 +243,12 @@ export async function GET(request: NextRequest) {
       // Search Query Filter
       if (searchQuery) {
         const search =
-  (debt.clientName || "").toLowerCase() +
-  (debt.clientPhone || "") +
-  (debt.clientWhatsapp || "") +
-  (debt.reason || "").toLowerCase() +
-  ((debt as any).relatedSaleId || "") + // ✅ bypass TS check
-  (debt.id || "")
+          (debt.clientName || "").toLowerCase() +
+          (debt.clientPhone || "") +
+          (debt.clientWhatsapp || "") +
+          (debt.reason || "").toLowerCase() +
+          ((debt as any).relatedSaleId || "") + 
+          (debt.id || "");
         if (!search.includes(searchQuery)) return false;
       }
 
@@ -253,7 +264,6 @@ export async function GET(request: NextRequest) {
         }
       }
       
-      // Note: PaymentMethod filter is skipped as this data isn't on the 'debits' doc.
       return true;
     });
 
@@ -262,16 +272,14 @@ export async function GET(request: NextRequest) {
       let valA = a[sortBy as keyof typeof a];
       let valB = b[sortBy as keyof typeof b];
 
-      // Handle different types
       if (typeof valA === 'string') {
         return sortDir === 'asc' 
           ? valA.localeCompare(valB as string) 
-          : valB.localeCompare(valA as string);
+          : (valB as string).localeCompare(valA);
       }
       if (typeof valA === 'number') {
         return sortDir === 'asc' ? valA - (valB as number) : (valB as number) - valA;
       }
-      // Default for dates (which are ISO strings)
       return sortDir === 'asc' 
         ? (valA as string).localeCompare(valB as string) 
         : (valB as string).localeCompare(valA as string);
@@ -311,6 +319,10 @@ export async function GET(request: NextRequest) {
 // -----------------------------------------------------------------------------
 // ➕ POST - Create New Debt
 // -----------------------------------------------------------------------------
+// -----------------------------------------------------------------------------
+// ➕ POST - Create New Debt
+// --- (FIX) This is now a TRANSACTION that also updates the customer's totalOwed.
+// -----------------------------------------------------------------------------
 export async function POST(request: NextRequest) {
   if (!authAdmin || !firestoreAdmin) {
     return NextResponse.json(
@@ -324,14 +336,14 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
 
     const {
+      customerId, // <-- (NEW) ID of existing customer (if any)
       clientName,
       clientPhone,
       clientWhatsapp,
       amountDue,
       reason,
       currency,
-      status, // 'paid', 'unpaid', 'partial'
-      tags, // Array of strings
+      tags,
       relatedSaleId,
     } = body;
 
@@ -349,62 +361,87 @@ export async function POST(request: NextRequest) {
         { status: 400 }
       );
     }
+    
+    // This is the ID we will use.
+    // If a customer was selected, use their ID.
+    // If not, we will create a new customer document.
+    let effectiveCustomerId = customerId;
+    
+    // --- (NEW) Start Transaction ---
+    const debtRef = firestoreAdmin.collection("debits").doc(); // Prepare new debt doc
+    let customerRef: FirebaseFirestore.DocumentReference; // Prepare customer doc ref
 
-    const newStatus = status || "unpaid";
-    const totalPaid = newStatus === "paid" ? amount : 0;
-    const currentAmountDue = newStatus === "paid" ? 0 : amount;
-    const paymentHistory =
-      newStatus === "paid"
-        ? [{ amount: amount, date: Timestamp.now(), method: "Manual Entry" }]
-        : [];
+    await firestoreAdmin.runTransaction(async (transaction) => {
+      
+      // --- Step 1: Handle the Customer ---
+      if (effectiveCustomerId) {
+        // Use existing customer
+        customerRef = firestoreAdmin.collection("customers").doc(effectiveCustomerId);
+      } else {
+        // Create a new customer
+        customerRef = firestoreAdmin.collection("customers").doc();
+        effectiveCustomerId = customerRef.id; // Get the new ID
+        
+        transaction.set(customerRef, {
+          name: clientName,
+          phone: clientPhone,
+          whatsapp: clientWhatsapp || clientPhone,
+          storeId,
+          createdAt: Timestamp.now(),
+          totalSpent: {}, // Initialize KPI
+          totalOwed: {}, // Initialize KPI
+        });
+      }
 
-    const newDebt = {
-      clientName,
-      clientPhone,
-      clientWhatsapp: clientWhatsapp || clientPhone,
-      totalAmount: amount, // The original total
-      amountDue: currentAmountDue, // The current amount due
-      totalPaid: totalPaid,
-      reason: reason || "N/A",
-      currency,
-      storeId,
-      userId: uid,
-      createdAt: Timestamp.now(),
-      updatedAt: Timestamp.now(),
-      isPaid: newStatus === "paid", // Legacy
-      status: newStatus,
-      tags: tags || [],
-      paymentHistory: paymentHistory,
-      relatedSaleId: relatedSaleId || null,
-      notes: `Created by ${userName}`,
-    };
+      // --- Step 2: Create the new Debit document ---
+      const newDebt = {
+        clientName,
+        clientPhone,
+        clientWhatsapp: clientWhatsapp || clientPhone,
+        customerId: effectiveCustomerId, // <-- (NEW) Link to customer
+        totalAmount: amount,
+        amountDue: amount,
+        totalPaid: 0,
+        reason: reason || "N/A",
+        currency,
+        storeId,
+        userId: uid,
+        createdAt: Timestamp.now(),
+        updatedAt: Timestamp.now(),
+        isPaid: false,
+        status: "unpaid",
+        tags: tags || [],
+        paymentHistory: [],
+        relatedSaleId: relatedSaleId || null,
+        notes: `Created by ${userName}`,
+      };
+      transaction.set(debtRef, newDebt);
 
-    const batch = firestoreAdmin.batch();
+      // --- Step 3: Update the Customer's totalOwed (The "30+30=60" logic) ---
+      // We use FieldValue.increment() to safely add the new amount
+      const currencyKey = `totalOwed.${currency}`;
+      transaction.update(customerRef, {
+        [currencyKey]: FieldValue.increment(amount),
+      });
 
-    // 1. Create the debt doc
-    const debtRef = firestoreAdmin.collection("debits").doc();
-    batch.set(debtRef, newDebt);
-
-    // 2. Create activity log
-    const logRef = firestoreAdmin.collection("activity_logs").doc();
-    batch.set(logRef, {
-      storeId,
-      userId: uid,
-      userName,
-      timestamp: Timestamp.now(),
-      actionType: "CREATE",
-      collectionAffected: "debits",
-  Tender: "DELETED",
-      details: `Created new debt for ${clientName} (${formatCurrency(
-        amount,
-        currency
-      )}) with status: ${newStatus.toUpperCase()}`,
-    });
-
-    await batch.commit();
+      // --- Step 4: Create Activity Log ---
+      const logRef = firestoreAdmin.collection("activity_logs").doc();
+      transaction.set(logRef, {
+        storeId,
+        userId: uid,
+        userName,
+        timestamp: Timestamp.now(),
+        actionType: "CREATE",
+        collectionAffected: "debits",
+        details: `Created new debt for ${clientName} (${formatCurrency(
+          amount,
+          currency
+        )})`,
+      });
+    }); // --- End Transaction ---
 
     return NextResponse.json(
-      { success: true, id: debtRef.id, ...newDebt },
+      { success: true, id: debtRef.id },
       { status: 201 }
     );
   } catch (error: any) {

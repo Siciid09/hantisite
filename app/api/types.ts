@@ -1,33 +1,29 @@
 // File: app/api/dashboard/types.ts
-// Description: NEW file to hold the shared type for the dashboard.
-// This allows both the client 'page.tsx' and the server 'route.ts'
-// to import the same type, fixing the import error.
+// (FIX) Ku dar 4-ta qaybood ee cusub si aad u xalliso ciladda TypeScript
 
-// This is the type from your route.ts file, moved here.
 export interface DashboardSummary {
-  // 1. KPIs
+  // 8-dii hore
   todaysSales: number;
-  totalIncomes: number;
+  totalIncomes: number; // This is 'Total Revenue'
   totalExpenses: number;
   netProfit: number;
   totalSalesCount: number;
-  newDebtsAmount: number;
+  newDebtsAmount: number; // This is 'New Debts' for the period
   lowStockCount: number;
   totalProducts: number;
 
-  // 4. Income/Expense Trend
+  // --- (NEW) 4-ta cusub ---
+  outstandingInvoices: number; // Total unpaid from customers
+  totalPayables: number; // Total owed to suppliers
+  cashBalance: number; // Net cash flow for the period
+  profitMargin: number; // Percentage
+  // --- (END NEW) ---
+
+  // Xogta kale (charts iyo lists)
   incomeExpenseTrend: { date: string; income: number; expense: number }[];
-
-  // 5. Expense Breakdown
   expenseBreakdown: { name: string; value: number }[];
-
-  // 6. Sales by Payment Type
   salesByPaymentType: { name: string; value: number }[];
-
-  // 7. Top Performing Products
   topSellingProducts: { name: string; unitsSold: number; revenue: number }[];
-
-  // 8. Recent Sales
   recentSales: {
     id: string;
     customerName: string;
@@ -35,27 +31,17 @@ export interface DashboardSummary {
     status: string;
     createdAt: string;
   }[];
-
-  // 9. Inventory Overview (Low/Out of Stock)
   stockOverview: { name: string; quantity: number; id: string }[];
-
-  // 10. Activity Feed
   activityFeed: {
     id: string;
     description: string;
     userName: string;
     timestamp: string;
   }[];
-
-  // 11. Performance Comparison
   performanceComparison: {
     salesChangePercent: number;
     profitChangePercent: number;
   };
-
-  // 12. Smart Insight
   smartInsight: string;
-
-  // Other
   timestamp: string;
 }

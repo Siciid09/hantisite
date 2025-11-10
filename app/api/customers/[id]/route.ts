@@ -1,12 +1,12 @@
 // File: app/api/customers/[id]/route.ts
 //
-// --- FINAL VERSION (REFACTORED) ---
-// 1. (FIX) KPI calculation is REMOVED.
-// 2. (FIX) 'totalSpent' and 'totalOwed' are now read *directly* from the
-//    'customerData' document (e.g., customerData.totalSpent.USD).
-// 3. (FIX) This makes the API load instantly.
-// 4. (NOTE) It still fetches sales and debits history for the tables.
-// 5. (FIX) Updated queries to match the new 'sales' and 'debits' structure.
+// --- LATEST FIX (500 Error) ---
+// 1. (FIX) Reverted `params` to use `Promise` and `await`. The
+//    previous change likely caused the 500 Internal Server Error.
+// 2. (FIX) Added `?.` to `.toDate()` in sales and debits history
+//    to prevent 500 errors if `createdAt` is missing.
+// 3. (KEPT) The fix for `debitsHistory` (using `data.reason` and
+//    `data.amountDue`) is still included.
 // -----------------------------------------------------------------------------
 
 import { NextResponse, NextRequest } from "next/server";
@@ -36,7 +36,7 @@ async function checkAuth(request: NextRequest) {
 // =============================================================================
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
+  { params }: { params: Promise<{ id: string }> } // <-- (FIX 1) Reverted to Promise
 ) {
   if (!firestoreAdmin) {
     return NextResponse.json({ error: "Admin SDK not configured." }, { status: 500 });
@@ -46,7 +46,7 @@ export async function GET(
     const { storeId } = await checkAuth(request);
 
     // ✅ Await params because Vercel treats it as a Promise
-    const { id: customerId } = await params;
+    const { id: customerId } = await params; // <-- (FIX 1) Reverted to await
 
     const db = firestoreAdmin;
 
@@ -84,33 +84,35 @@ export async function GET(
         return { 
             id: doc.id,
             invoiceId: data.invoiceId,
-            createdAt: (data.createdAt as Timestamp).toDate().toISOString(),
+            // (FIX 2) Added ?. to prevent 500 error
+            createdAt: (data.createdAt as Timestamp)?.toDate()?.toISOString() || null,
             totalAmount: data.totalAmount,
-            status: data.paymentStatus, // Use the correct field 'paymentStatus'
-            currency: data.invoiceCurrency // Use the correct field 'invoiceCurrency'
+            status: data.paymentStatus,
+            currency: data.invoiceCurrency
         };
     });
     
+    // --- (KEPT FIX) ---
+    // The fields were wrong. It's `data.reason` and `data.amountDue`.
     const debitsHistory = debitsSnap.docs.map(doc => {
         const data = doc.data();
         return { 
             id: doc.id,
-            // (FIX) Use invoiceId to create a better reason
-            reason: `Debt for ${data.invoiceId}` || "Debt",
-            createdAt: (data.createdAt as Timestamp).toDate().toISOString(),
-            amountDue: data.amount, // Use the correct field 'amount'
+            reason: data.reason || "Debt", // <-- (FIX) Use data.reason
+            // (FIX 2) Added ?. to prevent 500 error
+            createdAt: (data.createdAt as Timestamp)?.toDate()?.toISOString() || null,
+            amountDue: data.amountDue, // <-- (FIX) Use data.amountDue
             status: data.status || (data.isPaid ? 'paid' : 'unpaid'),
             currency: data.currency
         };
     });
+    // --- END FIX ---
 
     // 4. (FIX) Get KPIs DIRECTLY from customer doc
-    // Note: We sum up all currencies for a simple display.
-    // Tani waa meesha aan ka akhrineyno xogta horay loo xisaabiyay
     const kpis = {
-        totalSpent: customerData?.totalSpent || {}, // u dir object-ga oo dhan (e.g., {USD: 100, BIRR: 5000})
-        totalOwed: customerData?.totalOwed || {}, // u dir object-ga oo dhan
-        totalSales: salesHistory.length, // This is still a real-time count
+        totalSpent: customerData?.totalSpent || {},
+        totalOwed: customerData?.totalOwed || {},
+        totalSales: salesHistory.length,
         outstandingDebts: debitsHistory.filter(d => d.status !== 'paid' && d.status !== 'voided').length
     };
     
@@ -119,15 +121,16 @@ export async function GET(
       customer: {
         id: customerDoc.id,
         ...customerData,
-        createdAt: (customerData?.createdAt as Timestamp)?.toDate().toISOString(),
+        // (FIX 2) Added ?. to prevent 500 error
+        createdAt: (customerData?.createdAt as Timestamp)?.toDate()?.toISOString() || null,
       },
-      kpis, // Send the pre-calculated KPIs
+      kpis,
       salesHistory,
       debitsHistory
     });
 
   } catch (error: any) {
-    console.error("[Customer[id] API GET] Error:", error.message);
+    console.error("[Customer[id] API GET] Error:", error.message, error.stack);
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }

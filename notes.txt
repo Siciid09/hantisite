@@ -1,0 +1,99 @@
+Here’s your list of issues **reorganized and numbered by section** for clarity 👇
+
+---
+dashbaord neeeeeeeeeeeeeeeeds add income expenses
+
+### 🧾 **1. Sales Page**
+
+1. Currency name shows as **undefined**.
+2. **Invoice problem** (not specified, likely generation or data error).
+3. **Product stock value** not showing.
+4. **Delete button** should be available.
+5. **Total sales report** shows `000000`.
+
+---
+
+### 🛒 **2. Purchases Page**
+
+6. **Purchase form problem** (likely form submission or validation error).
+7. **Download single report** not ready.
+8. **Download all reports** has no data.
+9. **Delete function** should work properly.
+
+---
+
+### 🚚 **3. Suppliers Page**
+
+10. **Supplier list money** not showing.
+11. **View problem** (possibly modal or detail view not working).
+12. Console error:
+
+    ```
+    Uncaught TypeError: Cannot read properties of undefined (reading 'currentPage')
+    ```
+
+    Likely pagination or data mapping issue.
+
+---
+
+### 💰 **4. Income & Expense / Cash Management**
+
+13. **Cash on hand**, **cash payments**, and **bank payments** should display correctly.
+14. **Digital wallet** should have a **dropdown based on selected currency** and show **each wallet’s balance**.
+15. **Account payable** section should show **amount owed**.
+
+---
+
+### 📊 **5. Income Tab**
+
+16. Unknown **method and category** values appearing.
+
+---
+
+### 💳 **6. Payments Tab**
+
+17. Error:
+
+    ```
+    Error Loading Financial Data
+    Invalid tab: Payments
+    ```
+18. Should display **each card’s balance** when the selected currency supports it.
+
+---
+
+### 📈 **7. Reports Page**
+
+19. **Total debts** not showing.
+20. **Sales tab** shows `000000`.
+
+---
+
+### 👥 **8. HR Page**
+
+21. Note: Sales analytics depend on `userId` field in sales collection.
+22. **Staff name unknown** (missing linkage between userId and name).
+23. Error:
+
+    ```
+    Name, Email, Role, and Department are required.
+    ```
+24. Should **save new login data** (newly registered/logged-in staff).
+25. Should have a **“Pay Employee” button** that asks for **amount input**.
+
+---
+
+### 💸 **9. Debtors Page**
+
+26. Firestore error:
+
+    ```
+    transactions require all reads to be executed before all writes
+    ```
+27. **Form** should allow **selecting existing or adding new debtor**.
+28. **History not loading** – shows “Could not load history.”
+29. **No payment history found** – likely due to missing query or filter logic.
+
+---
+
+Would you like me to make this into a **developer task list (with priorities and fixes suggested)** next? That would make it easier to fix issue by issue.

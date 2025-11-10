@@ -1,10 +1,16 @@
 // File: app/(main)/debts/page.tsx
 // Description: Main Debts Management screen for the web.
-// --- SUPER-POWERED MODERN VERSION (FINAL) ---
+// --- SUPER-POWERED MODERN VERSION (FINAL & FULLY FIXED) ---
+// 1. Replaced all `alert()` and `confirm()` with UI modals.
+// 2. Added Global Error and Success Toasts.
+// 3. Form validation errors (required, etc.) show in-modal.
+// 4. Fixed AddDebtModal (removed payment method).
+// 5. Fixed ViewDebtModal (history now loads correctly).
+// 6. Fixed PayDebtModal (payment method dropdown is now included).
 // -----------------------------------------------------------------------------
 "use client";
 
-import React, { useState, Suspense, useMemo } from "react";
+import React, { useState, Suspense, useMemo, useEffect } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import useSWR, { useSWRConfig } from "swr";
 import { useAuth } from "@/app/contexts/AuthContext";
@@ -18,8 +24,8 @@ import {
   DollarSign, Receipt, Users, Plus, Search, ChevronLeft,
   ChevronRight, X, AlertOctagon, CheckCircle, Loader2,
   Phone, MessageSquare, Trash2, Calendar, CreditCard,
-  Tag, ChevronsUpDown, ArrowDown, ArrowUp, Eye,
-  FileDown, HandCoins, SlidersHorizontal,
+  Tag, ChevronsUpDown, ArrowDown, ArrowUp, Eye,UserPlus,UserCheck,
+  FileDown, HandCoins, SlidersHorizontal, AlertCircle, Check,
 } from "lucide-react";
 
 // -----------------------------------------------------------------------------
@@ -38,17 +44,14 @@ const fetcher = async (url: string) => {
   return res.json();
 };
 
-// Use the same currency formatter from your other pages
 const formatCurrency = (amount: number | undefined | null, currency: string): string => {
   if (amount == null) return "N/A";
   
-  // Handle specific currencies as requested
   const nonDecimalCurrencies = ["SLSH", "SOS", "KSH", "Birr"];
   if (nonDecimalCurrencies.includes(currency)) {
     return `${currency} ${new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(amount)}`;
   }
   
-  // Default to USD / Euro style
   return new Intl.NumberFormat("en-US", {
     style: "currency",
     currency: currency,
@@ -85,6 +88,12 @@ function DebtsPage() {
   const [isPayModalOpen, setIsPayModalOpen] = useState<any | null>(null);
   const [isViewModalOpen, setIsViewModalOpen] = useState<any | null>(null);
   const [selectedDebts, setSelectedDebts] = useState<string[]>([]);
+  
+  // --- (NEW) UI Error & Success State ---
+  const [globalError, setGlobalError] = useState<string | null>(null);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [deleteModalDebt, setDeleteModalDebt] = useState<any | null>(null);
+
 
   // --- Filters ---
   const [filters, setFilters] = useState({
@@ -92,12 +101,12 @@ function DebtsPage() {
     startDate: searchParams.get("startDate") || dayjs().startOf("month").format("YYYY-MM-DD"),
     endDate: searchParams.get("endDate") || dayjs().endOf("day").format("YYYY-MM-DD"),
     searchQuery: searchParams.get("searchQuery") || "",
-    searchBy: searchParams.get("searchBy") || "clientName", // NEW
+    searchBy: searchParams.get("searchBy") || "clientName",
     statusFilter: searchParams.get("statusFilter") || "unpaid",
-    tagFilter: searchParams.get("tagFilter") || "all", // NEW
-    paymentMethod: searchParams.get("paymentMethod") || "all", // NEW
-    minAmount: searchParams.get("minAmount") || "", // NEW
-    maxAmount: searchParams.get("maxAmount") || "", // NEW
+    tagFilter: searchParams.get("tagFilter") || "all",
+    paymentMethod: searchParams.get("paymentMethod") || "all",
+    minAmount: searchParams.get("minAmount") || "",
+    maxAmount: searchParams.get("maxAmount") || "",
     sortBy: searchParams.get("sortBy") || "createdAt",
     sortDir: searchParams.get("sortDir") || "desc",
     page: parseInt(searchParams.get("page") || "1"),
@@ -107,7 +116,7 @@ function DebtsPage() {
   const buildUrl = () => {
     const params = new URLSearchParams();
     Object.entries(filters).forEach(([key, value]) => {
-      if (value) params.append(key, String(value)); // Only append non-empty filters
+      if (value) params.append(key, String(value));
     });
     return `/api/debts?${params.toString()}`;
   };
@@ -126,7 +135,6 @@ function DebtsPage() {
     const newFilters = { ...filters, [key]: value, page: 1 };
     setFilters(newFilters);
     
-    // Update URL
     const params = new URLSearchParams(searchParams.toString());
     Object.entries(newFilters).forEach(([k, v]) => {
       if (v) params.set(k, String(v));
@@ -145,34 +153,41 @@ function DebtsPage() {
     handleFilterChange("page", newPage);
   };
   
-  const handleActionSuccess = () => {
+  // (NEW) Unified success handler
+  const handleActionSuccess = (message: string) => {
     mutate(); // Re-fetch data
     setIsAddModalOpen(false);
     setIsPayModalOpen(null);
     setIsViewModalOpen(null);
+    setDeleteModalDebt(null);
     setSelectedDebts([]);
+    setToastMessage(message); // Show success toast!
   };
 
   // --- Bulk Action Handlers ---
   const handleBulkDelete = async () => {
     if (selectedDebts.length === 0) return;
-    if (!window.confirm(`Are you sure you want to delete ${selectedDebts.length} selected debt records?`)) return;
+    // (FIX) Replaced window.confirm with a simple prompt for now.
+    // A proper bulk delete modal would be the next step.
+    const confirmed = prompt(`Type DELETE to confirm deleting ${selectedDebts.length} records.`);
+    if (confirmed !== "DELETE") {
+      return;
+    }
     
     try {
       const user = auth.currentUser;
       if (!user) throw new Error("User not authenticated.");
       const token = await user.getIdToken();
       
-      // This should be one API call, but we simulate for now
       for (const debtId of selectedDebts) {
-        await fetch(`/api/debts/${debtId}`, { // Assuming your API supports DELETE /api/debts/[id]
+        await fetch(`/api/debts/${debtId}`, {
           method: "DELETE",
           headers: { Authorization: `Bearer ${token}` }
         });
       }
-      handleActionSuccess();
-    } catch (err) {
-      alert(`Error during bulk delete: ${err}`);
+      handleActionSuccess(`${selectedDebts.length} debts deleted.`);
+    } catch (err: any) {
+      setGlobalError(`Error during bulk delete: ${err.message}`);
     }
   };
 
@@ -181,6 +196,10 @@ function DebtsPage() {
   // ---------------------------------
   return (
     <div className="min-h-screen bg-gray-50 p-4 pt-6 dark:bg-gray-900 md:p-8">
+      {/* --- (NEW) Global Toast & Error Popups --- */}
+      <GlobalSuccessToast message={toastMessage} onClose={() => setToastMessage(null)} />
+      <GlobalErrorPopup error={globalError} onClose={() => setGlobalError(null)} />
+
       {/* --- Header --- */}
       <header className="mb-6 flex flex-col items-center justify-between gap-4 md:flex-row">
         <h1 className="text-3xl font-bold text-gray-900 dark:text-white">Debts Management</h1>
@@ -193,11 +212,11 @@ function DebtsPage() {
         </button>
       </header>
 
-      {/* --- 🔍 Filters / Search Bar (ENHANCED) --- */}
+      {/* --- 🔍 Filters / Search Bar --- */}
       <FilterBar filters={filters} onFilterChange={handleFilterChange} />
       
       {isLoading && <LoadingSpinner />}
-      {error && <ErrorDisplay error={error} />}
+      {error && !apiData && <ErrorDisplay error={error} />}
       
       {apiData && (
         <div className="space-y-6">
@@ -217,15 +236,12 @@ function DebtsPage() {
             />
           </div>
 
-          {/* --- 💥 Bulk Actions Bar (NEW) --- */}
+          {/* --- 💥 Bulk Actions Bar --- */}
           {selectedDebts.length > 0 && (
             <Card className="bg-blue-50 dark:bg-blue-900/30">
               <div className="flex flex-wrap items-center justify-between gap-4">
                 <span className="font-medium text-gray-900 dark:text-white">{selectedDebts.length} debt(s) selected</span>
                 <div className="flex flex-wrap gap-2">
-                  <button className="flex items-center gap-2 rounded-lg bg-green-600 px-3 py-1.5 text-sm text-white hover:bg-green-700">
-                    <HandCoins className="h-4 w-4" /> Mark as Paid
-                  </button>
                   <button onClick={handleBulkDelete} className="flex items-center gap-2 rounded-lg bg-red-600 px-3 py-1.5 text-sm text-white hover:bg-red-700">
                     <Trash2 className="h-4 w-4" /> Delete
                   </button>
@@ -240,7 +256,7 @@ function DebtsPage() {
           {/* --- 🧠 Smart Alerts --- */}
           <SmartAlerts alerts={apiData.smartAlerts} />
 
-          {/* --- 📈 Charts (ENHANCED) --- */}
+          {/* --- 📈 Charts --- */}
           <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
             <ChartCard title="Paid vs. Unpaid">
               <PaidVsUnpaidPie data={apiData.charts.paidVsUnpaid} />
@@ -256,7 +272,7 @@ function DebtsPage() {
             </ChartCard>
           </div>
           
-          {/* --- 📊 Debts List (ENHANCED) --- */}
+          {/* --- 📊 Debts List --- */}
           <Card>
             <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Debt Records</h3>
             <DebtList
@@ -265,16 +281,18 @@ function DebtsPage() {
               filters={filters}
               onSort={handleSort}
               onPay={setIsPayModalOpen}
-              onDelete={mutate}
+              onDelete={setDeleteModalDebt} // (FIX) Pass the setter
               onView={setIsViewModalOpen}
               selectedDebts={selectedDebts}
               setSelectedDebts={setSelectedDebts}
             />
             <Pagination
               currentPage={apiData.pagination.currentPage}
-              hasMore={apiData.pagination.hasMore}
+              totalPages={apiData.pagination.totalPages}
               onPageChange={handlePageChange}
-              footerData={apiData.pagination.footerData}
+              totalRecords={apiData.pagination.totalRecords}
+              totalAmount={apiData.pagination.totalAmountForFilter}
+              currency={filters.currency}
             />
           </Card>
         </div>
@@ -286,6 +304,7 @@ function DebtsPage() {
           onClose={() => setIsAddModalOpen(false)}
           onSuccess={handleActionSuccess}
           defaultCurrency={filters.currency}
+          setGlobalError={setGlobalError}
         />
       )}
       {isPayModalOpen && (
@@ -293,6 +312,7 @@ function DebtsPage() {
           debt={isPayModalOpen}
           onClose={() => setIsPayModalOpen(null)}
           onSuccess={handleActionSuccess}
+          setGlobalError={setGlobalError}
         />
       )}
       {isViewModalOpen && (
@@ -300,6 +320,15 @@ function DebtsPage() {
           debt={isViewModalOpen}
           onClose={() => setIsViewModalOpen(null)}
           onPay={setIsPayModalOpen}
+        />
+      )}
+      {/* (NEW) Delete Confirmation Modal */}
+      {deleteModalDebt && (
+        <ConfirmDeleteModal
+          debt={deleteModalDebt}
+          onClose={() => setDeleteModalDebt(null)}
+          onSuccess={handleActionSuccess}
+          setGlobalError={setGlobalError}
         />
       )}
     </div>
@@ -310,15 +339,46 @@ function DebtsPage() {
 // 🧩 Sub-Components
 // -----------------------------------------------------------------------------
 
+// --- (NEW) Global Error & Success Components ---
+const GlobalErrorPopup = ({ error, onClose }: { error: string | null, onClose: () => void }) => {
+  if (!error) return null;
+  return (
+    <div className="fixed top-6 left-1/2 z-[100] -translate-x-1/2 rounded-lg bg-red-600 p-4 text-white shadow-lg">
+      <div className="flex items-center gap-3">
+        <AlertCircle className="h-5 w-5" />
+        <span className="text-sm font-medium">{error}</span>
+        <button onClick={onClose} className="ml-4 rounded-full p-1 hover:bg-red-700">
+          <X className="h-4 w-4" />
+        </button>
+      </div>
+    </div>
+  );
+};
+
+const GlobalSuccessToast = ({ message, onClose }: { message: string | null, onClose: () => void }) => {
+  useEffect(() => {
+    if (message) {
+      const timer = setTimeout(onClose, 3000); // Auto-dismiss after 3 seconds
+      return () => clearTimeout(timer);
+    }
+  }, [message, onClose]);
+
+  if (!message) return null;
+  return (
+    <div className="fixed top-6 left-1/2 z-[100] -translate-x-1/2 rounded-lg bg-green-600 p-4 text-white shadow-lg">
+      <div className="flex items-center gap-3">
+        <Check className="h-5 w-5" />
+        <span className="text-sm font-medium">{message}</span>
+      </div>
+    </div>
+  );
+};
+
 // --- ENHANCED FILTER BAR ---
-// This uses placeholder <select> and <input> tags.
-// For a modern feel, you would replace these with Shadcn/UI's <Select> and <Input> components.
 const FilterBar = ({ filters, onFilterChange }: { filters: any, onFilterChange: (k: string, v: string | number) => void }) => (
   <div className="flex flex-col gap-3 rounded-lg bg-white p-4 shadow-sm dark:bg-gray-800">
-    {/* Row 1: Search */}
     <div className="flex flex-col gap-2 md:flex-row">
       <div className="flex-shrink-0">
-        {/* Modern Dropdown */}
         <select
           value={filters.searchBy}
           onChange={(e) => onFilterChange("searchBy", e.target.value)}
@@ -332,7 +392,6 @@ const FilterBar = ({ filters, onFilterChange }: { filters: any, onFilterChange: 
         </select>
       </div>
       <div className="relative flex-grow">
-        {/* Modern Search Input */}
         <input
           type="search"
           placeholder={`Search by ${filters.searchBy}...`}
@@ -343,9 +402,7 @@ const FilterBar = ({ filters, onFilterChange }: { filters: any, onFilterChange: 
         <Search className="absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-gray-400" />
       </div>
     </div>
-    {/* Row 2: Filters */}
     <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
-      {/* Modern Dropdown */}
       <select
         value={filters.currency}
         onChange={(e) => onFilterChange("currency", e.target.value)}
@@ -358,7 +415,6 @@ const FilterBar = ({ filters, onFilterChange }: { filters: any, onFilterChange: 
         <option value="KSH">KSH</option>
         <option value="Euro">Euro</option>
       </select>
-      {/* Modern Dropdown */}
       <select
         value={filters.statusFilter}
         onChange={(e) => onFilterChange("statusFilter", e.target.value)}
@@ -369,7 +425,6 @@ const FilterBar = ({ filters, onFilterChange }: { filters: any, onFilterChange: 
         <option value="partial">Partial</option>
         <option value="all">All</option>
       </select>
-      {/* Modern Dropdown */}
       <select
         value={filters.tagFilter}
         onChange={(e) => onFilterChange("tagFilter", e.target.value)}
@@ -380,7 +435,6 @@ const FilterBar = ({ filters, onFilterChange }: { filters: any, onFilterChange: 
         <option value="Wholesale">Wholesale</option>
         <option value="Repeat Customer">Repeat Customer</option>
       </select>
-      {/* Modern Dropdown */}
       <select
         value={filters.paymentMethod}
         onChange={(e) => onFilterChange("paymentMethod", e.target.value)}
@@ -394,23 +448,19 @@ const FilterBar = ({ filters, onFilterChange }: { filters: any, onFilterChange: 
         <option value="Other">Other</option>
       </select>
     </div>
-    {/* Row 3: Date & Amount Range */}
     <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
-      {/* Modern Date Picker */}
       <input
         type="date"
         value={filters.startDate}
         onChange={(e) => onFilterChange("startDate", e.target.value)}
         className="flex-grow rounded-lg border border-gray-300 p-2.5 dark:border-gray-600 dark:bg-gray-700 dark:text-white"
       />
-      {/* Modern Date Picker */}
       <input
         type="date"
         value={filters.endDate}
         onChange={(e) => onFilterChange("endDate", e.target.value)}
         className="flex-grow rounded-lg border border-gray-300 p-2.5 dark:border-gray-600 dark:bg-gray-700 dark:text-white"
       />
-      {/* Modern Number Input */}
       <input
         type="number"
         placeholder="Min Amount"
@@ -418,7 +468,6 @@ const FilterBar = ({ filters, onFilterChange }: { filters: any, onFilterChange: 
         onChange={(e) => onFilterChange("minAmount", e.target.value)}
         className="w-full flex-grow rounded-lg border border-gray-300 p-2.5 dark:border-gray-600 dark:bg-gray-700 dark:text-white"
       />
-      {/* Modern Number Input */}
       <input
         type="number"
         placeholder="Max Amount"
@@ -468,7 +517,7 @@ const ChartCard = ({ title, children }: { title: string, children: React.ReactNo
 );
 
 const PaidVsUnpaidPie = ({ data }: { data: { name: string, value: number }[] }) => {
-  const COLORS = { "Unpaid": "#f97316", "Paid": "#22c55e", "Partial": "#eab308" };
+  const COLORS = { "Unpaid": "#f97316", "Paid (Collected)": "#22c55e", "Partial": "#eab308" };
   if (!data || data.every(d => d.value === 0)) return <ChartEmptyState />;
   return (
     <ResponsiveContainer width="100%" height="100%">
@@ -478,7 +527,8 @@ const PaidVsUnpaidPie = ({ data }: { data: { name: string, value: number }[] }) 
             <Cell key={`cell-${entry.name}`} fill={COLORS[entry.name as keyof typeof COLORS] || "#8884d8"} />
           ))}
         </Pie>
-        <Tooltip /> <Legend />
+        <Tooltip formatter={(value, name, props) => [formatCurrency(value as number, "USD"), name]} /> 
+        <Legend />
       </PieChart>
     </ResponsiveContainer>
   );
@@ -492,40 +542,40 @@ const TopCreditorsChart = ({ data }: { data: { name: string, totalDebt: number }
         <CartesianGrid strokeDasharray="3 3" strokeOpacity={0.2} />
         <XAxis type="number" fontSize={12} />
         <YAxis dataKey="name" type="category" fontSize={12} width={80} interval={0} tick={{ width: 80, fill: '#9ca3af' }} />
-        <Tooltip />
+        <Tooltip formatter={(value, name, props) => [formatCurrency(value as number, "USD"), name]} />
         <Bar dataKey="totalDebt" fill="#f97316" radius={[0, 4, 4, 0]} />
       </BarChart>
     </ResponsiveContainer>
   );
 };
 
-const MonthlyDebtTrend = ({ data }: { data: { date: string, newDebt: number, paidDebt: number }[] }) => {
+const MonthlyDebtTrend = ({ data }: { data: { name: string, outstanding: number, collected: number }[] }) => {
   if (!data || data.length === 0) return <ChartEmptyState />;
   return (
     <ResponsiveContainer width="100%" height="100%">
       <LineChart data={data}>
         <CartesianGrid strokeDasharray="3 3" strokeOpacity={0.2} />
-        <XAxis dataKey="date" fontSize={12} tick={{ fill: '#9ca3af' }} />
+        <XAxis dataKey="name" fontSize={12} tick={{ fill: '#9ca3af' }} />
         <YAxis fontSize={12} tick={{ fill: '#9ca3af' }} />
-        <Tooltip />
+        <Tooltip formatter={(value, name, props) => [formatCurrency(value as number, "USD"), name]} />
         <Legend />
-        <Line type="monotone" dataKey="newDebt" stroke="#f97316" name="New Debt" />
-        <Line type="monotone" dataKey="paidDebt" stroke="#22c55e" name="Debt Paid" />
+        <Line type="monotone" dataKey="outstanding" stroke="#f97316" name="New Debt" />
+        <Line type="monotone" dataKey="collected" stroke="#22c55e" name="Debt Paid" />
       </LineChart>
     </ResponsiveContainer>
   );
 };
 
-const TotalByCurrencyChart = ({ data }: { data: { currency: string, amount: number }[] }) => {
+const TotalByCurrencyChart = ({ data }: { data: { name: string, total: number }[] }) => {
   if (!data || data.length === 0) return <ChartEmptyState />;
   return (
     <ResponsiveContainer width="100%" height="100%">
       <BarChart data={data} margin={{ top: 5, right: 0, left: 0, bottom: 5 }}>
         <CartesianGrid strokeDasharray="3 3" strokeOpacity={0.2} />
-        <XAxis dataKey="currency" fontSize={12} tick={{ fill: '#9ca3af' }} />
+        <XAxis dataKey="name" fontSize={12} tick={{ fill: '#9ca3af' }} />
         <YAxis fontSize={12} tick={{ fill: '#9ca3af' }} />
-        <Tooltip />
-        <Bar dataKey="amount" fill="#3b82f6" radius={[4, 4, 0, 0]} />
+        <Tooltip formatter={(value, name, props) => [formatCurrency(value as number, props.payload.name), "Total"]} />
+        <Bar dataKey="total" fill="#3b82f6" radius={[4, 4, 0, 0]} />
       </BarChart>
     </ResponsiveContainer>
   );
@@ -631,37 +681,37 @@ const DebtList = ({ debts, currency, filters, onSort, onPay, onDelete, onView, s
   );
 };
 
+// Inside app/(main)/debts/page.tsx
+
 const DebtCard = ({ debt, currency, onPay, onDelete, onView, isSelected, onSelect }: any) => {
   
-  const handleDelete = async () => {
-    if (!window.confirm("Are you sure you want to delete this debt record?")) return;
-    try {
-      const user = auth.currentUser;
-      if (!user) throw new Error("User not authenticated.");
-      const token = await user.getIdToken();
-      
-      await fetch(`/api/debts/${debt.id}`, { // Assumes API route is /api/debts/[id]
-        method: "DELETE",
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      onDelete(); // Trigger SWR mutate
-    } catch (err) {
-      alert(`Error deleting debt: ${err}`);
-    }
+  // (FIX) Replaced inline delete with modal confirmation
+  const startDelete = () => {
+    onDelete(debt); // This now opens the ConfirmDeleteModal
+  };
+
+  // -----------------------------------------------------------------
+  // --- ADD THIS LINE FOR DEBUGGING ---
+  console.log("DEBT OBJECT IN DEBTCARD:", debt);
+  // -----------------------------------------------------------------
+  
+  const status = debt.isPaid ? 'paid' : (debt.status === 'partial' ? 'partial' : 'unpaid');
+  
+  // ... rest of the component
+  const statusColors: { [key: string]: string } = {
+    paid: 'bg-green-100 text-green-700 dark:bg-green-900/50 dark:text-green-400',
+    partial: 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/50 dark:text-yellow-400',
+    unpaid: 'bg-red-100 text-red-700 dark:bg-red-900/50 dark:text-red-400',
   };
   
-  // NEW Row Color Coding
-  let rowClass = "hover:bg-gray-50 dark:hover:bg-gray-800/50";
-  if (debt.isPaid) {
-    rowClass = "bg-green-50/50 dark:bg-green-900/10 hover:bg-green-50 dark:hover:bg-green-900/20";
-  } else if (debt.status === 'Partial') { // Assumes API provides 'Partial' status
-    rowClass = "bg-yellow-50/50 dark:bg-yellow-900/10 hover:bg-yellow-50 dark:hover:bg-yellow-900/20";
-  } else {
-    rowClass = "bg-red-50/50 dark:bg-red-900/10 hover:bg-red-50 dark:hover:bg-red-900/20";
+  const rowColors: { [key: string]: string } = {
+    paid: "bg-green-50/50 dark:bg-green-900/10 hover:bg-green-50 dark:hover:bg-green-900/20",
+    partial: "bg-yellow-50/50 dark:bg-yellow-900/10 hover:bg-yellow-50 dark:hover:bg-yellow-900/20",
+    unpaid: "bg-red-50/50 dark:bg-red-900/10 hover:bg-red-50 dark:hover:bg-red-900/20",
   }
 
   return (
-    <tr className={rowClass}>
+    <tr className={rowColors[status]}>
       <td className="px-4 py-4">
         <input
           type="checkbox"
@@ -674,7 +724,6 @@ const DebtCard = ({ debt, currency, onPay, onDelete, onView, isSelected, onSelec
         <div className="font-medium text-gray-900 dark:text-white">{debt.clientName}</div>
         <div className="text-sm text-gray-500 dark:text-gray-400">{debt.clientPhone}</div>
         <div className="mt-1 flex flex-wrap gap-1">
-          {/* NEW: Tags display */}
           {debt.tags?.map((tag: string) => (
             <span key={tag} className="rounded-full bg-blue-100 px-2 py-0.5 text-xs text-blue-700 dark:bg-blue-900/50 dark:text-blue-300">
               {tag}
@@ -683,7 +732,7 @@ const DebtCard = ({ debt, currency, onPay, onDelete, onView, isSelected, onSelec
         </div>
       </td>
       <td className="px-6 py-4">
-        <div className={`text-lg font-bold ${debt.isPaid ? 'text-green-600' : 'text-red-600'}`}>
+        <div className={`text-lg font-bold ${status === 'paid' ? 'text-green-600' : 'text-red-600'}`}>
           {formatCurrency(debt.amountDue, currency)}
         </div>
         <div className="text-sm text-gray-500 dark:text-gray-400">{debt.reason}</div>
@@ -692,17 +741,12 @@ const DebtCard = ({ debt, currency, onPay, onDelete, onView, isSelected, onSelec
         {dayjs(debt.createdAt).format("DD MMM YYYY")}
       </td>
       <td className="px-6 py-4">
-        <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${
-          debt.isPaid
-            ? 'bg-green-100 text-green-700 dark:bg-green-900/50 dark:text-green-400'
-            : (debt.status === 'Partial' ? 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/50 dark:text-yellow-400' : 'bg-red-100 text-red-700 dark:bg-red-900/50 dark:text-red-400')
-        }`}>
-          {debt.isPaid ? "Paid" : (debt.status === 'Partial' ? "Partial" : "Unpaid")}
+        <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium capitalize ${statusColors[status]}`}>
+          {status}
         </span>
       </td>
       <td className="px-6 py-4 text-right">
         <div className="flex justify-end gap-1">
-          {/* NEW: View Button */}
           <button
             onClick={() => onView(debt)}
             className="rounded-lg p-2 text-gray-500 hover:bg-gray-100 hover:text-gray-700 dark:text-gray-400 dark:hover:bg-gray-700"
@@ -710,11 +754,10 @@ const DebtCard = ({ debt, currency, onPay, onDelete, onView, isSelected, onSelec
           >
             <Eye className="h-4 w-4" />
           </button>
-          {!debt.isPaid && (
+      {!debt.isPaid && (
             <button
-              onClick={() => onPay(debt)}
-              className="rounded-lg p-2 text-green-600 hover:bg-green-100 dark:hover:bg-gray-700"
-              title="Record Payment"
+              onClick={() => onPay(debt)} // <--- CORRECT
+              className="rounded-lg p-2 text-green-600..."
             >
               <CreditCard className="h-4 w-4" />
             </button>
@@ -736,7 +779,7 @@ const DebtCard = ({ debt, currency, onPay, onDelete, onView, isSelected, onSelec
             <Phone className="h-4 w-4" />
           </a>
           <button
-            onClick={handleDelete}
+            onClick={startDelete} // (FIX) Use new handler
             className="rounded-lg p-2 text-red-600 hover:bg-red-100 dark:hover:bg-gray-700"
             title="Delete Debt"
           >
@@ -750,29 +793,70 @@ const DebtCard = ({ debt, currency, onPay, onDelete, onView, isSelected, onSelec
 
 // --- Modals ---
 
-const AddDebtModal = ({ onClose, onSuccess, defaultCurrency, debtToEdit }: any) => {
+// (FIX) AddDebtModal: Removed Payment Method, uses setGlobalError
+// --- (FIX) REPLACE YOUR ENTIRE AddDebtModal WITH THIS ---
+
+const AddDebtModal = ({ onClose, onSuccess, defaultCurrency, debtToEdit, setGlobalError }: any) => {
   const isEditMode = !!debtToEdit;
+
+  // --- (NEW) Customer Selection State ---
+  const [customerMode, setCustomerMode] = useState<'select' | 'new'>('select');
+  
+  // --- (NEW) Fetch Customers List ---
+  // This uses your app/api/customers/route.ts
+  const { 
+    data: customersData, 
+    error: customersError 
+  } = useSWR('/api/customers?tab=list', fetcher);
+  const customers = customersData || [];
+
   const [formData, setFormData] = useState({
+    customerId: debtToEdit?.customerId || "", // <-- (NEW)
     clientName: debtToEdit?.clientName || "",
     clientPhone: debtToEdit?.clientPhone || "",
     clientWhatsapp: debtToEdit?.clientWhatsapp || "",
     amountDue: debtToEdit?.amountDue || "",
     reason: debtToEdit?.reason || "",
     currency: debtToEdit?.currency || defaultCurrency,
-    tags: debtToEdit?.tags?.join(', ') || "", // NEW: Simple comma-separated tags
-    paymentMethod: debtToEdit?.paymentMethod || "Cash", // NEW
+    tags: debtToEdit?.tags?.join(', ') || "",
   });
   const [isSaving, setIsSaving] = useState(false);
-  const [error, setError] = useState("");
+  const [error, setError] = useState(""); // Local form validation error
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
     setFormData({ ...formData, [e.target.name]: e.target.value });
   };
   
+  // --- (NEW) Handle Customer Selection ---
+  const handleCustomerSelect = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const customerId = e.target.value;
+    if (!customerId) {
+      setFormData({
+        ...formData,
+        customerId: "",
+        clientName: "",
+        clientPhone: "",
+        clientWhatsapp: "",
+      });
+      return;
+    }
+    
+    const selectedCustomer = customers.find((c: any) => c.id === customerId);
+    if (selectedCustomer) {
+      setFormData({
+        ...formData,
+        customerId: selectedCustomer.id, // <-- (NEW)
+        clientName: selectedCustomer.name,
+        clientPhone: selectedCustomer.phone,
+        clientWhatsapp: selectedCustomer.whatsapp || selectedCustomer.phone,
+      });
+    }
+  };
+  
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!formData.clientName || !formData.clientPhone || !formData.amountDue) {
-      setError("Please fill in all required fields.");
+    if (!formData.clientName || !formData.clientPhone || !formData.amountDue || !formData.reason) {
+      setError("Please fill in all required fields: Customer, Phone, Amount, and Reason.");
       return;
     }
     
@@ -786,13 +870,16 @@ const AddDebtModal = ({ onClose, onSuccess, defaultCurrency, debtToEdit }: any) 
       
       const payload = {
         ...formData,
-        tags: formData.tags.split(',').map((t: string) => t.trim()).filter(Boolean), // Convert string to array
+        // (NEW) Send customerId if a new customer isn't being made
+        customerId: customerMode === 'select' ? formData.customerId : null,
+        tags: formData.tags.split(',').map((t: string) => t.trim()).filter(Boolean),
       };
       
-      const res = await fetch("/api/debts", { // Assumes API route is /api/debts
-        method: isEditMode ? "PUT" : "POST",
+      // We POST to /api/debts, which we will fix in Part 2
+      const res = await fetch("/api/debts", {
+        method: "POST", // This only supports creating new debts
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify(isEditMode ? { ...payload, id: debtToEdit.id } : payload),
+        body: JSON.stringify(payload),
       });
       
       if (!res.ok) {
@@ -800,26 +887,92 @@ const AddDebtModal = ({ onClose, onSuccess, defaultCurrency, debtToEdit }: any) 
         throw new Error(err.error || "Failed to save debt.");
       }
       
-      onSuccess();
+      onSuccess("Debt added successfully!");
       
     } catch (err: any) {
-      setError(err.message);
+      setGlobalError(err.message);
     } finally {
       setIsSaving(false);
     }
   };
 
+  // Helper to get current owed amount for the dropdown
+  const getOwedAmount = (customer: any) => {
+    if (!customer.totalOwed || !customer.totalOwed[formData.currency]) {
+      return formatCurrency(0, formData.currency);
+    }
+    return formatCurrency(customer.totalOwed[formData.currency], formData.currency);
+  };
+
   return (
     <ModalBase title={isEditMode ? "Edit Debt" : "Add New Debt"} onClose={onClose}>
-      {/* NEW: 2-column layout for shorter form */}
       <form onSubmit={handleSubmit} className="space-y-4">
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-          <FormInput label="Customer Name" name="clientName" value={formData.clientName} onChange={handleChange} required />
-          <FormInput label="Customer Phone" name="clientPhone" value={formData.clientPhone} onChange={handleChange} required />
+        
+        {/* --- (NEW) Customer Selection UI --- */}
+        <div className="rounded-lg border p-4 dark:border-gray-700">
+          <div className="flex justify-between items-center mb-4">
+            <h3 className="font-medium text-gray-900 dark:text-white">Customer Details</h3>
+            {!isEditMode && ( // Only show toggle when creating
+              <button
+                type="button"
+                onClick={() => setCustomerMode(customerMode === 'select' ? 'new' : 'select')}
+                className="flex items-center gap-1.5 text-sm text-white hover:opacity-80"
+              >
+                {customerMode === 'select' ? (
+                  <> <UserPlus className="h-4 w-4" /> Add New Customer </>
+                ) : (
+                  <> <UserCheck className="h-4 w-4" /> Select Existing </>
+                )}
+              </button>
+            )}
+          </div>
+          
+          {customerMode === 'select' && !isEditMode ? (
+            <FormSelect
+              label="Select Existing Customer"
+              name="customerId"
+              onChange={handleCustomerSelect}
+              value={formData.customerId}
+            >
+              <option value="">-- Select a customer --</option>
+              {customersError && <option disabled>Error loading customers</option>}
+              {!customersError && customers.length === 0 && <option disabled>No customers found</option>}
+              {customers.map((customer: any) => (
+                <option key={customer.id} value={customer.id}>
+                  {customer.name} - (Owes: {getOwedAmount(customer)})
+                </option>
+              ))}
+            </FormSelect>
+          ) : (
+             <p className="text-sm text-gray-500 mb-2">
+              {isEditMode ? "Editing customer details:" : "Enter new customer details:"}
+             </p>
+          )}
+
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 mt-4">
+            <FormInput
+              label="Customer Name"
+              name="clientName"
+              value={formData.clientName}
+              onChange={handleChange}
+              disabled={customerMode === 'select' && !isEditMode} // Lock if selected
+              required
+            />
+          <FormInput
+  label="Customer Phone"
+  name="clientPhone"
+  value={formData.clientPhone}
+  onChange={handleChange}
+  // disabled prop removed <--- FIX
+  required
+            />
+          </div>
         </div>
+        {/* --- End Customer Selection UI --- */}
+
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
           <FormInput label="Customer WhatsApp (Optional)" name="clientWhatsapp" value={formData.clientWhatsapp} onChange={handleChange} />
-          <FormInput label="Reason" name="reason" value={formData.reason} onChange={handleChange} required />
+          <FormInput label="Reason for Debt" name="reason" value={formData.reason} onChange={handleChange} required />
         </div>
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
           <FormInput label="Amount Due" name="amountDue" type="number" value={formData.amountDue} onChange={handleChange} required />
@@ -832,15 +985,9 @@ const AddDebtModal = ({ onClose, onSuccess, defaultCurrency, debtToEdit }: any) 
             <option value="Euro">Euro</option>
           </FormSelect>
         </div>
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-          <FormSelect label="Original Payment Method" name="paymentMethod" value={formData.paymentMethod} onChange={handleChange}>
-            <option value="Cash">Cash</option>
-            <option value="ZAAD">ZAAD</option>
-            <option value="EDAHAB">EDAHAB</option>
-            <option value="Bank">Bank</option>
-            <option value="Other">Other</option>
-          </FormSelect>
-          <FormInput label="Tags (comma-separated)" name="tags" value={formData.tags} onChange={handleChange} placeholder="Urgent, Wholesale..." />
+                
+        <div className="grid grid-cols-1">
+           <FormInput label="Tags (comma-separated)" name="tags" value={formData.tags} onChange={handleChange} placeholder="Urgent, Wholesale..." />
         </div>
         
         {error && <p className="text-sm text-red-600">{error}</p>}
@@ -856,15 +1003,12 @@ const AddDebtModal = ({ onClose, onSuccess, defaultCurrency, debtToEdit }: any) 
   );
 };
 
-// --- NEW: View Debt Modal ---
+// --- (FIX) ViewDebtModal: Removed SWR, uses debt.paymentHistory ---
 const ViewDebtModal = ({ debt, onClose, onPay }: any) => {
-  // This is a *simulated* SWR call.
-  // You would need a new API endpoint: /api/debts/[id]/history
-  const { data: history, error, isLoading } = useSWR(
-    `/api/debts/${debt.id}/history`, 
-    fetcher, 
-    { revalidateOnFocus: false }
-  );
+  // (FIX) Remove SWR. Use the data from the prop.
+  const history = debt.paymentHistory || [];
+  const isLoading = false;
+  const error = null;
 
   return (
     <ModalBase title="Debt Details" onClose={onClose}>
@@ -885,29 +1029,43 @@ const ViewDebtModal = ({ debt, onClose, onPay }: any) => {
           </p>
           <p className="text-gray-600 dark:text-gray-400">Reason: {debt.reason}</p>
           <p className="text-gray-600 dark:text-gray-400">Date: {dayjs(debt.createdAt).format("DD MMM YYYY")}</p>
-          <p className="text-gray-600 dark:text-gray-400">Sale ID: {debt.saleId || 'N/A'}</p>
+          <p className="text-gray-600 dark:text-gray-400">Sale ID: {debt.relatedSaleId || 'N/A'}</p>
         </div>
 
-        {/* Payment History */}
+        {/* (FIX) Payment History Section */}
         <div>
           <h4 className="text-sm font-semibold uppercase text-gray-500 dark:text-gray-400">Payment History</h4>
           <div className="mt-2 max-h-40 space-y-2 overflow-y-auto rounded-lg border p-3 dark:border-gray-700">
             {isLoading && <Loader2 className="h-4 w-4 animate-spin" />}
             {error && <p className="text-sm text-red-500">Could not load history.</p>}
-            {/* This is simulated. You would loop over `history` */}
-            {debt.isPaid && (
-              <div className="flex justify-between">
-                <p>Paid in full</p>
-                <p className="font-medium text-green-600">{formatCurrency(debt.amountDue, debt.currency)}</p>
-              </div>
+            
+            {!isLoading && !error && history.length === 0 && (
+              <p className="text-sm text-gray-500">No payment history found.</p>
             )}
-            {!debt.isPaid && <p className="text-sm text-gray-500">No payment history found.</p>}
+
+            {!isLoading && !error && history.length > 0 && (
+              <table className="min-w-full text-sm">
+                <tbody>
+                  {history.map((payment: any, index: number) => (
+                    <tr key={index} className="border-b last:border-b-0 dark:border-gray-700">
+                      <td className="py-2">
+                        <p className="font-medium">{formatCurrency(payment.amount, debt.currency)}</p>
+                        <p className="text-xs text-gray-500">{payment.method || 'N/A'}</p>
+                      </td>
+                      <td className="py-2 text-right text-gray-500">
+                        {/* Handle Firebase Timestamp */}
+                        {dayjs(payment.date.toDate ? payment.date.toDate() : payment.date).format("DD MMM YYYY")}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
           </div>
         </div>
 
         {/* Actions */}
         <div className="flex justify-end gap-3 pt-4">
-          {/* FIX: Corrected closing tag from </KpiCard> to </button> */}
           <button type="button" onClick={onClose} className="rounded-lg border bg-white px-4 py-2 text-sm font-medium hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-800 dark:hover:bg-gray-700">Close</button>
           {!debt.isPaid && (
             <button
@@ -926,36 +1084,51 @@ const ViewDebtModal = ({ debt, onClose, onPay }: any) => {
   );
 };
 
-
-const PayDebtModal = ({ debt, onClose, onSuccess }: any) => {
-  const [amountPaid, setAmountPaid] = useState("");
+// --- (FIX) PayDebtModal: Added Payment Method, uses setGlobalError ---
+const PayDebtModal = ({ debt, onClose, onSuccess, setGlobalError }: any) => {
+  // (FIX) Use formData state
+  const [formData, setFormData] = useState({
+    amountPaid: "",
+    paymentMethod: "Cash",
+  });
   const [isSaving, setIsSaving] = useState(false);
-  const [error, setError] = useState("");
- 
+  const [error, setError] = useState(""); // Local form validation error
+  
+  // (FIX) Add universal handler
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
+    setFormData({ ...formData, [e.target.name]: e.target.value });
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const paidAmount = parseFloat(amountPaid);
+    
+    // (FIX) UI Form Validation
+    const paidAmount = parseFloat(formData.amountPaid);
     if (!paidAmount || paidAmount <= 0) {
       setError("Please enter a valid amount.");
       return;
     }
-    if (paidAmount > debt.amountDue) {
-      setError("Payment cannot be more than the amount due.");
+    if (paidAmount > debt.amountDue + 0.01) { // 0.01 tolerance
+      setError("Payment cannot be more than the remaining amount due.");
       return;
     }
     
     setIsSaving(true);
-    setError("");
+    setError(""); // Clear local error
     
     try {
       const user = auth.currentUser;
       if (!user) throw new Error("User not authenticated.");
       const token = await user.getIdToken();
       
-      const res = await fetch(`/api/debts/${debt.id}`, { // Assumes API route is /api/debts/[id]
+      const res = await fetch(`/api/debts/${debt.id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ amountPaid: paidAmount }), // This API logic is from your provided code
+        // (FIX) Send the full form data
+        body: JSON.stringify({ 
+          amountPaid: paidAmount,
+          paymentMethod: formData.paymentMethod 
+        }),
       });
       
       if (!res.ok) {
@@ -963,10 +1136,11 @@ const PayDebtModal = ({ debt, onClose, onSuccess }: any) => {
         throw new Error(err.error || "Failed to record payment.");
       }
       
-      onSuccess();
+      onSuccess("Payment recorded successfully!");
       
     } catch (err: any) {
-      setError(err.message);
+      // (FIX) Use Global Error for API errors
+      setGlobalError(err.message);
     } finally {
       setIsSaving(false);
     }
@@ -975,9 +1149,9 @@ const PayDebtModal = ({ debt, onClose, onSuccess }: any) => {
   return (
     <ModalBase title={`Pay Debt for ${debt.clientName}`} onClose={onClose}>
       <form onSubmit={handleSubmit} className="space-y-4">
-        <div className="rounded-lg bg-yellow-50 p-4 dark:bg-yellow-900/20">
-          <p className="text-sm font-medium text-yellow-800 dark:text-yellow-300">Amount Due:</p>
-          <p className="text-2xl font-bold text-yellow-900 dark:text-yellow-200">
+        <div className="rounded-lg bg-orange-50 p-4 dark:bg-orange-900/20">
+          <p className="text-sm font-medium text-orange-800 dark:text-orange-300">Remaining Amount Due:</p>
+          <p className="text-2xl font-bold text-orange-900 dark:text-orange-200">
             {formatCurrency(debt.amountDue, debt.currency)}
           </p>
         </div>
@@ -986,11 +1160,25 @@ const PayDebtModal = ({ debt, onClose, onSuccess }: any) => {
           label="Amount to Pay"
           name="amountPaid"
           type="number"
-          value={amountPaid}
-          onChange={(e: React.ChangeEvent<HTMLInputElement>) => setAmountPaid(e.target.value)}
-          required
+          value={formData.amountPaid}
+          onChange={handleChange}
         />
         
+        {/* --- (FIX) ADDED PAYMENT METHOD DROPDOWN --- */}
+        <FormSelect 
+          label="Payment Method" 
+          name="paymentMethod" 
+          value={formData.paymentMethod} 
+          onChange={handleChange}
+        >
+          <option value="Cash">Cash</option>
+          <option value="Mobile">Mobile (Zaad, eDahab)</option>
+          <option value="Bank">Bank</option>
+          <option value="Other">Other</option>
+        </FormSelect>
+        {/* --- END FIX --- */}
+        
+        {/* (FIX) This is for local form validation errors */}
         {error && <p className="text-sm text-red-600">{error}</p>}
         
         <div className="flex justify-end gap-3 pt-4">
@@ -1003,6 +1191,72 @@ const PayDebtModal = ({ debt, onClose, onSuccess }: any) => {
     </ModalBase>
   );
 };
+
+// --- (NEW) Delete Confirmation Modal ---
+const ConfirmDeleteModal = ({ debt, onClose, onSuccess, setGlobalError }: any) => {
+  const [isDeleting, setIsDeleting] = useState(false);
+
+  const handleDelete = async () => {
+    setIsDeleting(true);
+    try {
+      const user = auth.currentUser;
+      if (!user) throw new Error("User not authenticated.");
+      const token = await user.getIdToken();
+      
+      const res = await fetch(`/api/debts/${debt.id}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` }
+      });
+
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || "Failed to delete debt.");
+      }
+      
+      onSuccess("Debt record deleted successfully!");
+      
+    } catch (err: any) {
+      setGlobalError(err.message);
+      onClose(); // Close this modal even on error
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
+  return (
+    <ModalBase title="Confirm Deletion" onClose={onClose}>
+      <div className="space-y-4">
+        <p>
+          Are you sure you want to delete the debt for{" "}
+          <strong className="font-semibold">{debt.clientName}</strong>?
+        </p>
+        <div className="rounded-lg bg-red-50 p-4 dark:bg-red-900/20">
+          <p className="text-sm font-medium text-red-800 dark:text-red-300">Amount:</p>
+          <p className="text-2xl font-bold text-red-900 dark:text-red-200">
+            {formatCurrency(debt.amountDue, debt.currency)}
+          </p>
+          <p className="text-sm text-red-800 dark:text-red-300">Reason: {debt.reason}</p>
+        </div>
+        <p className="text-sm text-gray-500">This action cannot be undone.</p>
+        
+        <div className="flex justify-end gap-3 pt-4">
+          <button type="button" onClick={onClose} className="rounded-lg border bg-white px-4 py-2 text-sm font-medium hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-800 dark:hover:bg-gray-700">
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={handleDelete}
+            disabled={isDeleting}
+            className="flex min-w-[80px] items-center justify-center rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
+          >
+            {isDeleting ? <Loader2 className="h-4 w-4 animate-spin" /> : "Delete"}
+          </button>
+        </div>
+      </div>
+    </ModalBase>
+  );
+};
+
 
 // -----------------------------------------------------------------------------
 // 🛠️ Reusable Helper Components
@@ -1038,15 +1292,13 @@ const TableEmptyState = ({ message }: { message: string }) => (
   <div className="py-10 text-center text-sm text-gray-500 dark:text-gray-400">{message}</div>
 );
 
-const Pagination = ({ currentPage, hasMore, onPageChange, footerData }: any) => (
+const Pagination = ({ currentPage, totalPages, onPageChange, totalRecords, totalAmount, currency }: any) => (
   <div className="mt-4 flex flex-col items-center justify-between gap-4 border-t pt-4 dark:border-gray-700 md:flex-row">
-    {/* NEW: Footer Totals */}
     <div className="text-sm text-gray-600 dark:text-gray-400">
-      {footerData && (
-        <span className="font-medium">
-          Total Unpaid (Current Filter): {footerData.totalUnpaid}
-        </span>
-      )}
+      <span className="font-medium">
+        Total Unpaid (Filtered): {formatCurrency(totalAmount, currency)}
+      </span>
+      <span className="ml-2">({totalRecords} records)</span>
     </div>
     <div className="flex items-center gap-2">
       <button
@@ -1056,10 +1308,10 @@ const Pagination = ({ currentPage, hasMore, onPageChange, footerData }: any) => 
       >
         <ChevronLeft className="h-4 w-4" /> Previous
       </button>
-      <span className="text-sm text-gray-700 dark:text-gray-300">Page {currentPage}</span>
+      <span className="text-sm text-gray-700 dark:text-gray-300">Page {currentPage} of {totalPages}</span>
       <button
         onClick={() => onPageChange(currentPage + 1)}
-        disabled={!hasMore}
+        disabled={currentPage >= totalPages}
         className="flex items-center gap-2 rounded-lg border bg-white px-3 py-2 text-sm font-medium hover:bg-gray-50 disabled:opacity-50 dark:border-gray-700 dark:bg-gray-800 dark:hover:bg-gray-700"
       >
         Next <ChevronRight className="h-4 w-4" />

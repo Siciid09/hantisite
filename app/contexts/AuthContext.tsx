@@ -6,7 +6,7 @@ import React, { createContext, useContext, useState, useEffect, ReactNode } from
 import { onAuthStateChanged, User as FirebaseUser } from 'firebase/auth';
 import { doc, getDoc } from 'firebase/firestore';
 import { auth, firestore } from '@/lib/firebaseConfig';
-
+ import Image from "next/image"; // ✅ Make sure imported
 // Define the shape of the custom user object
 interface AppUser {
   uid: string;
@@ -155,13 +155,38 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   // Global loading screen (Unchanged)
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center min-h-screen w-full bg-background dark:bg-background-dark">
-        <div className="text-primary dark:text-primary-light animate-pulse">Loading Hantikaab...</div>
-      </div>
-    );
-  }
+
+
+// Inside your LoginPage component
+{loading && (
+  <div className="fixed inset-0 z-50 bg-white/90 dark:bg-gray-900/90 flex flex-col items-center justify-center backdrop-blur-sm">
+    
+    {/* Animated Logo */}
+    <div className="w-16 h-16 flex items-center justify-center bg-white rounded-xl shadow-md p-2 mb-4">
+      <Image
+        src="/logo2.png"        // Your logo
+        alt="Hantikaab Logo"
+        width={48}
+        height={48}
+        className="animate-spin-slow object-contain"
+        priority
+      />
+    </div>
+
+    {/* Animated Text */}
+    <span className="text-gray-700 dark:text-white font-semibold text-lg animate-pulse">
+      Signing in...
+    </span>
+
+    {/* Bouncing dots */}
+    <div className="flex space-x-2 mt-2">
+      <span className="w-3 h-3 bg-blue-600 dark:bg-blue-400 rounded-full animate-bounce delay-75"></span>
+      <span className="w-3 h-3 bg-blue-600 dark:bg-blue-400 rounded-full animate-bounce delay-150"></span>
+      <span className="w-3 h-3 bg-blue-600 dark:bg-blue-400 rounded-full animate-bounce delay-300"></span>
+    </div>
+  </div>
+)}
+
 
   // Render children
   return (

@@ -86,16 +86,38 @@ const fetcher = async (url: string) => {
   const res = await fetch(url, {
     headers: { Authorization: `Bearer ${token}` },
   });
-  if (!res.ok) {
-    let errorBody;
+ if (!res.ok) {
+  let errorBody: any = null;
+  let errorText = "";
+
+  try {
+    // Try to read JSON
+    errorBody = await res.json();
+  } catch {
+    // If it's not JSON, read plain text
     try {
-      errorBody = await res.json();
-    } catch (e) {
-      errorBody = { error: `API Error: ${res.status}` };
+      errorText = await res.text();
+    } catch {
+      errorText = "";
     }
-    console.error("Fetch error details:", errorBody);
-    throw new Error(errorBody.error || `API Error: ${res.status}`);
   }
+
+  const status = res.status;
+  const message =
+    errorBody?.error ||
+    errorBody?.message ||
+    errorText ||
+    `API Error: ${status}`;
+
+  console.error("Fetch error:", {
+    status,
+    message,
+    details: errorBody || errorText || "No details returned",
+  });
+
+  throw new Error(message);
+}
+
   return res.json();
 };
 
@@ -282,8 +304,9 @@ export default function DashboardPage() {
       {/* --- Main Grid Layout (with security) --- */}
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         {/* --- KPIs (Col 1-3) --- */}
+        {/* --- KPIs (Col 1-3) --- */}
         <div className="lg:col-span-3">
-          {/* Top Row */}
+          {/* --- Row 1: Sales & Profit Overview --- */}
           <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4">
             <KpiCard
               title="Today's Sales"
@@ -299,9 +322,36 @@ export default function DashboardPage() {
               color="text-blue-500"
               isLoading={isLoading}
             />
-
             {/* --- [SECURITY] Role Check --- */}
-            {user && (user.role === "admin" || user.role === "manager") && (
+            {user && (user.role === "admin" || user.role === "manager") ? (
+              <KpiCard
+                title="Total Revenue"
+                value={formatCurrency(apiData?.totalIncomes)}
+                icon={TrendingUp}
+                color="text-green-500"
+                isLoading={isLoading}
+              />
+            ) : (
+              <div className="hidden lg:block"></div> // Placeholder
+            )}
+            {user && (user.role === "admin" || user.role === "manager") ? (
+              <KpiCard
+                title="Profit Margin %"
+                value={apiData?.profitMargin?.toFixed(1) ?? 0}
+                unit="%"
+                icon={TrendingUp}
+                color="text-teal-500"
+                isLoading={isLoading}
+              />
+            ) : (
+              <div className="hidden lg:block"></div> // Placeholder
+            )}
+          </div>
+
+          {/* --- Row 2: Cash Flow & P&L --- */}
+          <div className="mt-6 grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4">
+            {/* --- [SECURITY] Role Check --- */}
+            {user && (user.role === "admin" || user.role === "manager") ? (
               <KpiCard
                 title="Net Profit"
                 value={formatCurrency(apiData?.netProfit)}
@@ -309,9 +359,10 @@ export default function DashboardPage() {
                 color="text-green-500"
                 isLoading={isLoading}
               />
+            ) : (
+              <div className="hidden lg:block"></div> // Placeholder
             )}
-            {/* --- [SECURITY] Role Check --- */}
-            {user && (user.role === "admin" || user.role === "manager") && (
+            {user && (user.role === "admin" || user.role === "manager") ? (
               <KpiCard
                 title="Total Expenses"
                 value={formatCurrency(apiData?.totalExpenses)}
@@ -319,38 +370,54 @@ export default function DashboardPage() {
                 color="text-red-500"
                 isLoading={isLoading}
               />
+            ) : (
+              <div className="hidden lg:block"></div> // Placeholder
             )}
-
-            {/* Fallback for 'user' role */}
-            {user && user.role === "user" && (
+            {user && (user.role === "admin" || user.role === "manager") ? (
               <KpiCard
-                title="New Debts"
-                value={formatCurrency(apiData?.newDebtsAmount)}
-                icon={Users}
-                color="text-orange-500"
+                title="Cash Balance"
+                value={formatCurrency(apiData?.cashBalance)}
+                icon={Landmark}
+                color="text-indigo-500"
                 isLoading={isLoading}
               />
+            ) : (
+              <div className="hidden lg:block"></div> // Placeholder
             )}
-            {user && user.role === "user" && (
-              <KpiCard
-                title="Low Stock"
-                value={apiData?.lowStockCount ?? 0}
-                unit="Items"
-                icon={AlertTriangle}
-                color="text-yellow-500"
-                isLoading={isLoading}
-              />
-            )}
-          </div>
-          {/* Bottom Row */}
-          <div className="mt-6 grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4">
             <KpiCard
-              title="New Debts"
+              title="New Debts (Period)"
               value={formatCurrency(apiData?.newDebtsAmount)}
               icon={Users}
               color="text-orange-500"
               isLoading={isLoading}
             />
+          </div>
+
+          {/* --- Row 3: Balance Sheet & Inventory --- */}
+          <div className="mt-6 grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4">
+            {/* --- [SECURITY] Role Check --- */}
+            {user && (user.role === "admin" || user.role === "manager") ? (
+              <KpiCard
+                title="Outstanding Invoices"
+                value={formatCurrency(apiData?.outstandingInvoices)}
+                icon={FileText}
+                color="text-red-500"
+                isLoading={isLoading}
+              />
+            ) : (
+              <div className="hidden lg:block"></div> // Placeholder
+            )}
+            {user && (user.role === "admin" || user.role === "manager") ? (
+              <KpiCard
+                title="Total Payables"
+                value={formatCurrency(apiData?.totalPayables)}
+                icon={ShoppingBag}
+                color="text-yellow-600"
+                isLoading={isLoading}
+              />
+            ) : (
+              <div className="hidden lg:block"></div> // Placeholder
+            )}
             <KpiCard
               title="Low Stock"
               value={apiData?.lowStockCount ?? 0}
@@ -359,18 +426,6 @@ export default function DashboardPage() {
               color="text-yellow-500"
               isLoading={isLoading}
             />
-
-            {/* --- [SECURITY] Role Check --- */}
-            {user && (user.role === "admin" || user.role === "manager") && (
-              <KpiCard
-                title="Total Revenue"
-                value={formatCurrency(apiData?.totalIncomes)}
-                icon={DollarSign}
-                color="text-green-500"
-                isLoading={isLoading}
-              />
-            )}
-
             <KpiCard
               title="Total Products"
               value={apiData?.totalProducts ?? 0}
@@ -382,7 +437,6 @@ export default function DashboardPage() {
           </div>
         </div>
         {/* --- END OF KPI Layout --- */}
-
         {/* --- Main Charts (Col 1-2) --- */}
         <div className="flex flex-col gap-6 lg:col-span-2">
           {/* 4. Income vs Expense Trend */}

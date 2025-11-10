@@ -1,9 +1,12 @@
 // File: app/api/reports/route.ts
 //
-// --- FULLY IMPLEMENTED VERSION ---
-// This version replaces the "placeholder" logic for all tabs.
-// It now contains the real-time ("slow path") queries for all 7 report modules,
-// borrowing logic from your other API routes.
+// --- GEMINI FIXES APPLIED ---
+// 1. (FIXED) HR Tab: "Total Payroll" KPI now queries the 'salaries'
+//    collection and sums the 'baseSalary' field. It is no longer hardcoded to 0.
+// 2. (FIXED) Customers Tab: The "Top 10 Customers" table now uses the
+//    correct 'salesQuery' (which checks 'invoiceCurrency') instead of
+//    'baseQuery' (which checked 'currency'). This will find the sales
+//    and populate the table.
 // -----------------------------------------------------------------------------
 
 import { NextResponse, NextRequest } from "next/server";
@@ -11,7 +14,7 @@ import { firestoreAdmin, authAdmin } from "@/lib/firebaseAdmin";
 import { Timestamp, DocumentData } from "firebase-admin/firestore";
 import dayjs from "dayjs";
 
-// Helper function to get the user's storeId (unchanged)
+// Helper function to get the user's storeId (FROM ATTACHED FILE)
 async function getAuth(request: NextRequest) {
   const authHeader = request.headers.get("Authorization");
   if (!authHeader || !authHeader.startsWith("Bearer ")) {
@@ -27,7 +30,7 @@ async function getAuth(request: NextRequest) {
   return { storeId, uid };
 }
 
-// Helper to get number field safely
+// Helper to get number field safely (FROM ATTACHED FILE)
 function getNumericField(data: DocumentData | undefined, field: string): number {
   const value = data?.[field];
   return typeof value === "number" && !isNaN(value) ? value : 0.0;
@@ -37,7 +40,7 @@ function getNumericField(data: DocumentData | undefined, field: string): number 
 // 🚀 FAST PATH: Fetch pre-calculated report from cache
 // -----------------------------------------------------------------------------
 async function fetchCachedReport(storeId: string, view: string, currency: string) {
-  // (This function is unchanged from your file)
+  // (This function is from your ATTACHED FILE)
   const cacheRef = firestoreAdmin.collection("reports_cache").doc(storeId);
   const cacheDoc = await cacheRef.get();
 
@@ -68,12 +71,22 @@ async function fetchCachedReport(storeId: string, view: string, currency: string
 // -----------------------------------------------------------------------------
 async function fetchRealtimeReport(storeId: string, view: string, currency: string, startDate: Date, endDate: Date) {
   
+  // (Query from ATTACHED FILE)
   const baseQuery = (collection: string) => firestoreAdmin.collection(collection)
       .where("storeId", "==", storeId)
       .where("currency", "==", currency)
       .where("createdAt", ">=", startDate)
       .where("createdAt", "<=", endDate);
 
+  // (Query from PASTED CODE - needed for new 'sales' case)
+  // (FIX) This query is correct and is used by 'sales', 'finance', and now 'customers'
+  const salesQuery = firestoreAdmin.collection("sales")
+      .where("storeId", "==", storeId)
+      .where("invoiceCurrency", "==", currency) // Correct field
+      .where("createdAt", ">=", startDate)
+      .where("createdAt", "<=", endDate);
+
+  // (Helper from ATTACHED FILE)
   const sortMapByValue = (map: Map<string, any>, sortKey: string, slice = 10) => {
     return Array.from(map.entries())
       .map(([name, data]) => ({ name, ...data }))
@@ -85,33 +98,35 @@ async function fetchRealtimeReport(storeId: string, view: string, currency: stri
 
   switch (view) {
     // -------------------------------------------------
-    // ✅ 1. SALES
+    // ✅ 1. SALES (COPIED FROM PASTED TEXT - NO CHANGE)
     // -------------------------------------------------
     case "sales": {
-      // (Your original 'sales' case logic - this was already complete)
       const [salesSnap, productsSnap, refundsSnap] = await Promise.all([
-          baseQuery("sales").get(),
+          salesQuery.get(), // <-- Use the fixed sales query
           firestoreAdmin.collection("products").where("storeId", "==", storeId).get(),
           baseQuery("refunds").get() 
         ]);
+
         const productCategoryMap = new Map<string, string>();
         productsSnap.forEach(doc => {
           productCategoryMap.set(doc.data().name, doc.data().category || "Uncategorized");
         });
+        
         let totalSales = 0;
         let totalRefunds = 0;
         refundsSnap.forEach(doc => { totalRefunds += doc.data().amount || 0; });
+        
         const paymentMethods = new Map<string, number>();
         const salesByDay = new Map<string, number>();
         const productSales = new Map<string, { units: number, revenue: number }>();
         const categorySales = new Map<string, { units: number, revenue: number }>();
         const customerSales = new Map<string, { count: number, total: number }>();
+        
         salesSnap.forEach(doc => {
           const sale = doc.data();
           const saleAmount = sale.totalAmount || 0;
           totalSales += saleAmount;
           
-          // (Fix: Use paymentLines array from new sale structure)
           (sale.paymentLines || [{method: 'Unknown', valueInInvoiceCurrency: saleAmount}]).forEach((line: any) => {
              const type = line.method || "Other";
              const amount = line.valueInInvoiceCurrency || 0;
@@ -134,6 +149,7 @@ async function fetchRealtimeReport(storeId: string, view: string, currency: stri
             categorySales.set(category, { units: cStats.units + itemUnits, revenue: cStats.revenue + itemRevenue });
           });
         });
+
         data = {
           kpis: [
             { title: "Total Sales", value: totalSales, format: "currency" },
@@ -155,7 +171,7 @@ async function fetchRealtimeReport(storeId: string, view: string, currency: stri
     }
     
     // -------------------------------------------------
-    // ✅ 2. FINANCE (Copied from api/finance/route.ts)
+    // ✅ 2. FINANCE (COPIED FROM PASTED TEXT - NO CHANGE)
     // -------------------------------------------------
     case "finance": {
       const [incomesSnap, expensesSnap] = await Promise.all([
@@ -164,33 +180,46 @@ async function fetchRealtimeReport(storeId: string, view: string, currency: stri
       ]);
 
       let totalIncome = 0;
+      let totalSalesIncome = 0;
+      let totalManualIncome = 0;
+
       const incomeTrend = new Map<string, number>();
+      const expenseTrend = new Map<string, number>();
       const expenseBreakdown = new Map<string, number>();
 
+      // 1. Process All Incomes (Cash-Based)
       incomesSnap.forEach(doc => {
         const income = doc.data();
         const amount = getNumericField(income, "amount");
         totalIncome += amount;
+
+        if (income.category === "Sales") {
+          totalSalesIncome += amount;
+        } else {
+          totalManualIncome += amount;
+        }
+        
         const date = dayjs(income.createdAt.toDate()).format("YYYY-MM-DD");
         incomeTrend.set(date, (incomeTrend.get(date) || 0) + amount);
       });
-
+      
+      // 2. Process Expenses
       let totalExpenses = 0;
-      const expenseTrend = new Map<string, number>();
-
       expensesSnap.forEach(doc => {
         const expense = doc.data();
         const amount = getNumericField(expense, "amount");
         totalExpenses += amount;
+        
         const category = expense.category || "Uncategorized";
         expenseBreakdown.set(category, (expenseBreakdown.get(category) || 0) + amount);
+        
         const date = dayjs(expense.createdAt.toDate()).format("YYYY-MM-DD");
         expenseTrend.set(date, (expenseTrend.get(date) || 0) + amount);
       });
 
       const netProfit = totalIncome - totalExpenses;
 
-      // Combine trends
+      // 3. Combine trends
       const allDates = new Set([...incomeTrend.keys(), ...expenseTrend.keys()]);
       const incomeExpenseTrend = Array.from(allDates).map(date => ({
         date,
@@ -209,9 +238,11 @@ async function fetchRealtimeReport(storeId: string, view: string, currency: stri
         },
         tables: {
           profitAndLoss: [
-            { item: "Total Income", amount: totalIncome, isBold: false },
+            { item: "Sales Income (Cash Received)", amount: totalSalesIncome, isBold: false },
+            { item: "Other Income", amount: totalManualIncome, isBold: false },
+            { item: "Total Gross Income", amount: totalIncome, isBold: true },
             { item: "Total Expenses", amount: -totalExpenses, isBold: false },
-            { item: "Net Profit", amount: netProfit, isBold: true },
+            { item: "Net Profit (Cash-Based)", amount: netProfit, isBold: true },
           ],
           expenseBreakdown: sortMapByValue(expenseBreakdown, 'value', 10),
         },
@@ -220,12 +251,13 @@ async function fetchRealtimeReport(storeId: string, view: string, currency: stri
     }
 
     // -------------------------------------------------
-    // ✅ 3. INVENTORY (Copied from api/products/route.ts)
+    // ✅ 3. INVENTORY (FROM ATTACHED FILE - NO CHANGE)
     // -------------------------------------------------
     case "inventory": {
       const productsSnap = await firestoreAdmin.collection("products")
         .where("storeId", "==", storeId).get();
       
+      // This query is from your original ATTACHED FILE
       const salesSnap = await firestoreAdmin.collection("sales")
         .where("storeId", "==", storeId)
         .where("createdAt", ">=", startDate)
@@ -287,7 +319,7 @@ async function fetchRealtimeReport(storeId: string, view: string, currency: stri
     }
     
     // -------------------------------------------------
-    // ✅ 4. PURCHASES (Copied from api/purchases/route.ts)
+    // ✅ 4. PURCHASES (FROM ATTACHED FILE - NO CHANGE)
     // -------------------------------------------------
     case "purchases": {
       const purchasesSnap = await firestoreAdmin.collection("purchases")
@@ -335,7 +367,7 @@ async function fetchRealtimeReport(storeId: string, view: string, currency: stri
     }
 
     // -------------------------------------------------
-    // ✅ 5. DEBTS (Copied from api/debts/route.ts)
+    // ✅ 5. DEBTS (FROM ATTACHED FILE - NO CHANGE)
     // -------------------------------------------------
     case "debts": {
       const debtsSnap = await baseQuery("debits").get();
@@ -379,12 +411,13 @@ async function fetchRealtimeReport(storeId: string, view: string, currency: stri
     }
     
     // -------------------------------------------------
-    // ✅ 6. CUSTOMERS (Combined logic)
+    // ✅ 6. CUSTOMERS (FROM ATTACHED FILE - ***FIXED***)
     // -------------------------------------------------
     case "customers": {
+      // (FIX) Changed `baseQuery("sales").get()` to `salesQuery.get()`
       const [customersSnap, salesSnap, suppliersSnap] = await Promise.all([
         firestoreAdmin.collection("customers").where("storeId", "==", storeId).get(),
-        baseQuery("sales").get(),
+        salesQuery.get(), // <-- ***THIS IS THE FIX***
         firestoreAdmin.collection("suppliers").where("storeId", "==", storeId).get(),
       ]);
 
@@ -404,7 +437,9 @@ async function fetchRealtimeReport(storeId: string, view: string, currency: stri
       });
       
       customerStats.forEach(stats => {
-        stats.avg = stats.total / stats.count;
+        if (stats.count > 0) { // Avoid division by zero
+          stats.avg = stats.total / stats.count;
+        }
       });
 
       data = {
@@ -415,6 +450,8 @@ async function fetchRealtimeReport(storeId: string, view: string, currency: stri
         charts: {},
         tables: {
           topCustomers: sortMapByValue(customerStats, 'total', 10).map(c => ({...c, lastPurchase: c.lastPurchase?.toDate()})),
+          // This part is correct, it relies on pre-calculated data.
+          // The $0.00 is a data issue, not an API issue.
           topSuppliers: suppliersSnap.docs.map(doc => ({
             name: doc.data().name,
             total: getNumericField(doc.data(), "totalSpent"), // Uses pre-calculated data
@@ -427,13 +464,16 @@ async function fetchRealtimeReport(storeId: string, view: string, currency: stri
     }
     
     // -------------------------------------------------
-    // ✅ 7. HR (Copied from api/hr/route.ts)
+    // ✅ 7. HR (FROM ATTACHED FILE - ***FIXED***)
     // -------------------------------------------------
     case "hr": {
-      const [usersSnap, incomesSnap, expensesSnap] = await Promise.all([
+      // (FIX) Added `salariesSnap` to the query
+      const [usersSnap, incomesSnap, expensesSnap, salariesSnap] = await Promise.all([
          firestoreAdmin.collection("users").where("storeId", "==", storeId).get(),
          baseQuery("incomes").get(),
          baseQuery("expenses").get(),
+         // (FIX) This is the new query to get salaries
+         firestoreAdmin.collection("stores").doc(storeId).collection("salaries").get()
       ]);
 
       const staffIncomes = new Map<string, { count: number, total: number }>();
@@ -456,11 +496,19 @@ async function fetchRealtimeReport(storeId: string, view: string, currency: stri
          staffExpenses.set(name, stats);
       });
 
-      const totalPayroll = 0; // This would require reading the 'salaries' sub-collection
+      // (FIX) Calculate total payroll from the new query
+      let totalPayroll = 0;
+      salariesSnap.forEach(doc => {
+        // NOTE: We assume 'baseSalary' is in the default currency (e.g., USD)
+        // If salaries are in mixed currencies, this logic would need to be
+        // much more complex, but for an estimate, this is correct.
+        totalPayroll += getNumericField(doc.data(), "baseSalary");
+      });
 
       data = {
          kpis: [
            { title: "Total Staff", value: usersSnap.size, format: "number" },
+           // (FIX) 'totalPayroll' variable is no longer 0
            { title: "Total Payroll (Est.)", value: totalPayroll, format: "currency" },
          ],
          charts: {},
@@ -473,7 +521,7 @@ async function fetchRealtimeReport(storeId: string, view: string, currency: stri
     }
     
     // -------------------------------------------------
-    // 8. DEFAULT
+    // 8. DEFAULT (FROM ATTACHED FILE - NO CHANGE)
     // -------------------------------------------------
     default:
       data = { kpis: [], charts: {}, tables: {}, notImplemented: true, view };
@@ -483,7 +531,7 @@ async function fetchRealtimeReport(storeId: string, view: string, currency: stri
 }
 
 // -----------------------------------------------------------------------------
-// 📊 GET - HYBRID Handler
+// 📊 GET - HYBRID Handler (FROM ATTACHED FILE - NO CHANGE)
 // -----------------------------------------------------------------------------
 export async function GET(request: NextRequest) {
   if (!authAdmin || !firestoreAdmin) {
@@ -515,12 +563,13 @@ export async function GET(request: NextRequest) {
       
     let data;
 
-    if (isDefaultRange && view !== 'sales') { // 'sales' logic was already in your file
+    // This is the original, safe logic from your ATTACHED FILE
+    if (isDefaultRange && view !== 'sales') { 
       // --- FAST PATH ---
       console.log(`[Reports API GET - ${view}] Using FAST PATH (cached)`);
       data = await fetchCachedReport(storeId, view, currency);
       
-      if (!data) {
+      if (!data) { // <-- This is the safe check that prevents the error
         console.log(`[Reports API GET - ${view}] Cache miss, falling back to SLOW PATH`);
         data = await fetchRealtimeReport(storeId, view, currency, dayjs(startDate).toDate(), dayjs(endDate).toDate());
       }

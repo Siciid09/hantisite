@@ -1,18 +1,20 @@
 // File: app/(main)/hr/page.tsx
-// Description: Main HR & Staff page with 5-tab navigation.
+// Description: Main HR & Staff page (MODIFIED)
 // -----------------------------------------------------------------------------
 "use client";
 
-import React, { useState, Suspense } from "react";
+import React, { useState, Suspense, useEffect } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import useSWR, { useSWRConfig } from "swr";
 import { useAuth } from "@/app/contexts/AuthContext";
 import { auth } from "@/lib/firebaseConfig";
 import dayjs from "dayjs";
+import { jsPDF } from "jspdf"; // For PDF generation
 import {
-  Users, UserPlus, Shield, UserCheck, Calendar, DollarSign,
-  Award, Loader2, Search, X, ChevronLeft, ChevronRight,
+  Users, UserPlus, DollarSign,
+  Loader2, X, ChevronLeft, ChevronRight,
   Trash2, Edit, AlertTriangle, Briefcase,
+  Printer, CreditCard, Calendar,
 } from "lucide-react";
 
 // -----------------------------------------------------------------------------
@@ -42,27 +44,29 @@ export default function HRPageWrapper() {
 }
 
 // -----------------------------------------------------------------------------
-// 📝 Main HR Page Component
+// 📝 Main HR Page Component (MODIFIED)
 // -----------------------------------------------------------------------------
+
+// --- Updated Nav Links ---
 const hrNavLinks = [
   { id: "employees", label: "Employee List", icon: Users },
-  { id: "roles", label: "Roles & Permissions", icon: Shield },
-  { id: "attendance", label: "Attendance", icon: Calendar },
   { id: "payroll", label: "Payroll & Salaries", icon: DollarSign },
-  { id: "performance", label: "Performance", icon: Award },
 ];
 
 function HRPage() {
-  const { user, loading: authLoading, subscription } = useAuth(); //
+  const { user, loading: authLoading, subscription } = useAuth();
   const router = useRouter();
   const searchParams = useSearchParams();
   const { mutate } = useSWRConfig();
 
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [editingMember, setEditingMember] = useState<any>(null); // For Edit Modal
 
   // --- State ---
   const view = searchParams.get("view") || "employees";
   const page = parseInt(searchParams.get("page") || "1");
+  const userRole = (user as any)?.role; // Get current user's role
 
   // --- SWR Data Fetching ---
   const apiUrl = `/api/hr?view=${view}&page=${page}`;
@@ -85,40 +89,49 @@ function HRPage() {
   };
 
   const handleOpenAddModal = () => {
-    // Replicating subscription check from teamusers.dart
-    const userCount = apiData?.data?.length || 0; // This is naive, ideally API returns count
+    // Subscription check (simplified)
+    const userCount = apiData?.data?.length || 0; // This is not accurate, but for demo
     const canAdd = (subscription?.planId === 'pro' && userCount < 10) || 
                    (subscription?.planId === 'unlimited') || 
                    (subscription?.planId === 'lifetime') ||
-                   (userCount < 3); // Default trial/basic limit
+                   (userCount < 3); // Default
                    
     if (canAdd) {
       setIsAddModalOpen(true);
     } else {
-      // Replicating dialog from teamusers.dart
-      alert("User Limit Reached. Please upgrade your plan to add more team members.");
-      router.push("/subscription"); //
+      // Use a custom modal instead of alert
+      console.error("User Limit Reached. Please upgrade your plan.");
+      // You would set a state here to show a "limit reached" modal
+      router.push("/subscription");
     }
+  };
+
+  // --- Open Edit Modal ---
+  const handleOpenEditModal = (member: any) => {
+    setEditingMember(member);
+    setIsEditModalOpen(true);
   };
   
   const handleActionSuccess = () => {
     mutate(apiUrl); // Re-fetch data for the current view
     setIsAddModalOpen(false);
+    setIsEditModalOpen(false);
+    setEditingMember(null);
   };
   
-  // Render loading state if user role is not yet determined
+  // Render loading state
   if (authLoading || !user) {
     return <LoadingSpinner />;
   }
 
-  // Permission Check from teamusers.dart
-  if ((user as any).role !== 'admin') {
+  // Permission Check (from teamusers.dart)
+  if (userRole !== 'admin') {
     return (
       <div className="flex flex-col items-center justify-center p-10 text-center">
         <AlertTriangle className="h-16 w-16 text-red-500" />
         <h1 className="mt-4 text-2xl font-bold">Access Denied</h1>
         <p className="mt-2 text-gray-600 dark:text-gray-400">
-          Only administrators can manage team members.
+          Only administrators can manage this page.
         </p>
       </div>
     );
@@ -143,7 +156,7 @@ function HRPage() {
         )}
       </header>
 
-      {/* --- 📑 Tab Navigation --- */}
+      {/* --- 📑 Tab Navigation (Updated) --- */}
       <div className="mb-6 flex items-center gap-2 overflow-x-auto border-b border-gray-200 pb-2 dark:border-gray-700">
         {hrNavLinks.map((link) => (
           <button
@@ -162,17 +175,27 @@ function HRPage() {
         ))}
       </div>
 
-      {/* --- 🚦 Content Switcher --- */}
+      {/* --- 🚦 Content Switcher (Updated) --- */}
       <div className="mt-5">
         {isLoading && <LoadingSpinner />}
         {error && <ErrorDisplay error={error} />}
         {apiData && (
           <>
-            {view === 'employees' && <EmployeeList data={apiData} onPageChange={handlePageChange} />}
-            {view === 'roles' && <RolesPermissions data={apiData} />}
-            {view === 'attendance' && <AttendanceTracking data={apiData} onPageChange={handlePageChange} />}
-            {view === 'payroll' && <PayrollSalaries data={apiData} onPageChange={handlePageChange} />}
-            {view === 'performance' && <PerformanceReviews data={apiData} onPageChange={handlePageChange} />}
+            {view === 'employees' && (
+              <EmployeeList 
+                data={apiData} 
+                onPageChange={handlePageChange}
+                onEdit={handleOpenEditModal} // Pass handler
+                userRole={userRole} // Pass role
+              />
+            )}
+            {view === 'payroll' && (
+              <PayrollSalaries 
+                data={apiData} 
+                onPageChange={handlePageChange} 
+                onSuccess={handleActionSuccess}
+              />
+            )}
           </>
         )}
       </div>
@@ -184,6 +207,17 @@ function HRPage() {
           onSuccess={handleActionSuccess}
         />
       )}
+      
+      {isEditModalOpen && editingMember && (
+        <EditEmployeeModal
+          member={editingMember}
+          onClose={() => {
+            setIsEditModalOpen(false);
+            setEditingMember(null);
+          }}
+          onSuccess={handleActionSuccess}
+        />
+      )}
     </div>
   );
 }
@@ -192,12 +226,21 @@ function HRPage() {
 // 🧩 Tab-Specific Components
 // -----------------------------------------------------------------------------
 
-// 1. Employee List
-const EmployeeList = ({ data, onPageChange }: { data: any, onPageChange: (p: number) => void }) => {
+// 1. Employee List (MODIFIED)
+const EmployeeList = ({ data, onPageChange, onEdit, userRole }: { 
+  data: any, 
+  onPageChange: (p: number) => void,
+  onEdit: (member: any) => void,
+  userRole: string 
+}) => {
   const { mutate } = useSWRConfig();
+  const [isDeleting, setIsDeleting] = useState<string | null>(null);
   
   const handleDelete = async (id: string, name: string) => {
-    if (!window.confirm(`Are you sure you want to remove ${name}? This will delete their account.`)) return;
+    // Custom confirm modal should be used here, but window.confirm for simplicity
+    if (!window.confirm(`Are you sure you want to remove ${name}? This will delete their account permanently.`)) return;
+    
+    setIsDeleting(id);
     try {
       const user = auth.currentUser;
       if (!user) throw new Error("User not authenticated.");
@@ -207,11 +250,17 @@ const EmployeeList = ({ data, onPageChange }: { data: any, onPageChange: (p: num
         method: "DELETE",
         headers: { Authorization: `Bearer ${token}` }
       });
-      if (!res.ok) throw new Error("Failed to delete user.");
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || "Failed to delete user.");
+      }
       
-      mutate((key) => typeof key === 'string' && key.startsWith('/api/hr')); // Re-fetch all HR data
-    } catch (err) {
-      alert(`Error: ${err}`);
+      mutate((key) => typeof key === 'string' && key.startsWith('/api/hr')); // Re-fetch
+    } catch (err: any) {
+      console.error(`Error: ${err.message}`);
+      // Show error modal
+    } finally {
+      setIsDeleting(null);
     }
   };
   
@@ -224,7 +273,7 @@ const EmployeeList = ({ data, onPageChange }: { data: any, onPageChange: (p: num
               <th className="px-6 py-3 text-left text-xs font-medium uppercase">Name</th>
               <th className="px-6 py-3 text-left text-xs font-medium uppercase">Contact</th>
               <th className="px-6 py-3 text-left text-xs font-medium uppercase">Role</th>
-              <th className="px-6 py-3 text-left text-xs font-medium uppercase">Status</th>
+              <th className="px-6 py-3 text-left text-xs font-medium uppercase">Gender</th>
               <th className="px-6 py-3 text-right text-xs font-medium uppercase">Actions</th>
             </tr>
           </thead>
@@ -241,20 +290,27 @@ const EmployeeList = ({ data, onPageChange }: { data: any, onPageChange: (p: num
                     {member.role?.toUpperCase()}
                   </span>
                 </td>
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${
-                    member.status === 'approved' 
-                      ? 'bg-green-100 text-green-800' 
-                      : 'bg-yellow-100 text-yellow-800'
-                  }`}>
-                    {member.status?.toUpperCase()}
-                  </span>
-                </td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 capitalize">{member.gender || 'N/A'}</td>
                 <td className="px-6 py-4 whitespace-nowrap text-right">
-                  <button className="p-2 text-gray-500 hover:text-blue-600"><Edit className="h-4 w-4" /></button>
-                  <button onClick={() => handleDelete(member.id, member.name)} className="p-2 text-gray-500 hover:text-red-600">
-                    <Trash2 className="h-4 w-4" />
-                  </button>
+                  {/* --- Permission Check for Actions --- */}
+                  {(userRole === 'admin' || userRole === 'manager') && (
+                    <div className="flex items-center justify-end gap-2">
+                      <button 
+                        onClick={() => onEdit(member)} 
+                        className="p-2 text-gray-500 hover:text-blue-600"
+                        disabled={!!isDeleting}
+                      >
+                        <Edit className="h-4 w-4" />
+                      </button>
+                      <button 
+                        onClick={() => handleDelete(member.id, member.name)} 
+                        className="p-2 text-gray-500 hover:text-red-600 disabled:opacity-50"
+                        disabled={!!isDeleting}
+                      >
+                        {isDeleting === member.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                      </button>
+                    </div>
+                  )}
                 </td>
               </tr>
             ))}
@@ -271,160 +327,189 @@ const EmployeeList = ({ data, onPageChange }: { data: any, onPageChange: (p: num
   );
 };
 
-// 2. Roles & Permissions
-const RolesPermissions = ({ data }: { data: any }) => (
-  <Card>
-    <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
-      {data.data.map((role: any) => (
-        <div key={role.id} className="rounded-lg border p-4 dark:border-gray-700">
-          <h3 className="flex items-center gap-2 text-lg font-semibold">
-            <Briefcase className="h-5 w-5 text-blue-600" />
-            {role.name}
-          </h3>
-          <p className="mt-2 text-sm text-gray-600 dark:text-gray-400">{role.desc}</p>
-          <button className="mt-4 text-sm font-medium text-blue-600 hover:underline">
-            Edit Permissions
-          </button>
+// 2. Roles & Permissions (REMOVED)
+// 3. Attendance (REMOVED)
+
+// 4. Payroll (MODIFIED)
+const PayrollSalaries = ({ data, onPageChange, onSuccess }: { data: any, onPageChange: (p: number) => void, onSuccess: () => void }) => {
+  const [isPayModalOpen, setIsPayModalOpen] = useState(false);
+  const [payingEntry, setPayingEntry] = useState<any>(null);
+
+  const handleOpenPayModal = (entry: any) => {
+    setPayingEntry(entry);
+    setIsPayModalOpen(true);
+  };
+  
+  const handlePaySuccess = () => {
+    setIsPayModalOpen(false);
+    setPayingEntry(null);
+    onSuccess(); // Re-fetches all data
+  };
+
+  const handlePrint = (payment: any) => {
+    const doc = new jsPDF();
+    
+    doc.setFontSize(18);
+    doc.text("Payment Invoice", 105, 20, { align: "center" });
+    
+    doc.setFontSize(12);
+    doc.text(`Invoice ID: ${payment.id}`, 20, 40);
+    doc.text(`Payment Date: ${dayjs(payment.payDate).format("DD MMM YYYY")}`, 20, 50);
+    
+    doc.text("Paid To:", 20, 70);
+    doc.text(payment.userName, 20, 80);
+    doc.text(`User ID: ${payment.userId}`, 20, 90);
+
+    doc.text("Paid By:", 140, 70);
+    doc.text(payment.processedBy, 140, 80);
+    doc.text(`Processed: ${dayjs(payment.processedAt).format("DD MMM YYYY")}`, 140, 90);
+    
+    doc.setLineWidth(0.5);
+    doc.line(20, 110, 190, 110);
+    
+    doc.text("Description", 20, 120);
+    doc.text("Amount", 180, 120, { align: "right" });
+    
+    doc.text(`Salary Payment (${dayjs(payment.payDate).format("MMM YYYY")})`, 20, 130);
+    doc.text(`${payment.amount.toFixed(2)} ${payment.currency}`, 180, 130, { align: "right" });
+
+    if (payment.notes) {
+      doc.text("Notes:", 20, 150);
+      doc.text(payment.notes, 20, 160, { maxWidth: 170 });
+    }
+    
+    doc.line(20, 200, 190, 200);
+    
+    doc.setFontSize(16);
+    doc.text("Total Paid:", 20, 210);
+    doc.text(`${payment.amount.toFixed(2)} ${payment.currency}`, 180, 210, { align: "right" });
+
+    doc.save(`invoice-${payment.userName.replace(" ", "_")}-${payment.id.substring(0,5)}.pdf`);
+  };
+
+  return (
+    <>
+      {/* --- Section 1: Salary List --- */}
+      <Card>
+        <h2 className="text-xl font-semibold mb-4">Employee Salaries</h2>
+        <p className="text-sm text-gray-600 mb-4">Manage base salaries and issue payments.</p>
+        <div className="overflow-x-auto">
+          <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+            <thead className="bg-gray-50 dark:bg-gray-700">
+              <tr>
+                <th className="px-6 py-3 text-left text-xs font-medium uppercase">Employee</th>
+                <th className="px-6 py-3 text-left text-xs font-medium uppercase">Base Salary</th>
+                <th className="px-6 py-3 text-left text-xs font-medium uppercase">Frequency</th>
+                <th className="px-6 py-3 text-right text-xs font-medium uppercase">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
+              {data.data.salaries.map((entry: any) => (
+                <tr key={entry.id}>
+                  <td className="px-6 py-4 whitespace-nowrap font-medium">{entry.userName}</td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-green-600 font-medium">
+                    ${entry.baseSalary.toFixed(2)}
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{entry.frequency}</td>
+                  <td className="px-6 py-4 whitespace-nowrap text-right">
+                    <button 
+                      onClick={() => handleOpenPayModal(entry)}
+                      className="flex items-center gap-2 rounded-lg bg-green-600 px-3 py-1.5 text-xs font-medium text-white shadow-sm hover:bg-green-700"
+                    >
+                      <CreditCard className="h-4 w-4" />
+                      Pay
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
-      ))}
-    </div>
-  </Card>
-);
+        {data.data.salaries.length === 0 && <TableEmptyState message="No salary records found. Add employees to see them here." />}
+        {/* We won't use pagination here as it complicates the dual-list */}
+      </Card>
 
-// 3. Attendance
-const AttendanceTracking = ({ data, onPageChange }: { data: any, onPageChange: (p: number) => void }) => (
-  <Card>
-    <p>This is a log of employee check-ins and check-outs.</p>
-    {/* This component would ideally have a "Check-in" button */}
-    <div className="mt-4 overflow-x-auto">
-      <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
-        <thead className="bg-gray-50 dark:bg-gray-700">
-          <tr>
-            <th className="px-6 py-3 text-left text-xs font-medium uppercase">Employee</th>
-            <th className="px-6 py-3 text-left text-xs font-medium uppercase">Check-in</th>
-            <th className="px-6 py-3 text-left text-xs font-medium uppercase">Check-out</th>
-            <th className="px-6 py-3 text-left text-xs font-medium uppercase">Hours</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
-          {data.data.map((att: any) => (
-            <tr key={att.id}>
-              <td className="px-6 py-4 whitespace-nowrap font-medium">{att.userName}</td>
-              <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                {dayjs(att.checkIn).format("DD MMM YYYY, h:mm A")}
-              </td>
-              <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                {att.checkOut ? dayjs(att.checkOut).format("h:mm A") : "Still clocked in"}
-              </td>
-              <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                {att.checkOut ? `${dayjs(att.checkOut).diff(dayjs(att.checkIn), 'hour', true).toFixed(1)} hrs` : "-"}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-    {data.data.length === 0 && <TableEmptyState message="No attendance records found." />}
-    <Pagination
-      currentPage={data.pagination.currentPage}
-      hasMore={data.pagination.hasMore}
-      onPageChange={onPageChange}
-    />
-  </Card>
-);
+      {/* --- Section 2: Payment History --- */}
+      <Card className="mt-8">
+        <h2 className="text-xl font-semibold mb-4">Recent Payment History</h2>
+        <div className="overflow-x-auto">
+          <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+            <thead className="bg-gray-50 dark:bg-gray-700">
+              <tr>
+                <th className="px-6 py-3 text-left text-xs font-medium uppercase">Employee</th>
+                <th className="px-6 py-3 text-left text-xs font-medium uppercase">Amount</th>
+                <th className="px-6 py-3 text-left text-xs font-medium uppercase">Pay Date</th>
+                <th className="px-6 py-3 text-left text-xs font-medium uppercase">Processed By</th>
+                <th className="px-6 py-3 text-right text-xs font-medium uppercase">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
+              {data.data.history.map((payment: any) => (
+                <tr key={payment.id}>
+                  <td className="px-6 py-4 whitespace-nowrap font-medium">{payment.userName}</td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                    {payment.amount.toFixed(2)} {payment.currency}
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                    {dayjs(payment.payDate).format("DD MMM YYYY")}
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{payment.processedBy}</td>
+                  <td className="px-6 py-4 whitespace-nowrap text-right">
+                    <button 
+                      onClick={() => handlePrint(payment)}
+                      className="flex items-center gap-2 rounded-lg border bg-white px-3 py-1.5 text-xs font-medium text-gray-700 shadow-sm hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600"
+                    >
+                      <Printer className="h-4 w-4" />
+                      Print
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        {data.data.history.length === 0 && <TableEmptyState message="No payment history found." />}
+        <Pagination
+          currentPage={data.pagination.currentPage}
+          hasMore={data.pagination.hasMore}
+          onPageChange={onPageChange}
+        />
+      </Card>
 
-// 4. Payroll
-const PayrollSalaries = ({ data, onPageChange }: { data: any, onPageChange: (p: number) => void }) => (
-  <Card>
-    <p>Manage employee salaries and run payroll.</p>
-    <div className="mt-4 overflow-x-auto">
-      <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
-        <thead className="bg-gray-50 dark:bg-gray-700">
-          <tr>
-            <th className="px-6 py-3 text-left text-xs font-medium uppercase">Employee</th>
-            <th className="px-6 py-3 text-left text-xs font-medium uppercase">Base Salary</th>
-            <th className="px-6 py-3 text-left text-xs font-medium uppercase">Pay Frequency</th>
-            <th className="px-6 py-3 text-right text-xs font-medium uppercase">Actions</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
-          {data.data.map((entry: any) => (
-            <tr key={entry.id}>
-              <td className="px-6 py-4 whitespace-nowrap font-medium">{entry.userName}</td>
-              <td className="px-6 py-4 whitespace-nowrap text-sm text-green-600 font-medium">
-                ${entry.baseSalary.toFixed(2)}
-              </td>
-              <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{entry.frequency}</td>
-              <td className="px-6 py-4 whitespace-nowrap text-right">
-                <button className="p-2 text-sm font-medium text-blue-600 hover:underline">Edit</button>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-    {data.data.length === 0 && <TableEmptyState message="No salary records found." />}
-    <Pagination
-      currentPage={data.pagination.currentPage}
-      hasMore={data.pagination.hasMore}
-      onPageChange={onPageChange}
-    />
-  </Card>
-);
+      {isPayModalOpen && payingEntry && (
+        <PayModal
+          entry={payingEntry}
+          onClose={() => setIsPayModalOpen(false)}
+          onSuccess={handlePaySuccess}
+        />
+      )}
+    </>
+  );
+};
 
-// 5. Performance
-const PerformanceReviews = ({ data, onPageChange }: { data: any, onPageChange: (p: number) => void }) => (
-  <Card>
-    <p>Track employee evaluations and reviews.</p>
-    <div className="mt-4 overflow-x-auto">
-      <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
-        <thead className="bg-gray-50 dark:bg-gray-700">
-          <tr>
-            <th className="px-6 py-3 text-left text-xs font-medium uppercase">Employee</th>
-            <th className="px-6 py-3 text-left text-xs font-medium uppercase">Review Date</th>
-            <th className="px-6 py-3 text-left text-xs font-medium uppercase">Rating (1-5)</th>
-            <th className="px-6 py-3 text-left text-xs font-medium uppercase">Summary</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
-          {data.data.map((review: any) => (
-            <tr key={review.id}>
-              <td className="px-6 py-4 whitespace-nowrap font-medium">{review.userName}</td>
-              <td className="px-6 py-4 whitespace-nowGrap text-sm text-gray-500">
-                {dayjs(review.reviewDate).format("DD MMM YYYY")}
-              </td>
-              <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-blue-600">{review.rating}</td>
-              <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{review.summary}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-    {data.data.length === 0 && <TableEmptyState message="No performance reviews found." />}
-    <Pagination
-      currentPage={data.pagination.currentPage}
-      hasMore={data.pagination.hasMore}
-      onPageChange={onPageChange}
-    />
-  </Card>
-);
+
+// 5. Performance (REMOVED)
 
 // -----------------------------------------------------------------------------
 // 🧩 Modals & Helpers
 // -----------------------------------------------------------------------------
 
-// Add Employee Modal (from teamusers.dart)
+// --- Add Employee Modal (MODIFIED) ---
 const AddEmployeeModal = ({ onClose, onSuccess }: any) => {
   const [formData, setFormData] = useState({
     name: "",
     email: "",
+    password: "", // Added
     phone: "",
     role: "user",
+    address: "", // Added
+    gender: "male", // Added
+    baseSalary: "0",
   });
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState("");
 
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
     setFormData({ ...formData, [e.target.name]: e.target.value });
   };
   
@@ -454,7 +539,6 @@ const AddEmployeeModal = ({ onClose, onSuccess }: any) => {
         throw new Error(err.error || "Failed to save employee.");
       }
       
-      alert("Team member added! A password setup email has been sent.");
       onSuccess();
       
     } catch (err: any) {
@@ -469,13 +553,21 @@ const AddEmployeeModal = ({ onClose, onSuccess }: any) => {
       <form onSubmit={handleSubmit} className="space-y-4">
         <FormInput label="Full Name" name="name" value={formData.name} onChange={handleChange} required />
         <FormInput label="Email Address" name="email" type="email" value={formData.email} onChange={handleChange} required />
+        <FormInput label="Password" name="password" type="password" value={formData.password} onChange={handleChange} placeholder="Leave blank for default 'password123'" />
         <FormInput label="Phone Number" name="phone" value={formData.phone} onChange={handleChange} />
+        <FormInput label="Address" name="address" value={formData.address} onChange={handleChange} />
+        <FormSelect label="Gender" name="gender" value={formData.gender} onChange={handleChange}>
+          <option value="male">Male</option>
+          <option value="female">Female</option>
+          <option value="other">Other</option>
+        </FormSelect>
         <FormSelect label="Role" name="role" value={formData.role} onChange={handleChange}>
           <option value="user">Staff / User</option>
           <option value="cashier">Cashier</option>
           <option value="manager">Manager</option>
           <option value="admin">Admin</option>
         </FormSelect>
+        <FormInput label="Base Salary (Monthly)" name="baseSalary" type="number" value={formData.baseSalary} onChange={handleChange} />
         
         {error && <p className="text-sm text-red-600">{error}</p>}
         
@@ -490,7 +582,192 @@ const AddEmployeeModal = ({ onClose, onSuccess }: any) => {
   );
 };
 
-// --- Reusable Helper Components ---
+// --- (NEW) Edit Employee Modal ---
+const EditEmployeeModal = ({ member, onClose, onSuccess }: { member: any, onClose: () => void, onSuccess: () => void }) => {
+  const [formData, setFormData] = useState({
+    name: member.name || "",
+    email: member.email || "",
+    phone: member.phone || "",
+    role: member.role || "user",
+    address: member.address || "",
+    gender: member.gender || "male",
+    baseSalary: member.baseSalary || "0", // This needs to be fetched, placeholder
+  });
+  const [isSaving, setIsSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  // Need to fetch baseSalary separately as it's not on the 'user' object
+  useEffect(() => {
+    const fetchSalary = async () => {
+      try {
+        // This is a bit inefficient, but needed.
+        // A better way would be to join salary data in the main 'employees' GET
+        const res = await fetcher(`/api/hr?view=payroll`);
+        const salaryEntry = res.data.salaries.find((s: any) => s.userId === member.id);
+        if (salaryEntry) {
+          setFormData(prev => ({ ...prev, baseSalary: salaryEntry.baseSalary.toString() }));
+        }
+      } catch (err) {
+        console.error("Failed to fetch salary for edit.");
+      }
+    };
+    fetchSalary();
+  }, [member.id]);
+
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
+    setFormData({ ...formData, [e.target.name]: e.target.value });
+  };
+  
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!formData.name || !formData.email || !formData.role) {
+      setError("Name, Email, and Role are required.");
+      return;
+    }
+    
+    setIsSaving(true);
+    setError("");
+    
+    try {
+      const user = auth.currentUser;
+      if (!user) throw new Error("User not authenticated.");
+      const token = await user.getIdToken();
+      
+      const res = await fetch(`/api/hr/employees/${member.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({...formData, storeId: member.storeId, userName: member.name }), // Pass storeId for salary lookup
+      });
+      
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || "Failed to update employee.");
+      }
+      
+      onSuccess();
+      
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  return (
+    <ModalBase title="Edit Team Member" onClose={onClose}>
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <FormInput label="Full Name" name="name" value={formData.name} onChange={handleChange} required />
+        <FormInput label="Email Address" name="email" type="email" value={formData.email} onChange={handleChange} required />
+        <FormInput label="Phone Number" name="phone" value={formData.phone} onChange={handleChange} />
+        <FormInput label="Address" name="address" value={formData.address} onChange={handleChange} />
+        <FormSelect label="Gender" name="gender" value={formData.gender} onChange={handleChange}>
+          <option value="male">Male</option>
+          <option value="female">Female</option>
+          <option value="other">Other</option>
+        </FormSelect>
+        <FormSelect label="Role" name="role" value={formData.role} onChange={handleChange}>
+          <option value="user">Staff / User</option>
+          <option value="cashier">Cashier</option>
+          <option value="manager">Manager</option>
+          <option value="admin">Admin</option>
+        </FormSelect>
+        <FormInput label="Base Salary (Monthly)" name="baseSalary" type="number" value={formData.baseSalary} onChange={handleChange} />
+        
+        {error && <p className="text-sm text-red-600">{error}</p>}
+        
+        <div className="flex justify-end gap-3 pt-4">
+          <button type="button" onClick={onClose} className="rounded-lg border bg-white px-4 py-2 text-sm font-medium hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-800 dark:hover:bg-gray-700">Cancel</button>
+          <button type="submit" disabled={isSaving} className="flex min-w-[80px] items-center justify-center rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50">
+            {isSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : "Save Changes"}
+          </button>
+        </div>
+      </form>
+    </ModalBase>
+  );
+};
+
+// --- (NEW) Pay Modal ---
+const PayModal = ({ entry, onClose, onSuccess }: { entry: any, onClose: () => void, onSuccess: () => void }) => {
+  const [formData, setFormData] = useState({
+    amount: entry.baseSalary.toFixed(2),
+    currency: "USD",
+    payDate: dayjs().format("YYYY-MM-DD"),
+    notes: "",
+  });
+  const [isSaving, setIsSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
+    setFormData({ ...formData, [e.target.name]: e.target.value });
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!formData.amount || !formData.payDate) {
+      setError("Amount and Pay Date are required.");
+      return;
+    }
+    
+    setIsSaving(true);
+    setError("");
+    
+    try {
+      const user = auth.currentUser;
+      if (!user) throw new Error("User not authenticated.");
+      const token = await user.getIdToken();
+      
+      const payload = {
+        ...formData,
+        userId: entry.userId,
+        userName: entry.userName,
+      };
+
+      const res = await fetch("/api/hr/payroll", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify(payload),
+      });
+      
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || "Failed to record payment.");
+      }
+      
+      onSuccess();
+      
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  return (
+    <ModalBase title={`Pay ${entry.userName}`} onClose={onClose}>
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <FormInput label="Pay Date" name="payDate" type="date" value={formData.payDate} onChange={handleChange} required />
+        <FormInput label="Amount" name="amount" type="number" value={formData.amount} onChange={handleChange} required />
+        <FormSelect label="Currency" name="currency" value={formData.currency} onChange={handleChange}>
+          <option value="USD">USD</option>
+          <option value="SOS">SOS</option>
+        </FormSelect>
+        <FormTextarea label="Notes (Optional)" name="notes" value={formData.notes} onChange={handleChange} />
+        
+        {error && <p className="text-sm text-red-600">{error}</p>}
+        
+        <div className="flex justify-end gap-3 pt-4">
+          <button type="button" onClick={onClose} className="rounded-lg border bg-white px-4 py-2 text-sm font-medium hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-800 dark:hover:bg-gray-700">Cancel</button>
+          <button type="submit" disabled={isSaving} className="flex min-w-[120px] items-center justify-center rounded-lg bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-700 disabled:opacity-50">
+            {isSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : "Confirm Payment"}
+          </button>
+        </div>
+      </form>
+    </ModalBase>
+  );
+};
+
+
+// --- Reusable Helper Components (Unchanged) ---
 
 const Card = ({ children, className = "" }: { children: React.ReactNode; className?: string }) => (
   <div className={`rounded-xl border border-gray-200 bg-white p-6 shadow-sm dark:border-gray-700 dark:bg-gray-800 ${className}`}>
@@ -536,8 +813,8 @@ const Pagination = ({ currentPage, hasMore, onPageChange }: any) => (
 );
 
 const ModalBase = ({ title, onClose, children }: { title: string, onClose: () => void, children: React.ReactNode }) => (
-  <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
-    <div className="w-full max-w-lg rounded-xl bg-white p-6 shadow-2xl dark:bg-gray-800">
+  <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm" style={{ margin: 0 }}>
+    <div className="w-full max-w-lg rounded-xl bg-white p-6 shadow-2xl dark:bg-gray-800 max-h-[90vh] overflow-y-auto">
       <div className="flex items-center justify-between border-b pb-3 dark:border-gray-700">
         <h2 className="text-lg font-semibold">{title}</h2>
         <button onClick={onClose} className="rounded-full p-1 hover:bg-gray-100 dark:hover:bg-gray-700">
@@ -576,5 +853,20 @@ const FormSelect = ({ label, name, children, ...props }: any) => (
     >
       {children}
     </select>
+  </div>
+);
+
+const FormTextarea = ({ label, name, ...props }: any) => (
+  <div>
+    <label htmlFor={name} className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+      {label}
+    </label>
+    <textarea
+      id={name}
+      name={name}
+      rows={3}
+      {...props}
+      className="w-full rounded-lg border border-gray-300 p-2.5 shadow-sm dark:border-gray-600 dark:bg-gray-700"
+    />
   </div>
 );

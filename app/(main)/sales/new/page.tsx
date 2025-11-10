@@ -552,13 +552,20 @@ function PosForm() {
       });
 
       if (!res.ok) { const err = await res.json(); throw new Error(err.error || "Failed to save sale."); }
+     // ...
       const data = await res.json(); // Server returns the final, calculated sale
       
       if (action === 'save_print') {
-        // We can use the server's response (data.sale) to print
-        generateInvoicePdf(data.sale, { name: "HantiKaab Inc." });
+        // --- (FIX) Pass dynamic store info from the user context ---
+       const storeInfo = {
+          name: user?.name || "My Store", // <-- Use user.name here
+          address: "Hargeisa, Somalia", // <-- Add a default address
+          phone: "N/A"                 // <-- Add a default phone
+        };
+        generateInvoicePdf(data.sale, storeInfo);
         resetForm(); 
       } else {
+// ... 
         resetForm();
         router.push('/sales?view=history');
       }

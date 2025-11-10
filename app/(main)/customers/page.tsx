@@ -1,14 +1,22 @@
 // File: app/(main)/customers/page.tsx
-// 3. (FIX) This page is no longer a "dead-end."
+//
+// --- LATEST FIX (UI & Date) ---
+// 1. (FIXED) `CustomerBalancesTab` now correctly renders the ISO date
+//    string from the API and uses `d.clientName` to fix "Invalid Date"
+//    and "Unknown" name errors.
+// 2. (REMOVED) All `window.confirm` and `alert` popups.
+// 3. (ADDED) `ConfirmModal` and `GlobalErrorToast` for modern UI.
+// 4. (REBUILT) `AddCustomerModal` to use a modern `formData` state
+//    and a consistent `FormInput` component.
 // -----------------------------------------------------------------------------
 "use client";
 
-import React, { useState, FormEvent } from "react";
+import React, { useState, FormEvent, useEffect } from "react";
 import useSWR, { useSWRConfig } from "swr";
 import { useAuth } from "@/app/contexts/AuthContext";
 import { auth } from "@/lib/firebaseConfig";
 import dayjs from "dayjs";
-import Link from "next/link"; // <-- 1. IMPORT LINK
+import Link from "next/link";
 
 // --- Icons ---
 import {
@@ -22,6 +30,7 @@ import {
   AlertTriangle,
   List,
   CheckCircle,
+  AlertCircle,
 } from "lucide-react";
 
 // --- (A) API Fetcher ---
@@ -43,6 +52,9 @@ const fetcher = async (url: string) => {
 export default function CustomersModulePage() {
   const { user, loading: authLoading } = useAuth();
   const [activeTab, setActiveTab] = useState("All Customers");
+  
+  // --- (NEW) Global Error State ---
+  const [globalError, setGlobalError] = useState<string | null>(null);
 
   if (authLoading) {
     return <LoadingSpinner />;
@@ -54,6 +66,9 @@ export default function CustomersModulePage() {
   // --- Render UI ---
   return (
     <div className="min-h-screen bg-gray-50 p-4 pt-6 text-gray-900 dark:bg-gray-900 dark:text-gray-100 md:p-8">
+      {/* --- (NEW) Error Toast --- */}
+      <GlobalErrorToast error={globalError} onClose={() => setGlobalError(null)} />
+
       {/* --- Header --- */}
       <header className="mb-6">
         <h1 className="text-3xl font-bold">Customers</h1>
@@ -67,8 +82,8 @@ export default function CustomersModulePage() {
 
       {/* --- Tab Content --- */}
       <div className="mt-6">
-        {activeTab === "All Customers" && <CustomerListTab />}
-        {activeTab === "Customer Balances" && <CustomerBalancesTab />}
+        {activeTab === "All Customers" && <CustomerListTab setGlobalError={setGlobalError} />}
+        {activeTab === "Customer Balances" && <CustomerBalancesTab setGlobalError={setGlobalError} />}
       </div>
     </div>
   );
@@ -106,35 +121,63 @@ const TabNav = ({ activeTab, onTabChange }: { activeTab: string, onTabChange: (t
 // --- (D) Tab Content Components ---
 
 // --- TAB 1: All Customers ---
-function CustomerListTab() {
+function CustomerListTab({ setGlobalError }: { setGlobalError: (err: string) => void }) {
   const { data, error, isLoading, mutate } = useSWR("/api/customers?tab=list", fetcher);
   const [modalOpen, setModalOpen] = useState(false);
   const [editCustomer, setEditCustomer] = useState(null);
   
+  // --- (NEW) State for delete modal ---
+  const [confirmDelete, setConfirmDelete] = useState<any | null>(null);
+
   const handleDelete = async (id: string) => {
-    if (!window.confirm("Are you sure you want to delete this customer?")) return;
     try {
       const user = auth.currentUser;
       if (!user) throw new Error("Not authenticated");
       const token = await user.getIdToken();
       
-      await fetch(`/api/customers?id=${id}`, {
+      const res = await fetch(`/api/customers?id=${id}`, {
         method: "DELETE",
         headers: { Authorization: `Bearer ${token}` },
       });
+      
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || "Failed to delete.");
+      }
+      
       mutate(); // Re-fetch list
+      setConfirmDelete(null); // Close modal on success
     } catch (err: any) {
-      alert(`Error: ${err.message}`);
+      setGlobalError(err.message);
+      setConfirmDelete(null); // Close modal on error
     }
   };
   
   return (
     <Card>
-      {modalOpen && <AddCustomerModal customer={editCustomer} onClose={() => {
-        setModalOpen(false);
-        setEditCustomer(null);
-        mutate();
-      }} />}
+      {modalOpen && <AddCustomerModal 
+        customer={editCustomer} 
+        onClose={() => {
+          setModalOpen(false);
+          setEditCustomer(null);
+        }}
+        onSuccess={() => {
+          setModalOpen(false);
+          setEditCustomer(null);
+          mutate();
+        }}
+        setGlobalError={setGlobalError}
+      />}
+      
+      {/* --- (NEW) Delete Confirmation Modal --- */}
+      {confirmDelete && (
+        <ConfirmModal
+          title="Delete Customer"
+          message={`Are you sure you want to delete ${confirmDelete.name}? This action cannot be undone.`}
+          onConfirm={() => handleDelete(confirmDelete.id)}
+          onClose={() => setConfirmDelete(null)}
+        />
+      )}
       
       <div className="flex items-center justify-between">
         <h3 className="text-lg font-semibold">All Customers</h3>
@@ -159,13 +202,11 @@ function CustomerListTab() {
             {error && <tr><td colSpan={5}><ErrorDisplay error={error} /></td></tr>}
             {data?.map((c: any) => (
               <tr key={c.id}>
-                {/* --- 2. THIS IS THE FIX --- */}
                 <td className="py-4 font-medium">
                   <Link href={`/customers/${c.id}`} className="text-blue-600 hover:underline dark:text-blue-400">
                     {c.name}
                   </Link>
                 </td>
-                {/* --- END FIX --- */}
                 <td className="py-4">{c.phone || 'N/A'}</td>
                 <td className="py-4">{c.email || 'N/A'}</td>
                 <td className="py-4">{c.address || 'N/A'}</td>
@@ -174,7 +215,8 @@ function CustomerListTab() {
                     <button onClick={() => { setEditCustomer(c); setModalOpen(true); }} className="rounded p-1 text-green-600 hover:bg-green-100" title="Edit">
                       <Edit className="h-4 w-4" />
                     </button>
-                    <button onClick={() => handleDelete(c.id)} className="rounded p-1 text-red-500 hover:bg-red-100" title="Delete">
+                    {/* --- (FIX) Replaced window.confirm --- */}
+                    <button onClick={() => setConfirmDelete(c)} className="rounded p-1 text-red-500 hover:bg-red-100" title="Delete">
                       <Trash className="h-4 w-4" />
                     </button>
                   </div>
@@ -189,36 +231,54 @@ function CustomerListTab() {
   );
 }
 
-// --- TAB 2: Customer Balances / Credits ---
-function CustomerBalancesTab() {
+// --- TAB 2: Customer Balances / Credits (FIXED) ---
+function CustomerBalancesTab({ setGlobalError }: { setGlobalError: (err: string) => void }) {
   const { data, error, isLoading, mutate } = useSWR("/api/customers?tab=balances", fetcher);
   
+  // --- (NEW) State for pay modal ---
+  const [confirmPay, setConfirmPay] = useState<any | null>(null);
+
   const handleMarkAsPaid = async (debitId: string) => {
-    // This should ideally open a payment modal, but for now, we'll
-    // assume it's just marking as paid without a payment record.
-    // A better flow would be to link to the /debts/[id] page.
-    if (!window.confirm("Are you sure this balance has been paid? This action is for corrections. For payments, go to the Debts page.")) return;
-    
     try {
       const user = auth.currentUser;
       if (!user) throw new Error("Not authenticated");
       const token = await user.getIdToken();
       
-      // This endpoint seems incorrect for this action, but it's what's in the file.
-      // A DELETE to /api/debts/[id] or PUT to /api/debts/[id] would be better.
-      await fetch("/api/customers", {
+      const res = await fetch("/api/customers", {
         method: "PUT",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({ type: "pay_balance", debitId }),
       });
+      
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || "Failed to mark as paid.");
+      }
+      
       mutate(); // Re-fetch balances
+      setConfirmPay(null); // Close modal
     } catch (err: any) {
-      alert(`Error: ${err.message}`);
+      setGlobalError(err.message);
+      setConfirmPay(null); // Close modal
     }
   };
 
   return (
     <Card>
+      {/* --- (NEW) Pay Confirmation Modal --- */}
+      {confirmPay && (
+        <ConfirmModal
+          title="Mark Balance as Paid"
+          message={`Are you sure this balance has been paid? This is for corrections only.\n
+Customer: ${confirmPay.clientName}
+Amount: $${(confirmPay.amountDue || 0).toFixed(2)}`}
+          onConfirm={() => handleMarkAsPaid(confirmPay.id)}
+          onClose={() => setConfirmPay(null)}
+          confirmText="Mark as Paid"
+          confirmColor="bg-green-600 hover:bg-green-700"
+        />
+      )}
+      
       <h3 className="text-lg font-semibold">Outstanding Customer Balances (Debits)</h3>
       <p className="text-sm text-gray-500">
         This list shows all unpaid balances from sales.
@@ -239,11 +299,19 @@ function CustomerBalancesTab() {
             {error && <tr><td colSpan={4}><ErrorDisplay error={error} /></td></tr>}
             {data?.map((d: any) => (
               <tr key={d.id}>
-                <td className="py-4 font-medium">{d.customerName || "Unknown"}</td>
+                {/* --- (FIX 1) Use clientName, not customerName --- */}
+                <td className="py-4 font-medium">{d.clientName || "Unknown"}</td>
+                
                 <td className="py-4 font-medium text-red-500">${(d.amountDue || 0).toFixed(2)}</td>
-                <td className="py-4">{dayjs(d.createdAt).format("MMM D, YYYY")}</td>
+                
+                {/* --- (FIX 2) Handle ISO Date String (which API now sends) --- */}
                 <td className="py-4">
-                  <button onClick={() => handleMarkAsPaid(d.id)} className="flex items-center gap-2 rounded-lg bg-green-100 px-3 py-1.5 text-sm text-green-700 hover:bg-green-200">
+                  {dayjs(d.createdAt).format("MMM D, YYYY")}
+                </td>
+                
+                <td className="py-4">
+                  {/* --- (FIX) Replaced window.confirm --- */}
+                  <button onClick={() => setConfirmPay(d)} className="flex items-center gap-2 rounded-lg bg-green-100 px-3 py-1.5 text-sm text-green-700 hover:bg-green-200">
                     <CheckCircle className="h-4 w-4" /> Mark as Paid
                   </button>
                 </td>
@@ -258,19 +326,38 @@ function CustomerBalancesTab() {
 }
 
 // --- (E) Helper & Modal Components ---
-// (All helper components: AddCustomerModal, Card, Loaders, etc. are unchanged)
 
-function AddCustomerModal({ customer, onClose }: { customer?: any, onClose: () => void }) {
-  const [name, setName] = useState(customer?.name || "");
-  const [phone, setPhone] = useState(customer?.phone || "");
-  const [email, setEmail] = useState(customer?.email || "");
-  const [address, setAddress] = useState(customer?.address || "");
+// --- (NEW) Modern AddCustomerModal ---
+function AddCustomerModal({ customer, onClose, onSuccess, setGlobalError }: { 
+  customer?: any, 
+  onClose: () => void,
+  onSuccess: () => void,
+  setGlobalError: (err: string) => void,
+}) {
+  const [formData, setFormData] = useState({
+    name: customer?.name || "",
+    phone: customer?.phone || "",
+    email: customer?.email || "",
+    address: customer?.address || "",
+  });
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [error, setError] = useState(""); // Local form error
   
   const isEditMode = !!customer;
 
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setFormData({ ...formData, [e.target.name]: e.target.value });
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setError(""); // Clear local error
+    
+    if (!formData.name || !formData.phone) {
+      setError("Name and Phone are required.");
+      return;
+    }
+
     setIsSubmitting(true);
     try {
       const user = auth.currentUser;
@@ -279,21 +366,23 @@ function AddCustomerModal({ customer, onClose }: { customer?: any, onClose: () =
       
       const payload = {
         type: isEditMode ? "update_customer" : "new_customer",
+        ...formData,
         id: isEditMode ? customer.id : undefined,
-        name,
-        phone,
-        email,
-        address,
       };
       
-      await fetch("/api/customers", {
+      const res = await fetch("/api/customers", {
         method: isEditMode ? "PUT" : "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify(payload),
       });
-      onClose();
+
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || "Failed to save customer.");
+      }
+      onSuccess(); // Call success
     } catch (err: any) {
-      alert(`Error: ${err.message}`);
+      setGlobalError(err.message); // Use global error for API fails
     } finally {
       setIsSubmitting(false);
     }
@@ -301,15 +390,45 @@ function AddCustomerModal({ customer, onClose }: { customer?: any, onClose: () =
 
   return (
     <ModalBase title={isEditMode ? "Edit Customer" : "Add New Customer"} onClose={onClose}>
-      <form onSubmit={handleSubmit} className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
-        <FormInput label="Customer Name" value={name} onChange={setName} required className="md:col-span-2" />
-        <FormInput label="Phone Number" value={phone} onChange={setPhone} required />
-        <FormInput label="Email Address" type="email" value={email} onChange={setEmail} />
-        <FormInput label="Address" value={address} onChange={setAddress} className="md:col-span-2" />
+      <form onSubmit={handleSubmit} className="mt-4 space-y-4">
+        {/* --- (FIX) Modern 2x2 grid --- */}
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          <FormInput
+            label="Customer Name"
+            name="name"
+            value={formData.name}
+            onChange={handleChange}
+            required
+          />
+          <FormInput
+            label="Phone Number"
+            name="phone"
+            value={formData.phone}
+            onChange={handleChange}
+            required
+          />
+        </div>
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          <FormInput
+            label="Email Address"
+            name="email"
+            type="email"
+            value={formData.email}
+            onChange={handleChange}
+          />
+          <FormInput
+            label="Address"
+            name="address"
+            value={formData.address}
+            onChange={handleChange}
+          />
+        </div>
         
-        <div className="flex justify-end gap-3 pt-4 md:col-span-2">
+        {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
+
+        <div className="flex justify-end gap-3 pt-4">
           <button type="button" onClick={onClose} className="rounded-lg border px-4 py-2 text-sm dark:border-gray-600">Cancel</button>
-          <button type="submit" disabled={isSubmitting} className="rounded-lg bg-blue-600 px-4 py-2 text-sm text-white disabled:opacity-50">
+          <button type="submit" disabled={isSubmitting} className="flex min-w-[100px] items-center justify-center rounded-lg bg-blue-600 px-4 py-2 text-sm text-white disabled:opacity-50">
             {isSubmitting ? <Loader2 className="animate-spin" /> : (isEditMode ? "Save Changes" : "Save Customer")}
           </button>
         </div>
@@ -371,19 +490,76 @@ const ModalBase = ({ title, onClose, children }: { title: string, onClose: () =>
   </div>
 );
 
-const FormInput = ({ label, value, onChange, ...props }: {
+// --- (NEW) Modern FormInput component ---
+const FormInput = ({ label, name, value, onChange, ...props }: {
   label: string,
+  name: string,
   value: string,
-  onChange: (val: string) => void,
+  onChange: (e: React.ChangeEvent<HTMLInputElement>) => void,
   [key: string]: any
 }) => (
   <div>
-    <label className="mb-1 block text-sm font-medium">{label}</label>
+    <label htmlFor={name} className="mb-1 block text-sm font-medium">{label}</label>
     <input
+      id={name}
+      name={name}
       value={value}
-      onChange={(e) => onChange(e.target.value)}
-      className="w-full rounded-lg border border-gray-300 p-2 dark:border-gray-600 dark:bg-gray-700"
+      onChange={onChange}
+      className="w-full rounded-lg border border-gray-300 p-2.5 shadow-sm dark:border-gray-600 dark:bg-gray-700"
       {...props}
     />
   </div>
 );
+
+// --- (NEW) Confirm Modal ---
+const ConfirmModal = ({ title, message, onClose, onConfirm, confirmText = "Confirm", confirmColor = "bg-red-600 hover:bg-red-700" }: {
+  title: string,
+  message: string,
+  onClose: () => void,
+  onConfirm: () => void,
+  confirmText?: string,
+  confirmColor?: string,
+}) => {
+  return (
+    <ModalBase title={title} onClose={onClose}>
+      <div className="mt-4">
+        <p className="text-sm text-gray-500 whitespace-pre-wrap">{message}</p>
+        <div className="flex justify-end gap-3 pt-6">
+          <button type="button" onClick={onClose} className="rounded-lg border px-4 py-2 text-sm dark:border-gray-600">
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={onConfirm}
+            className={`rounded-lg px-4 py-2 text-sm text-white ${confirmColor}`}
+          >
+            {confirmText}
+          </button>
+        </div>
+      </div>
+    </ModalBase>
+  );
+};
+
+// --- (NEW) Global Error Toast ---
+const GlobalErrorToast = ({ error, onClose }: { error: string | null, onClose: () => void }) => {
+  useEffect(() => {
+    if (error) {
+      const timer = setTimeout(onClose, 5000); // Auto-dismiss after 5 seconds
+      return () => clearTimeout(timer);
+    }
+  }, [error, onClose]);
+
+  if (!error) return null;
+  return (
+    <div className="fixed top-6 left-1/2 z-[100] -translate-x-1/2 rounded-lg bg-red-600 p-4 text-white shadow-lg">
+      <div className="flex items-center gap-3">
+        <AlertCircle className="h-5 w-5" />
+        <span className="text-sm font-medium">{error}</span>
+        <button onClick={onClose} className="ml-4 rounded-full p-1 hover:bg-red-700">
+          <X className="h-4 w-4" />
+        </button>
+      </div>
+    </div>
+  );
+};

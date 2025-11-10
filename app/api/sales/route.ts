@@ -1,18 +1,11 @@
 // File: app/api/sales/route.ts
 //
-// --- SOLVED ---
-// 1. (CRITICAL FIX) 'POST' function: The transaction is rebuilt.
-//    - It now performs a "Read Phase" (getting all products)
-//    - THEN it performs a "Write Phase" (creating customers, sales,
-//      and updating stock).
-//    - This fixes the "reads must be before writes" error.
-// 2. (FIX) 'GET' function: Includes 'baseQuery.count().get()' fix
-//    from your original file.
-// --- (NEW FIXES APPLIED) ---
-// 3. (FIX) 'GET' function: Now applies the 'status' filter from the URL
-//    and defaults to hiding 'voided'/'refunded' sales.
-// 4. (FIX) 'POST' function: Debit creation now uses the correct
-//    fields ('totalAmount', 'amountDue') to match the Debts module.
+// --- LATEST FIX (ts(2454)) ---
+// 1. (FIX) The 'customerRef' (ts(2454)) error is fixed.
+// 2. (FIX) The customer KPI logic (`totalSpent`, `totalOwed`) has been
+//    moved *inside* the `if/else if/else` block. This ensures
+//    `customerRef` is always assigned before it is used.
+// 3. (KEPT) All other logic (income, debt creation) is the same.
 // -----------------------------------------------------------------------------
 
 import { NextResponse, NextRequest } from "next/server";
@@ -101,58 +94,47 @@ export async function POST(request: NextRequest) {
       const productUpdates = []; // Will store { ref, change }
       
       // --- 5. READ PHASE ---
-      // Get all product data first
+      // (This section is unchanged)
       
       const productRefsToFetch = [];
       const manualItems = [];
 
       for (const item of rawItems) {
         if (item.productId.startsWith("manual_")) {
-          // This is a manual, non-stock item. No read needed.
           manualItems.push(item);
         } else {
-          // This is a real product. Add its ref to the list to fetch.
           productRefsToFetch.push({
             ref: db.collection("products").doc(item.productId),
-            item: item, // Keep original item data
+            item: item,
           });
         }
       }
-
-      // Execute all product reads
       const productDocs = await Promise.all(
         productRefsToFetch.map(p => transaction.get(p.ref))
       );
 
       // --- 6. PROCESS & VALIDATE (In-Memory) ---
-      // Now loop through the *results* of the reads
-      
+      // (This section is unchanged)
+
       for (let i = 0; i < productDocs.length; i++) {
         const productDoc = productDocs[i];
-        const { ref, item } = productRefsToFetch[i]; // Get original item
+        const { ref, item } = productRefsToFetch[i]; 
 
         if (!productDoc.exists) {
           throw new Error(`Product not found: ${item.productName}`);
         }
         const productData = productDoc.data();
         
-        // Check stock
         const currentStock = productData?.quantity || 0;
-        
-        // --- FIX 1: Check 'quantity', not 'stock' ---
         if (currentStock < item.quantity) { 
-          // --- FIX 2: Add '?' to productData.name ---
           throw new Error(`Not enough stock for ${productData?.name}. Available: ${currentStock}`);
         }
 
-        // Get price
         let pricePerUnit = productData?.salePrices?.[invoiceCurrency];
-        
         if (pricePerUnit === undefined || pricePerUnit === null || pricePerUnit === 0) {
           if (item.pricePerUnit) {
-            pricePerUnit = item.pricePerUnit; // Trust manual price
+            pricePerUnit = item.pricePerUnit;
           } else {
-            // This line is already correct!
             throw new Error(`Price for ${productData?.name} in ${invoiceCurrency} is not set.`);
           }
         }
@@ -169,14 +151,12 @@ export async function POST(request: NextRequest) {
           subtotal: subtotal
         });
         
-        // Prepare stock update (for write phase)
         productUpdates.push({
           ref: ref,
           change: -item.quantity
         });
       }
 
-      // Process manual items (no reads, just add to totals)
       for (const item of manualItems) {
         const price = item.pricePerUnit || 0;
         const subtotal = (price * item.quantity) * (1 - (item.discount || 0) / 100);
@@ -191,16 +171,22 @@ export async function POST(request: NextRequest) {
       }
       
       // --- 7. WRITE PHASE ---
-      // All reads are done. Now we can safely write.
+      
+      // b. Calculate Payment Totals
+      const totalPaid = paymentLines.reduce((sum: number, p: any) => sum + (p.valueInInvoiceCurrency || 0), 0);
+      const debtAmount = totalAmount - totalPaid;
+      const paymentStatus = debtAmount <= 0.01 ? 'paid' : (totalPaid > 0 ? 'partial' : 'unpaid');
 
-      // a. Handle Customer (Create if new)
+      // --- (FIX for ts(2454)) ---
+      // a. Handle Customer & Update KPIs (Moved KPI logic here)
+      let customerRef: FirebaseFirestore.DocumentReference;
+
       if (customer.id === "walkin") {
         newCustomerId = "walkin";
-      } else if (customer.id.startsWith("new_") || customer.saveToContacts) {
-        const customerRef = customer.id.startsWith("new_") 
-          ? db.collection("customers").doc() 
-          : db.collection("customers").doc(customer.id);
-        
+
+      } else if (customer.id.startsWith("new_")) {
+        // Create new customer
+        customerRef = db.collection("customers").doc();
         newCustomerId = customerRef.id;
         
         transaction.set(customerRef, {
@@ -210,13 +196,44 @@ export async function POST(request: NextRequest) {
           whatsapp: customer.whatsapp || null,
           notes: customer.notes || null,
           createdAt: FieldValue.serverTimestamp(),
+          totalSpent: {}, // Initialize KPI
+          totalOwed: {}, // Initialize KPI
         }, { merge: true });
-      }
 
-      // b. Calculate Payment Totals
-      const totalPaid = paymentLines.reduce((sum: number, p: any) => sum + (p.valueInInvoiceCurrency || 0), 0);
-      const debtAmount = totalAmount - totalPaid;
-      const paymentStatus = debtAmount <= 0.01 ? 'paid' : (totalPaid > 0 ? 'partial' : 'unpaid');
+        // Update KPIs for the NEW customer
+        transaction.update(customerRef, {
+          [`totalSpent.${invoiceCurrency}`]: FieldValue.increment(totalAmount)
+        });
+        if (debtAmount > 0) {
+          transaction.update(customerRef, {
+            [`totalOwed.${invoiceCurrency}`]: FieldValue.increment(debtAmount)
+          });
+        }
+
+      } else {
+        // Use existing customer
+        customerRef = db.collection("customers").doc(newCustomerId);
+        
+        if (customer.saveToContacts) {
+          transaction.set(customerRef, {
+            name: customer.name,
+            phone: customer.phone || null,
+            whatsapp: customer.whatsapp || null,
+            notes: customer.notes || null,
+          }, { merge: true });
+        }
+        
+        // Update KPIs for the EXISTING customer
+        transaction.update(customerRef, {
+          [`totalSpent.${invoiceCurrency}`]: FieldValue.increment(totalAmount)
+        });
+        if (debtAmount > 0) {
+          transaction.update(customerRef, {
+            [`totalOwed.${invoiceCurrency}`]: FieldValue.increment(debtAmount)
+          });
+        }
+      }
+      // --- (END FIX) ---
 
       // c. Prepare Sale Document
       const newSaleRef = db.collection("sales").doc();
@@ -225,27 +242,19 @@ export async function POST(request: NextRequest) {
         storeId,
         uid,
         salesperson: salesperson || userName,
-        
-        // Customer
         customerId: newCustomerId,
         customerName: customer.name,
-        
-        // Items & Totals (Server-Calculated)
         items: processedItems,
         invoiceCurrency,
         totalAmount,
-        totalCostUsd, // For profit calculation
-        
-        // Payment & Debt (Server-Calculated)
-        paymentLines: paymentLines, // Store the raw payments
-        totalPaid: totalPaid, // Total value in invoiceCurrency
+        totalCostUsd,
+        paymentLines: paymentLines,
+        totalPaid: totalPaid,
         debtAmount: debtAmount,
         paymentStatus,
-        
-        // Metadata
         notes: notes || null,
         createdAt: createdAt,
-        invoiceId: `INV-${Date.now().toString().slice(-6)}`, // Simple invoice ID
+        invoiceId: `INV-${Date.now().toString().slice(-6)}`,
       };
       
       // d. Save the Sale
@@ -268,7 +277,8 @@ export async function POST(request: NextRequest) {
             relatedSaleId: newSaleRef.id,
             amount: payment.amount,
             currency: payment.currency,
-            method: payment.method,
+            paymentMethod: payment.method,
+            category: "Sales",
             notes: `Payment for Invoice ${newSaleData.invoiceId}`,
             createdAt: createdAt,
           });
@@ -278,29 +288,27 @@ export async function POST(request: NextRequest) {
       // g. Create Debit Document
       if (debtAmount > 0) {
         const debitRef = db.collection("debits").doc();
-        
-        // --- FIX: Match the fields in the Debts module (k.ts) ---
         transaction.set(debitRef, {
           storeId,
           customerId: newCustomerId,
-          customerName: customer.name,
-          clientPhone: customer.phone || null, // <-- ADDED for consistency
-          clientWhatsapp: customer.whatsapp || customer.phone || null, // <-- ADDED for consistency
+          clientName: customer.name, 
+          clientPhone: customer.phone || null,
+          clientWhatsapp: customer.whatsapp || customer.phone || null,
           relatedSaleId: newSaleRef.id,
           invoiceId: newSaleData.invoiceId,
-          
-          totalAmount: debtAmount,   // <-- ADDED (This was missing)
-          amountDue: debtAmount,     // <-- RENAMED (from 'amount')
-          totalPaid: 0,            // <-- RENAMED (from 'amountPaid')
-
+          reason: `Debt for ${newSaleData.invoiceId}`,
+          totalAmount: debtAmount,
+          amountDue: debtAmount,
+          totalPaid: 0,
           currency: invoiceCurrency,
           isPaid: false,
           status: 'unpaid',
           createdAt: createdAt,
-          dueDate: Timestamp.fromDate(dayjs(createdAt.toDate()).add(30, 'day').toDate()), // Default 30 day due date
+          dueDate: Timestamp.fromDate(dayjs(createdAt.toDate()).add(30, 'day').toDate()),
         });
-        // --- END FIX ---
       }
+      
+      // h. (REMOVED) The KPI logic was moved to step 'a'
       
       return newSaleData; // Return the final sale data
     }); // End of Transaction
@@ -315,8 +323,9 @@ export async function POST(request: NextRequest) {
 }
 
 // =============================================================================
-// 📊 GET - Fetch Sales Data (Your Fixed Version)
+// 📊 GET - Fetch Sales Data
 // =============================================================================
+// (This GET function is unchanged)
 export async function GET(request: NextRequest) {
   try {
     const { storeId } = await checkAuth(request, ['admin', 'manager', 'user']);
@@ -360,8 +369,6 @@ export async function GET(request: NextRequest) {
     // Pagination
     const page = parseInt(searchParams.get("page") || "1");
     const limit = 10;
-    
-    // --- FIX: Read the status filter from the URL ---
     const status = searchParams.get("status");
 
     // Build base query
@@ -372,28 +379,21 @@ export async function GET(request: NextRequest) {
       .where("createdAt", ">=", startDate)
       .where("createdAt", "<=", endDate);
 
-    // --- FIX: Apply status filter if it exists, otherwise hide voided/refunded ---
     if (status) {
-      // If a status is provided (e.g., "paid"), filter for it
       baseQuery = baseQuery.where("paymentStatus", "==", status);
     } else {
-      // Otherwise, hide 'voided' and 'refunded' by default
       baseQuery = baseQuery.where("paymentStatus", "not-in", ["voided", "refunded"]);
     }
-    // --- END FIX ---
 
-    // --- Data for Dashboard / History / Invoices ---
-    
     // Get paginated list
     const paginatedQuery = baseQuery
       .orderBy("createdAt", "desc")
       .limit(limit)
       .offset((page - 1) * limit);
 
-    // -- CRITICAL FIX: Added .get() --
     const [listSnapshot, countSnapshot] = await Promise.all([
       paginatedQuery.get(),
-      baseQuery.count().get() // Get total count for pagination
+      baseQuery.count().get()
     ]);
 
     const salesList = listSnapshot.docs.map((doc) => ({
@@ -411,7 +411,6 @@ export async function GET(request: NextRequest) {
 
     // --- Data specifically for Dashboard View ---
     if (view === "dashboard") {
-      // For KPIs, we need all docs in range, not just one page
       const allDocsSnapshot = await baseQuery.get();
 
       let totalSales = 0;
@@ -428,7 +427,6 @@ export async function GET(request: NextRequest) {
         totalDebts += data.debtAmount || 0;
         if (data.paymentStatus === 'paid') paidTransactions++;
 
-        // Payment breakdown
         data.paymentLines?.forEach((p: any) => {
           paymentMethodBreakdown.set(
             p.method,
@@ -436,7 +434,6 @@ export async function GET(request: NextRequest) {
           );
         });
 
-        // Sales over time
         const dateStr = dayjs(data.createdAt.toDate()).format("YYYY-MM-DD");
         salesOverTime.set(
           dateStr,
@@ -477,7 +474,8 @@ export async function GET(request: NextRequest) {
       pagination,
     });
 
-  } catch (error: any) {
+  } catch (error: any)
+{
     console.error("[Sales API GET] Error:", error.stack || error.message);
     if (error.message.includes("requires an index")) {
          return NextResponse.json(

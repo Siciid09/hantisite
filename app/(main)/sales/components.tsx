@@ -578,16 +578,17 @@ export const ViewSaleModal = ({ isOpen, onClose, sale, onPrint }: { isOpen: bool
       <Dialog.Title className="text-lg font-medium leading-6 text-gray-900 dark:text-white">
         Sale Details: {sale.invoiceId || sale.id.slice(0, 6)}
       </Dialog.Title>
+    // ...
       <div className="mt-4 grid grid-cols-1 gap-6 md:grid-cols-3">
         <div className="md:col-span-1">
-          <h4 className="font-semibold dark:text-white">Customer</h4>
-          <p className="text-sm text-gray-600 dark:text-gray-300">{sale.customerName}</p>
-          <p className="text-sm text-gray-500 dark:text-gray-400">{sale.customerPhone}</p>
+// ...
           <h4 className="mt-4 font-semibold dark:text-white">Sale Info</h4>
-          <p className="text-sm text-gray-600 dark:text-gray-300">Date: {dayjs(sale.createdAt).format("DD MMM YYYY, h:mm A")}</p>
-          <p className="text-sm text-gray-600 dark:text-gray-300">Salesperson: {sale.salespersonName}</p>
+          <p className="text-sm text-gray-600 dark:text-gray-300">Date: {dayjs(sale.createdAt).format("DD MMM YY, h:mm A")}</p>
+          {/* --- (FIX) Add fallback for salesperson --- */}
+          <p className="text-sm text-gray-600 dark:text-gray-300">Salesperson: {sale.salespersonName || sale.salesperson || 'N/A'}</p>
           <StatusBadge status={sale.paymentStatus} options={SALE_STATUSES} />
         </div>
+// ...
         <div className="md:col-span-2">
           <h4 className="font-semibold dark:text-white">Items</h4>
           <div className="mt-2 flow-root">
