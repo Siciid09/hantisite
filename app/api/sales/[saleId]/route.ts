@@ -9,6 +9,8 @@
 //    - This fixes the "reads must be before writes" error.
 // 2. (FIX) Includes Zod and TS '?' fixes from your original file.
 // 3. (FIX) Applied Next.js 16 `await params` fix to GET, PUT, and DELETE.
+// --- (NEW MODIFICATION) ---
+// 4. (NEW) 'DELETE' function permissions changed from ['admin', 'manager'] to ['admin'] only.
 // -----------------------------------------------------------------------------
 
 import { NextResponse, NextRequest } from "next/server";
@@ -149,7 +151,7 @@ export async function PUT(
 }
 
 // =============================================================================
-// ❌ DELETE - Void a sale (SOLVED)
+// ❌ DELETE - Void a sale (SOLVED & MODIFIED)
 // =============================================================================
 export async function DELETE(
   request: NextRequest,
@@ -160,8 +162,8 @@ export async function DELETE(
   }
   
   try {
-    // Only 'admin' and 'manager' can DELETE (void) a sale
-    const { storeId, uid, userName } = await checkAuth(request, ['admin', 'manager']);
+    // --- (MODIFIED) Only 'admin' can DELETE (void) a sale ---
+    const { storeId, uid, userName } = await checkAuth(request, ['admin']);
     const { saleId } = await params; // <-- FIX 2
 
     const saleRef = firestoreAdmin.collection("sales").doc(saleId);

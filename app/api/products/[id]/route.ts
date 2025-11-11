@@ -1,18 +1,15 @@
 // File: app/api/products/[id]/route.ts
-// Description: NEW API route to get all data for a single product "hub" page.
 //
-// --- FEATURES ---
-// 1. (GET) Fetches the product's main document.
-// 2. (GET) Fetches its recent sales history by querying the 'sales' collection.
-// 3. (GET) Fetches its stock history from the 'inventory_adjustments' collection.
-// 4. (GET) Calculates KPIs like total units sold and total revenue.
+// --- LATEST UPDATE ---
+// 1. (FIX) Added 'role' check to 'checkAuth' function.
+//    Only users with 'role: "admin"' can now access this route.
 // -----------------------------------------------------------------------------
 
 import { NextResponse, NextRequest } from "next/server";
 import { firestoreAdmin, authAdmin } from "@/lib/firebaseAdmin";
 import { Timestamp } from "firebase-admin/firestore";
 
-// --- Helper: checkAuth ---
+// --- Helper: checkAuth (UPDATED) ---
 async function checkAuth(request: NextRequest) {
   if (!authAdmin) throw new Error("Auth Admin is not initialized.");
   if (!firestoreAdmin) throw new Error("Firestore Admin is not initialized.");
@@ -26,8 +23,18 @@ async function checkAuth(request: NextRequest) {
   const userDoc = await firestoreAdmin.collection("users").doc(uid).get();
   const storeId = userDoc.data()?.storeId;
   if (!storeId) throw new Error("User has no store.");
+
+  // --- THIS IS THE FIX ---
+  ///halkan roles
+  const userRole = userDoc.data()?.role;
+  if (userRole !== 'admin') {
+    // You can modify this check later to include other roles
+    // e.g., if (!['admin', 'manager'].includes(userRole)) { ... }
+    throw new Error("Access denied. Admin permissions required.");
+  }
+  // --- END FIX ---
   
-  return { uid, storeId, userName: userDoc.data()?.name || "System User" };
+  return { uid, storeId, userName: userDoc.data()?.name || "System User", userRole };
 }
 
 // =============================================================================
@@ -136,6 +143,12 @@ export async function GET(
 
   } catch (error: any) {
     console.error("[Product[id] API GET] Error:", error.message);
+    
+    // Handle auth errors
+    if (error.message.includes("Access denied")) {
+      return NextResponse.json({ error: error.message }, { status: 403 });
+    }
+    
     // Handle complex queries that might fail
     if (error.message.includes("array-contains")) {
       return NextResponse.json({

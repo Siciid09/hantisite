@@ -1,10 +1,8 @@
 // File: app/api/products/export/route.ts
 //
 // --- LATEST UPDATE ---
-// 1. (FIX) Added a 'Product' interface to properly type the data.
-// 2. (FIX) Casting the fetched data to this 'Product' type.
-// 3. (FIX) This resolves all TypeScript errors like 'Property 'name'
-//    does not exist'.
+// 1. (FIX) Added 'role' check to 'checkAuth' function.
+//    Only users with 'role: "admin"' can now download reports.
 // -----------------------------------------------------------------------------
 
 import { NextResponse, NextRequest } from "next/server";
@@ -15,7 +13,7 @@ import * as XLSX from "xlsx";
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
 
-// --- Helper: checkAuth ---
+// --- Helper: checkAuth (UPDATED) ---
 async function checkAuth(request: NextRequest) {
   if (!authAdmin) throw new Error("Auth Admin is not initialized.");
   if (!firestoreAdmin) throw new Error("Firestore Admin is not initialized.");
@@ -30,7 +28,17 @@ async function checkAuth(request: NextRequest) {
   const storeId = userDoc.data()?.storeId;
   if (!storeId) throw new Error("User has no store.");
   
-  return { uid, storeId, userName: userDoc.data()?.name || "System User" };
+  // --- THIS IS THE FIX ---
+  ///halkan roles
+  const userRole = userDoc.data()?.role;
+  if (userRole !== 'admin') {
+    // You can modify this check later to include other roles
+    // e.g., if (!['admin', 'manager'].includes(userRole)) { ... }
+    throw new Error("Access denied. Admin permissions required.");
+  }
+  // --- END FIX ---
+
+  return { uid, storeId, userName: userDoc.data()?.name || "System User", userRole };
 }
 
 // --- Helper: Format Currency ---
@@ -60,7 +68,7 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const { storeId } = await checkAuth(request);
+    const { storeId } = await checkAuth(request); // <-- Role check is now included
     const { searchParams } = new URL(request.url);
 
     // 1. Get Filters from Query Params
@@ -84,27 +92,23 @@ export async function GET(request: NextRequest) {
       query = query.where("createdAt", "<=", Timestamp.fromDate(dayjs(endDate).endOf('day').toDate()));
     }
 
-    // --- THIS IS THE FIX ---
-    // Define a type for the product to help TypeScript
     interface Product {
       id: string;
       name: string;
       category: string;
       quantity: number;
       salePrices?: { [key: string]: number };
-      costPrices?: { [key: string]: number };
-      createdAt: any; // Using 'any' for simplicity with Firestore Timestamps
+      costPrices?: { [key:string]: number };
+      createdAt: any;
     }
 
-    // 3. Fetch ALL matching products (This is safe on the server)
+    // 3. Fetch ALL matching products
     const snapshot = await query.get();
     
-    // We must include the document 'id' and cast the data to our Product type
     const products = snapshot.docs.map(doc => ({
       id: doc.id,
       ...doc.data()
-    } as Product)); // <-- Cast to the Product interface
-    // --- END FIX ---
+    } as Product));
 
     if (products.length === 0) {
       return NextResponse.json({ error: "No products found for the selected filters." }, { status: 404 });
@@ -132,7 +136,6 @@ export async function GET(request: NextRequest) {
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, "Products");
       
-      // Generate the file buffer in memory
       const buffer = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
 
       // 5. Return the file as a response
@@ -172,7 +175,6 @@ export async function GET(request: NextRequest) {
         headStyles: { fillColor: [41, 128, 185], textColor: 255, fontStyle: 'bold' },
       });
       
-      // Generate the file buffer in memory
       const buffer = doc.output("arraybuffer");
       
       // 5. Return the file as a response
@@ -187,6 +189,9 @@ export async function GET(request: NextRequest) {
 
   } catch (error: any) {
     console.error("[Products Export API GET] Error:", error.stack || error.message);
+    if (error.message.includes("Access denied")) {
+      return NextResponse.json({ error: error.message }, { status: 403 });
+    }
     return NextResponse.json({ error: `Failed to generate report. ${error.message}` }, { status: 500 });
   }
 }

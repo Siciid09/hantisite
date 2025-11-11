@@ -162,8 +162,8 @@ export default function FinancePage() {
   };
 
   // --- SWR Hook for data fetching ---
-  const apiUrl = `/api/finance?tab=${activeTab}&currency=${currency}&startDate=${dateRange.start}&endDate=${dateRange.end}`;
-
+// --- SWR Hook for data fetching ---
+const apiUrl = `/api/finance?tab=${encodeURIComponent(activeTab)}&currency=${currency}&startDate=${dateRange.start}&endDate=${dateRange.end}`;
   const {
     data: apiData,
     error,

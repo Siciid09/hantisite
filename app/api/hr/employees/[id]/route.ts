@@ -1,17 +1,11 @@
 // File: app/api/hr/employees/[id]/route.ts
-//
-// --- LATEST FIX (TypeScript & Bug) ---
-// 1. (BUILD FIX) Changed signatures for PUT/DELETE to accept `params: Promise`
-//    to match Next.js 16 (Turbopack) requirements.
-// 2. (BUG FIX) Changed PUT function to use the secure `storeId` from `getAuth`
-//    instead of the insecure `body.storeId` when updating salaries.
 // -----------------------------------------------------------------------------
 
 import { NextResponse, NextRequest } from "next/server";
 import { firestoreAdmin, authAdmin } from "@/lib/firebaseAdmin";
 import { FieldValue } from "firebase-admin/firestore";
 
-// Helper function (Copied from main route.ts)
+// Helper function
 async function getAuth(request: NextRequest) {
   const authHeader = request.headers.get("Authorization");
   if (!authHeader || !authHeader.startsWith("Bearer ")) {
@@ -28,7 +22,6 @@ async function getAuth(request: NextRequest) {
   const role = userData.role;
   if (!storeId) throw new Error("User has no store.");
 
-  // Return role for permission checks by the caller
   return { storeId, uid, userName: userData.name || "System", role };
 }
 
@@ -42,26 +35,24 @@ function getStoreCollection(storeId: string, collectionName: string) {
 // -----------------------------------------------------------------------------
 export async function PUT(
   request: NextRequest, 
-  context: { params: Promise<{ id: string }> } // <-- (BUILD FIX) Accept Promise
+  context: { params: { id: string } } 
 ) {
   if (!authAdmin || !firestoreAdmin) {
     return NextResponse.json({ error: "Admin SDK not configured." }, { status: 500 });
   }
 
-  const params = await context.params; // <-- (BUILD FIX) Await params
-  const employeeId = params.id; // <-- (BUILD FIX) Use resolved params
+  const employeeId = context.params.id; 
 
   if (!employeeId) {
     return NextResponse.json({ error: "Employee ID is required." }, { status: 400 });
   }
 
   try {
-    // <-- (BUG FIX) Get storeId from auth *first*
     const { storeId, role } = await getAuth(request);
 
-    // --- Permission Check ---
-    if (role !== "admin" && role !== "manager") {
-      return NextResponse.json({ error: "Permission Denied: Admin or Manager role required." }, { status: 403 });
+    // --- (MODIFIED) Permission Check ---
+    if (role !== "admin" && role !== "hr" && role !== "manager") {
+      return NextResponse.json({ error: "Permission Denied: Admin, HR, or Manager role required." }, { status: 403 });
     }
     
     const body = await request.json();
@@ -71,11 +62,13 @@ export async function PUT(
     let authUpdates: any = {};
     if (name) authUpdates.displayName = name;
     if (email) authUpdates.email = email;
-    // Note: Password changes should be a separate, more secure process (e.g., reset link)
-    // Do not update password here unless explicitly handled
     
     if (Object.keys(authUpdates).length > 0) {
         await authAdmin.updateUser(employeeId, authUpdates);
+    }
+    if (newRole) {
+      // Update custom claims
+      await authAdmin.setCustomUserClaims(employeeId, { role: newRole, storeId: storeId });
     }
 
     // 2. Prepare Firestore 'users' update
@@ -92,14 +85,13 @@ export async function PUT(
 
     // 3. Update salary record
     if (baseSalary !== undefined) {
-        // <-- (BUG FIX) Use the secure `storeId` from auth, not `body.storeId`
         const salaryQuery = getStoreCollection(storeId, "salaries").where("userId", "==", employeeId).limit(1);
         const salarySnap = await salaryQuery.get();
         if (!salarySnap.empty) {
             const salaryDoc = salarySnap.docs[0];
             await salaryDoc.ref.update({
                 baseSalary: Number(baseSalary) || 0,
-                userName: name || body.userName, // Update name if it changed
+                userName: name || body.userName, 
                 updatedAt: FieldValue.serverTimestamp()
             });
         }
@@ -118,14 +110,13 @@ export async function PUT(
 // -----------------------------------------------------------------------------
 export async function DELETE(
   request: NextRequest, 
-  context: { params: Promise<{ id: string }> } // <-- (BUILD FIX) Accept Promise
+  context: { params: { id: string } }
 ) {
   if (!authAdmin || !firestoreAdmin) {
     return NextResponse.json({ error: "Admin SDK not configured." }, { status: 500 });
   }
 
-  const params = await context.params; // <-- (BUILD FIX) Await params
-  const employeeId = params.id; // <-- (BUILD FIX) Use resolved params
+  const employeeId = context.params.id; 
 
   if (!employeeId) {
     return NextResponse.json({ error: "Employee ID is required." }, { status: 400 });
@@ -134,12 +125,11 @@ export async function DELETE(
   try {
     const { storeId, role } = await getAuth(request);
 
-    // --- Permission Check ---
-    if (role !== "admin" && role !== "manager") {
-      return NextResponse.json({ error: "Permission Denied: Admin or Manager role required." }, { status: 403 });
+    // --- (MODIFIED) Permission Check ---
+    if (role !== "admin" && role !== "hr" && role !== "manager") {
+      return NextResponse.json({ error: "Permission Denied: Admin, HR, or Manager role required." }, { status: 403 });
     }
 
-    // Use a batch for atomic delete
     const batch = firestoreAdmin.batch();
 
     // 1. Delete from Auth
@@ -156,8 +146,7 @@ export async function DELETE(
       batch.delete(salarySnap.docs[0].ref);
     }
     
-    // 4. (Optional) Delete from other related collections like 'attendance', 'reviews' etc.
-    // This part can be expanded or handled by a background cloud function.
+    // We keep payrollHistory for records
 
     await batch.commit();
 

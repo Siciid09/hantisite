@@ -1,19 +1,19 @@
 // File: app/api/products/route.ts
 //
 // --- LATEST UPDATE ---
-// 1. (FIX) The 'GET' handler's 'case "stock":' blocks have been merged.
-//    It now correctly returns an array if a 'productId' is present,
-//    or the KPI object if not. This fixes the 'data?.map' crash.
-// 2. (FIX) Added 'POST', 'PUT', and 'DELETE' handlers to manage products.
-//    These functions now return valid JSON responses, fixing the
-//    'Unexpected end of JSON input' error.
+// 1. (FIX) Added 'role' check to 'checkAuth' function.
+// 2. (FIX) Implemented real logic for 'case "adjustment":' in POST.
+//    It now uses a batch write to update stock and log the change.
+// 3. (FIX) Implemented real logic for 'case "transfer":' in POST.
+//    It now uses a batch write to move stock and log both sides.
+// 4. (FIX) Implemented 'case "reports":' in GET to query for low stock.
 // -----------------------------------------------------------------------------
 
 import { NextResponse, NextRequest } from "next/server";
 import { firestoreAdmin, authAdmin } from "@/lib/firebaseAdmin";
 import { Timestamp, FieldValue } from "firebase-admin/firestore";
 
-// --- Helper: checkAuth ---
+// --- Helper: checkAuth (UPDATED) ---
 async function checkAuth(request: NextRequest) {
   if (!authAdmin) throw new Error("Auth Admin is not initialized.");
   if (!firestoreAdmin) throw new Error("Firestore Admin is not initialized.");
@@ -28,11 +28,21 @@ async function checkAuth(request: NextRequest) {
   const storeId = userDoc.data()?.storeId;
   if (!storeId) throw new Error("User has no store.");
   
-  return { uid, storeId, userName: userDoc.data()?.name || "System User" };
+  // --- THIS IS THE FIX ---
+  ///halkan roles
+  const userRole = userDoc.data()?.role;
+  if (userRole !== 'admin') {
+    // You can modify this check later to include other roles
+    // e.g., if (!['admin', 'manager'].includes(userRole)) { ... }
+    throw new Error("Access denied. Admin permissions required.");
+  }
+  // --- END FIX ---
+  
+  return { uid, storeId, userName: userDoc.data()?.name || "System User", userRole };
 }
 
 // =============================================================================
-// 📦 GET - Fetch Product Data by Tab
+// 逃 GET - Fetch Product Data by Tab
 // =============================================================================
 export async function GET(request: NextRequest) {
   if (!authAdmin || !firestoreAdmin) {
@@ -47,40 +57,31 @@ export async function GET(request: NextRequest) {
 
     switch (tab) {
       
-      // --- (FIX 1) THIS CASE IS NOW MERGED AND CORRECT ---
+      // (This case is unchanged, was already correct)
       case "stock": {
         const productId = searchParams.get("productId");
-
-        // 1. Check if we are fetching for a SINGLE product (for the modal)
         if (productId) {
            const stockSnap = await db.collection("stock_levels")
             .where("storeId", "==", storeId)
             .where("productId", "==", productId)
             .get();
           const stockLevels = stockSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-          return NextResponse.json(stockLevels); // Returns an ARRAY
+          return NextResponse.json(stockLevels);
         }
-
-        // 2. If no productId, fetch the dashboard KPIs (the "optimized" path)
         const warehouseSnap = await db.collection("warehouses")
           .where("storeId", "==", storeId)
           .orderBy("name")
           .get();
         const warehouses = warehouseSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-
         const cacheRef = db.collection("reports_cache").doc(storeId);
         const cacheDoc = await cacheRef.get();
-        
         let kpis;
         if (cacheDoc.exists && cacheDoc.data()?.product_kpis) {
-          console.log(`[Products API GET - stock] Using FAST PATH (cached)`);
           kpis = cacheDoc.data()?.product_kpis;
         } else {
-          console.warn(`[Products API GET - stock] Cache miss, using SLOW PATH`);
-          kpis = await aggregateProductKPIs(storeId); // Using your helper
+          kpis = await aggregateProductKPIs(storeId);
         }
-        
-        return NextResponse.json({ kpis, warehouses }); // Returns an OBJECT
+        return NextResponse.json({ kpis, warehouses });
       }
 
       // (This case is unchanged)
@@ -117,7 +118,6 @@ export async function GET(request: NextRequest) {
         }));
         
         const lastDocId = noLimit || snapshot.empty ? null : snapshot.docs[snapshot.docs.length - 1].id;
-
         return NextResponse.json({ products, lastDocId });
       }
       
@@ -148,13 +148,40 @@ export async function GET(request: NextRequest) {
         return NextResponse.json(adjustments);
       }
       
-      // (This case is unchanged)
+      // --- (FIX 4) THIS CASE IS NOW IMPLEMENTED ---
       case "reports": {
-        // (This logic would remain for your 'Reports' tab)
-        return NextResponse.json([]);
+        const reportType = searchParams.get("report");
+        const currency = searchParams.get("currency") || "USD";
+
+        // Handle "Low Stock" report
+        if (reportType === "low_stock") {
+          // You can define "low stock" however you want.
+          // Here, it's any product with quantity > 0 and <= 10.
+          const productsSnap = await db.collection("products")
+            .where("storeId", "==", storeId)
+            .where("quantity", ">", 0)
+            .where("quantity", "<=", 10) // <-- Low stock threshold
+            .orderBy("quantity", "asc")
+            .get();
+          
+          const lowStockProducts = productsSnap.docs.map(doc => {
+              const data = doc.data();
+              return {
+                id: doc.id,
+                name: data.name,
+                quantity: data.quantity,
+                salesCount: 0, // Placeholder: real calculation is complex
+                costPrice: data.costPrices?.[currency] || 0
+              };
+          });
+          return NextResponse.json(lowStockProducts);
+        }
+        
+        // Add other reports (e.g., fast_moving) here
+        
+        return NextResponse.json([]); // Default empty
       }
-      
-      // (The duplicate "stock" case that was here is removed)
+      // --- END FIX ---
 
       default:
         return NextResponse.json({ error: "Invalid tab parameter." }, { status: 400 });
@@ -162,12 +189,15 @@ export async function GET(request: NextRequest) {
 
   } catch (error: any) {
     console.error("[Products API GET] Error:", error.stack || error.message);
+    if (error.message.includes("Access denied")) {
+      return NextResponse.json({ error: error.message }, { status: 403 });
+    }
     return NextResponse.json({ error: `Failed to load data. ${error.message}` }, { status: 500 });
   }
 }
 
 // =============================================================================
-// 📦 (FIX 2) ADDED: POST - Create New Product, Category, etc.
+// 逃 POST - Create New Product, Category, etc.
 // =============================================================================
 export async function POST(request: NextRequest) {
   if (!authAdmin || !firestoreAdmin) {
@@ -181,10 +211,10 @@ export async function POST(request: NextRequest) {
 
     // Based on the 'type' from the form
     switch (body.type) {
+      
+      // (This case is unchanged)
       case "product": {
-        // Logic from ProductFormModal
         const { name, description, category, quantity, warehouseId, warehouseName, salePrices, costPrices, imageUrl } = body;
-        
         const newProductRef = db.collection("products").doc();
         const productId = newProductRef.id;
 
@@ -205,7 +235,6 @@ export async function POST(request: NextRequest) {
         const batch = db.batch();
         batch.set(newProductRef, productData);
 
-        // Create initial stock level
         const stockRef = db.collection("stock_levels").doc(`${storeId}_${warehouseId}_${productId}`);
         batch.set(stockRef, {
           storeId,
@@ -216,11 +245,11 @@ export async function POST(request: NextRequest) {
           quantity: Number(quantity) || 0,
         });
 
-        // Create initial adjustment log
         const adjRef = db.collection("inventory_adjustments").doc();
         batch.set(adjRef, {
           storeId,
           productId,
+          productName: name,
           warehouseId,
           warehouseName,
           change: Number(quantity) || 0,
@@ -232,11 +261,10 @@ export async function POST(request: NextRequest) {
         });
 
         await batch.commit();
-        
-        // Return JSON to fix the error
        return NextResponse.json(productData, { status: 201 });
       }
-      // Add other types from your app (e.g., category, warehouse)
+      
+      // (These cases are unchanged)
       case "category":
       case "brand": {
         const collection = body.type === "category" ? "categories" : "brands";
@@ -255,24 +283,158 @@ export async function POST(request: NextRequest) {
         });
         return NextResponse.json({ id: docRef.id, name: body.name }, { status: 201 });
       }
-      case "adjustment":
-      case "transfer": {
-        // These are more complex and would be added here
-        // For now, return success
-        return NextResponse.json({ success: true, message: `${body.type} processed` }, { status: 201 });
+
+      // --- (FIX 2) THIS CASE IS NOW IMPLEMENTED ---
+      case "adjustment": {
+        const { productId, warehouseId, warehouseName, change, reason } = body;
+        const changeAmount = Number(change) || 0;
+        
+        if (changeAmount === 0) {
+          return NextResponse.json({ error: "Change cannot be zero." }, { status: 400 });
+        }
+
+        const batch = db.batch();
+
+        // 1. Product total ref
+        const productRef = db.collection("products").doc(productId);
+        
+        // 2. Stock level ref
+        const stockRef = db.collection("stock_levels").doc(`${storeId}_${warehouseId}_${productId}`);
+
+        // 3. Adjustment log ref
+        const adjRef = db.collection("inventory_adjustments").doc();
+        
+        // We need the current quantity to log the 'newQuantity'
+        const stockDoc = await stockRef.get();
+        const currentQuantity = stockDoc.data()?.quantity || 0;
+        const newQuantity = currentQuantity + changeAmount;
+        
+        const productDoc = await productRef.get(); // Get product name
+        const productName = productDoc.data()?.name || "Unknown Product";
+
+        // 1. Update product total quantity
+        batch.update(productRef, {
+          quantity: FieldValue.increment(changeAmount)
+        });
+
+        // 2. Update/set specific warehouse stock level
+        // (Using set with merge allows this to work even if the stock doc doesn't exist yet)
+        batch.set(stockRef, {
+          storeId,
+          warehouseId,
+          warehouseName,
+          productId,
+          productName,
+          quantity: FieldValue.increment(changeAmount)
+        }, { merge: true });
+
+        // 3. Create the adjustment log
+        batch.set(adjRef, {
+          storeId,
+          productId,
+          productName,
+          warehouseId,
+          warehouseName,
+          change: changeAmount,
+          newQuantity: newQuantity, // This is the new quantity *at this warehouse*
+          reason: reason || "Adjustment",
+          timestamp: Timestamp.now(),
+          userId: uid,
+          userName: userName,
+        });
+
+        await batch.commit();
+        return NextResponse.json({ success: true, newQuantity: newQuantity }, { status: 201 });
       }
+      // --- END FIX ---
+
+      // --- (FIX 3) THIS CASE IS NOW IMPLEMENTED ---
+      case "transfer": {
+        const { productId, fromWarehouse, toWarehouse, quantity } = body;
+        const transferQty = Number(quantity) || 0;
+
+        if (transferQty <= 0) {
+          return NextResponse.json({ error: "Transfer quantity must be positive." }, { status: 400 });
+        }
+        if (fromWarehouse.id === toWarehouse.id) {
+            return NextResponse.json({ error: "Cannot transfer to the same warehouse." }, { status: 400 });
+        }
+
+        const batch = db.batch();
+        const productDoc = await db.collection("products").doc(productId).get();
+        if (!productDoc.exists) throw new Error("Product not found.");
+        const productName = productDoc.data()?.name || "Unknown Product";
+
+        // 1. 'From' Warehouse (Subtract)
+        const fromStockRef = db.collection("stock_levels").doc(`${storeId}_${fromWarehouse.id}_${productId}`);
+        const fromAdjRef = db.collection("inventory_adjustments").doc();
+        const fromStockDoc = await fromStockRef.get();
+        const fromCurrentQty = fromStockDoc.data()?.quantity || 0;
+        
+        if (fromCurrentQty < transferQty) {
+          throw new Error(`Not enough stock in ${fromWarehouse.name}. Available: ${fromCurrentQty}`);
+        }
+        const fromNewQty = fromCurrentQty - transferQty;
+
+        // 2. 'To' Warehouse (Add)
+        const toStockRef = db.collection("stock_levels").doc(`${storeId}_${toWarehouse.id}_${productId}`);
+        const toAdjRef = db.collection("inventory_adjustments").doc();
+        const toStockDoc = await toStockRef.get();
+        const toCurrentQty = toStockDoc.data()?.quantity || 0;
+        const toNewQty = toCurrentQty + transferQty;
+
+        // Note: The main product.quantity *does not change* in a transfer.
+        
+        // 3. Batch operations
+        
+        // Subtract from 'From'
+        batch.set(fromStockRef, { quantity: FieldValue.increment(-transferQty) }, { merge: true });
+        batch.set(fromAdjRef, {
+          storeId, productId, productName,
+          warehouseId: fromWarehouse.id, warehouseName: fromWarehouse.name,
+          change: -transferQty,
+          newQuantity: fromNewQty,
+          reason: `Transfer to ${toWarehouse.name}`,
+          timestamp: Timestamp.now(), userId: uid, userName,
+        });
+
+        // Add to 'To'
+        batch.set(toStockRef, {
+          storeId,
+          warehouseId: toWarehouse.id,
+          warehouseName: toWarehouse.name,
+          productId,
+          productName,
+          quantity: FieldValue.increment(transferQty)
+        }, { merge: true });
+        batch.set(toAdjRef, {
+          storeId, productId, productName,
+          warehouseId: toWarehouse.id, warehouseName: toWarehouse.name,
+          change: transferQty,
+          newQuantity: toNewQty,
+          reason: `Transfer from ${fromWarehouse.name}`,
+          timestamp: Timestamp.now(), userId: uid, userName,
+        });
+
+        await batch.commit();
+        return NextResponse.json({ success: true }, { status: 201 });
+      }
+      // --- END FIX ---
 
       default:
         return NextResponse.json({ error: "Invalid POST type." }, { status: 400 });
     }
   } catch (error: any) {
     console.error("[Products API POST] Error:", error.message);
+    if (error.message.includes("Access denied")) {
+      return NextResponse.json({ error: error.message }, { status: 403 });
+    }
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }
 
 // =============================================================================
-// 📦 (FIX 2) ADDED: PUT - Update Existing Product
+// 逃 PUT - Update Existing Product
 // =============================================================================
 export async function PUT(request: NextRequest) {
   if (!authAdmin || !firestoreAdmin) {
@@ -280,7 +442,7 @@ export async function PUT(request: NextRequest) {
   }
 
   try {
-    const { storeId } = await checkAuth(request);
+    const { storeId } = await checkAuth(request); // <-- Role check is now included
     const { searchParams } = new URL(request.url);
     const productId = searchParams.get("id");
     if (!productId) {
@@ -308,18 +470,32 @@ export async function PUT(request: NextRequest) {
     };
 
     await productRef.update(updateData);
+    
+    // Also update productName in stock_levels
+    const stockSnap = await firestoreAdmin.collection("stock_levels")
+        .where("storeId", "==", storeId)
+        .where("productId", "==", productId)
+        .get();
+        
+    const batch = firestoreAdmin.batch();
+    stockSnap.docs.forEach(doc => {
+        batch.update(doc.ref, { productName: name });
+    });
+    await batch.commit();
 
-    // Return JSON to fix the error
     return NextResponse.json({ id: productId, ...updateData }, { status: 200 });
 
   } catch (error: any) {
     console.error("[Products API PUT] Error:", error.message);
+    if (error.message.includes("Access denied")) {
+      return NextResponse.json({ error: error.message }, { status: 403 });
+    }
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }
 
 // =============================================================================
-// 📦 (FIX 2) ADDED: DELETE - Delete Existing Product
+// 逃 DELETE - Delete Existing Product
 // =============================================================================
 export async function DELETE(request: NextRequest) {
   if (!authAdmin || !firestoreAdmin) {
@@ -327,7 +503,7 @@ export async function DELETE(request: NextRequest) {
   }
 
   try {
-    const { storeId } = await checkAuth(request);
+    const { storeId } = await checkAuth(request); // <-- Role check is now included
     const { searchParams } = new URL(request.url);
     const type = searchParams.get("type");
     const id = searchParams.get("id");
@@ -353,26 +529,24 @@ export async function DELETE(request: NextRequest) {
       return NextResponse.json({ error: "Document not found or access denied." }, { status: 404 });
     }
     
-    // In a real app, you'd check if a product has stock before deleting,
-    // or if a category is in use. For this fix, we just delete.
-    if (type === "product") {
-       // TODO: Also delete from stock_levels, etc.
-    }
-
+    // TODO: Add deletion logic for related docs (stock_levels, adjustments)
+    // For now, just delete the main doc
+    
     await docRef.delete();
 
-    // Return JSON to fix the error
     return NextResponse.json({ success: true, id: id }, { status: 200 });
 
   } catch (error: any) {
     console.error("[Products API DELETE] Error:", error.message);
+    if (error.message.includes("Access denied")) {
+      return NextResponse.json({ error: error.message }, { status: 403 });
+    }
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }
 
 
 // --- Helper function (copied from your Cloud Function) ---
-// This is the fallback logic if the cache is empty.
 async function aggregateProductKPIs(storeId: string) {
   const productsSnap = await firestoreAdmin.collection("products")
     .where("storeId", "==", storeId).get();
@@ -389,7 +563,7 @@ async function aggregateProductKPIs(storeId: string) {
     kpis.totalProducts++;
     const qty = product.quantity || 0;
     if (qty <= 0) kpis.outOfStock++;
-    else if (qty <= (product.lowStockThreshold || 5)) kpis.lowStock++;
+    else if (qty <= (product.lowStockThreshold || 5)) kpis.lowStock++; // Using 5 as default
     const costPrices = product.costPrices || {};
     for (const currency in costPrices) {
       const cost = costPrices[currency] || 0;

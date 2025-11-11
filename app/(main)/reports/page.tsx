@@ -113,7 +113,7 @@ const reportNavLinks = [
   { id: "debts", label: "Debts & Credit", icon: CreditCard },
   { id: "customers", label: "Customers & Suppliers", icon: Briefcase },
   { id: "hr", label: "HR & Staff", icon: Users },
-  { id: "custom", label: "Custom Reports", icon: FileText },
+
 ];
 
 // -----------------------------------------------------------------------------

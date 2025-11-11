@@ -10,6 +10,11 @@
 // 5. (NEW) 'handleSaveSale' is now secure. It sends raw data (items, payments with value)
 //    to the API and trusts the server to do all calculations.
 // 6. (NEW) Added modern "NewDateRangePicker" for the Sale Date.
+// --- (MODIFICATIONS) ---
+// 7. (FIX) Replaced product table <input> with <FormInput> to fix inconsistencies.
+// 8. (NEW) Added 'paymentMethodsByCurrency' for smart payment method filtering.
+// 9. (NEW) 'handleUpdatePaymentLine' now resets method when currency changes.
+// 10. (NEW) 'handleSaveSale' now prevents overpayment.
 // -----------------------------------------------------------------------------
 
 "use client";
@@ -65,25 +70,35 @@ const fetcher = async (url: string) => {
   return res.json();
 };
 
+// --- (MODIFIED) Updated 'formatCurrency' to match 'pagee.tsx' (EUR fix) ---
 const formatCurrency = (amount: number | undefined | null, currency: string): string => {
-  if (amount == null) return "N/A";
-  const style = (currency === "USD" || currency === "EURO") ? "currency" : "decimal";
+  if (amount == null) amount = 0;
+  
+  // Use 'EUR' for formatting, not 'EURO'
+  const displayCurrency = currency === "EURO" ? "EUR" : currency;
+  
+  const style = (displayCurrency === "USD" || displayCurrency === "EUR") ? "currency" : "decimal";
   const options: Intl.NumberFormatOptions = {
     style: style,
     minimumFractionDigits: (currency === "SLSH" || currency === "SOS" || currency === "BIRR") ? 0 : 2,
     maximumFractionDigits: (currency === "SLSH" || currency === "SOS" || currency === "BIRR") ? 0 : 2,
   };
+  
   if (style === "currency") {
-    options.currency = currency;
+    options.currency = displayCurrency;
     options.currencyDisplay = "symbol";
   }
+  
   const formatter = new Intl.NumberFormat("en-US", options);
   let formatted = formatter.format(amount);
+  
   if (style === "decimal") {
-    formatted = `${currency} ${formatted}`;
+    // Show the original code (e.g., "KSH")
+    formatted = `${currency} ${formatted}`; 
   }
   return formatted;
 };
+
 
 // =============================================================================
 // 🛠️ Debounce Hook
@@ -102,10 +117,13 @@ function useDebounce(value: string, delay: number) {
 }
 
 // =============================================================================
-// 💰 Currency & Payment Constants
+// 💰 Currency & Payment Constants (MODIFIED)
 // =============================================================================
-const CURRENCIES = ["USD", "SLSH", "SOS", "BIRR", "KES", "EUR"]; // Added BIRR, KES
 
+// --- (NEW) Currency list based on your request ---
+const CURRENCIES = ["USD", "SOS", "SLSH", "EUR", "KSH", "BIRR"];
+
+// --- (MODIFIED) Added SOMNET and updated list ---
 const PAYMENT_PROVIDERS = {
   CASH: { label: "Cash" },
   BANK: { label: "Bank Transfer" },
@@ -113,9 +131,20 @@ const PAYMENT_PROVIDERS = {
   EDAHAB: { label: "E-Dahab" },
   EVC_PLUS: { label: "EVC Plus" },
   SAHAL: { label: "Sahal (Golis)" },
+  SOMNET: { label: "Somnet" }, // <-- ADDED
   E_BIRR: { label: "E-Birr" },
   M_PESA: { label: "M-Pesa" },
-  SI_KALE: { label: "Other" },
+  OTHER: { label: "Other" }, // <-- Changed from SI_KALE for clarity
+};
+
+// --- (NEW) Smart Payment Method map based on your request ---
+const paymentMethodsByCurrency: { [key: string]: (keyof typeof PAYMENT_PROVIDERS)[] } = {
+  USD: ["CASH", "BANK", "ZAAD", "EDAHAB", "SOMNET", "EVC_PLUS", "SAHAL", "OTHER"],
+  SOS: ["CASH", "BANK", "OTHER"],
+  SLSH: ["CASH", "BANK", "EDAHAB", "ZAAD", "OTHER"],
+  BIRR: ["CASH", "BANK", "E_BIRR", "OTHER"],
+  KSH: ["BANK", "CASH", "M_PESA", "OTHER"],
+  EUR: ["CASH", "BANK", "OTHER"],
 };
 
 // =============================================================================
@@ -156,7 +185,7 @@ interface Customer {
 // NEW: Payment line with manual exchange value
 interface PaymentLine {
   id: string; 
-  method: keyof typeof PAYMENT_PROVIDERS;
+  method: keyof typeof PAYMENT_PROVIDERS | ""; // Can be empty
   amount: string; // The amount in the payment's currency (e.g., "50" for USD)
   currency: string; // The currency of the payment (e.g., "USD")
   valueInInvoiceCurrency: string; // The value of 'amount' in the 'invoiceCurrency' (e.g., "4700" for BIRR)
@@ -379,6 +408,12 @@ function PosForm() {
     return totalAmount - totalPaid;
   }, [totalAmount, totalPaid]);
 
+  // --- (NEW) Check for overpayment ---
+  const isOverpaid = useMemo(() => {
+    // Allow for tiny floating point errors, e.g., 0.01
+    return totalPaid > totalAmount + 0.01; 
+  }, [totalAmount, totalPaid]);
+
   
   // --- Handlers ---
   
@@ -444,12 +479,12 @@ function PosForm() {
     setItems(prev => prev.filter(item => item.id !== id));
   };
   
-  // --- **NEW PAYMENT HANDLERS** ---
+  // --- **NEW PAYMENT HANDLERS (MODIFIED)** ---
   
   const handleAddPaymentLine = () => {
     const newPaymentLine: PaymentLine = {
       id: crypto.randomUUID(),
-      method: 'CASH',
+      method: '', // Start empty
       amount: "",
       currency: invoiceCurrency, // Default to invoice currency
       valueInInvoiceCurrency: "", // Will be set on change
@@ -461,22 +496,30 @@ function PosForm() {
     setPaymentLines(prev => prev.map(line => {
       if (line.id !== id) return line;
 
-      const updatedLine = { ...line, [field]: value };
+      let updatedLine = { ...line, [field]: value };
 
-      // ** NEW: Manual Exchange Logic **
-      // If the currency is the SAME as the invoice, value = amount
-      if (updatedLine.currency === invoiceCurrency) {
-        if (field === 'amount' || field === 'currency') {
+      // ** (MODIFIED) Manual Exchange & Smart Method Logic **
+      
+      if (field === 'currency') {
+        // --- (NEW) Reset method when currency changes ---
+        updatedLine.method = ""; 
+        
+        if (updatedLine.currency === invoiceCurrency) {
+          // If currency is the SAME as the invoice, value = amount
           updatedLine.valueInInvoiceCurrency = updatedLine.amount;
+        } else {
+          // If currency is DIFFERENT, clear the value
+          updatedLine.valueInInvoiceCurrency = "";
         }
-      } else {
-        // If currency is DIFFERENT, and we change amount, clear the value
-        if (field === 'amount') {
-          updatedLine.valueInInvoiceCurrency = ""; // Force re-entry of value
-        }
-        // If we change currency back to invoice currency, auto-fill
-        if (field === 'currency' && updatedLine.currency === invoiceCurrency) {
-           updatedLine.valueInInvoiceCurrency = updatedLine.amount;
+      }
+      
+      if (field === 'amount') {
+        if (updatedLine.currency === invoiceCurrency) {
+          // If currency is the SAME, value always = amount
+          updatedLine.valueInInvoiceCurrency = updatedLine.amount;
+        } else {
+          // If currency is DIFFERENT, clear value to force re-entry
+          updatedLine.valueInInvoiceCurrency = ""; 
         }
       }
       
@@ -494,13 +537,27 @@ function PosForm() {
   };
   
   
-  // ** NEW SECURE SAVE LOGIC **
+  // ** NEW SECURE SAVE LOGIC (MODIFIED) **
   const handleSaveSale = async (action: 'save' | 'save_print') => {
+    setError(null); // Clear previous errors
+    
+    // --- (NEW) Overpayment Validation ---
+    if (isOverpaid) {
+      setError("Overpayment is not allowed. Total paid cannot exceed total amount.");
+      return;
+    }
+    
     if (items.length === 0) { setError("Please add at least one item."); return; }
     if (!customer) { setError("Please select or create a customer."); return; }
     
+    // Check for incomplete payment methods
+    const incompletePayment = paymentLines.some(line => (Number(line.amount) > 0) && !line.method);
+    if (incompletePayment) {
+      setError("Please select a payment method for all added payments.");
+      return;
+    }
+
     setIsSaving(true);
-    setError(null);
 
     // 1. Create the 'raw items' payload for the server
     const itemsPayload = items.map(item => ({
@@ -514,7 +571,7 @@ function PosForm() {
     
     // 2. Create the 'raw payments' payload
     const paymentsPayload = paymentLines
-      .filter(line => (Number(line.amount) || 0) > 0)
+      .filter(line => (Number(line.amount) || 0) > 0 && line.method)
       .map(line => ({
         method: line.method,
         amount: Number(line.amount) || 0,
@@ -558,9 +615,9 @@ function PosForm() {
       if (action === 'save_print') {
         // --- (FIX) Pass dynamic store info from the user context ---
        const storeInfo = {
-          name: user?.name || "My Store", // <-- Use user.name here
-          address: "Hargeisa, Somalia", // <-- Add a default address
-          phone: "N/A"                 // <-- Add a default phone
+          name: (user as any)?.storeName || "My Store", // <-- Use user.storeName
+          address: (user as any)?.address || "Hargeisa, Somalia", // <-- Use user.address
+          phone: (user as any)?.phone || "N/A"                 // <-- Use user.phone
         };
         generateInvoicePdf(data.sale, storeInfo);
         resetForm(); 
@@ -611,7 +668,7 @@ function PosForm() {
                 <ProductSearch onProductSelect={handleProductSelect} invoiceCurrency={invoiceCurrency} />
               </div>
               
-              {/* Product Table */}
+              {/* Product Table (FIXED: Using FormInput) */}
               <div className="mt-4 flow-root">
                 <div className="-mx-4 overflow-x-auto">
                   <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
@@ -635,9 +692,16 @@ function PosForm() {
                             {item.productName}
                             {item.manualPrice && <span title="Price entered manually" className="ml-1 text-orange-400">*</span>}
                           </td>
-                          <td className="px-2 py-2"><input type="number" value={item.quantity} onChange={e => handleUpdateItem(item.id, 'quantity', e.target.value)} className="w-16 rounded-md border-gray-300 p-1 text-sm dark:border-gray-600 dark:bg-gray-700 dark:text-white" /></td>
-                          <td className="px-2 py-2"><input type="number" value={item.pricePerUnit} onChange={e => handleUpdateItem(item.id, 'pricePerUnit', e.target.value)} className="w-24 rounded-md border-gray-300 p-1 text-sm dark:border-gray-600 dark:bg-gray-700 dark:text-white" /></td>
-                          <td className="px-2 py-2"><input type="number" value={item.discount} onChange={e => handleUpdateItem(item.id, 'discount', e.target.value)} className="w-16 rounded-md border-gray-300 p-1 text-sm dark:border-gray-600 dark:bg-gray-700 dark:text-white" /></td>
+                          {/* --- (FIX) Using FormInput for consistency --- */}
+                          <td className="px-2 py-2 w-20">
+                            <FormInput type="number" value={item.quantity} onChange={(val: string) => handleUpdateItem(item.id, 'quantity', val)} className="w-full" />
+                          </td>
+                          <td className="px-2 py-2 w-28">
+                            <FormInput type="number" value={item.pricePerUnit} onChange={(val: string) => handleUpdateItem(item.id, 'pricePerUnit', val)} className="w-full" />
+                          </td>
+                          <td className="px-2 py-2 w-20">
+                            <FormInput type="number" value={item.discount} onChange={(val: string) => handleUpdateItem(item.id, 'discount', val)} className="w-full" />
+                          </td>
                           <td className="px-2 py-2 text-sm dark:text-white">{formatCurrency((Number(item.quantity) || 0) * (Number(item.pricePerUnit) || 0) * (1 - (Number(item.discount) || 0) / 100), invoiceCurrency)}</td>
                           <td className="py-2 pr-4 text-right">
                             <button type="button" onClick={() => handleDeleteItem(item.id)} className="text-red-500 hover:text-red-700"><Trash2 className="h-4 w-4" /></button>
@@ -682,60 +746,69 @@ function PosForm() {
           {/* --- Right Panel (Payment & Summary) --- */}
           <div className="space-y-6 lg:col-span-1 lg:sticky top-24 h-fit">
             
-            {/* C. PAYMENT SECTION (REBUILT FOR MANUAL EXCHANGE) */}
+            {/* C. PAYMENT SECTION (REBUILT FOR SMART METHODS) */}
             <Card>
               <h3 className="mb-4 text-lg font-semibold dark:text-white">4. Payment Details</h3>
               
               <div className="space-y-4">
-                {paymentLines.map((line, index) => (
-                  <div key={line.id} className="space-y-3 rounded-lg border border-gray-300 p-3 dark:border-gray-600">
-                    <div className="flex justify-between items-center">
-                      <h4 className="font-medium dark:text-white">Payment #{index + 1}</h4>
-                      <button type="button" onClick={() => handleRemovePaymentLine(line.id)} className="text-red-500 hover:text-red-700"><X className="h-4 w-4" /></button>
-                    </div>
+                {paymentLines.map((line, index) => {
+                  // --- (NEW) Get the list of valid methods for this line's currency ---
+                  const validMethods = paymentMethodsByCurrency[line.currency] || [];
+                  
+                  return (
+                    <div key={line.id} className="space-y-3 rounded-lg border border-gray-300 p-3 dark:border-gray-600">
+                      <div className="flex justify-between items-center">
+                        <h4 className="font-medium dark:text-white">Payment #{index + 1}</h4>
+                        <button type="button" onClick={() => handleRemovePaymentLine(line.id)} className="text-red-500 hover:text-red-700"><X className="h-4 w-4" /></button>
+                      </div>
 
-                    <FormSelect 
-                      label="Method"
-                      value={line.method}
-                      onChange={(val: string) => handleUpdatePaymentLine(line.id, 'method', val)}
-                    >
-                      {Object.entries(PAYMENT_PROVIDERS).map(([key, { label }]) => (
-                        <option key={key} value={key}>{label}</option>
-                      ))}
-                    </FormSelect>
-                    
-                    <div className="grid grid-cols-2 gap-2">
-                      <FormInput
-                        label="Amount"
-                        type="number"
-                        placeholder="0.00"
-                        value={line.amount}
-                        onChange={(val: string) => handleUpdatePaymentLine(line.id, 'amount', val)}
-                      />
+                      {/* --- (MODIFIED) Smart Method Dropdown --- */}
                       <FormSelect 
-                        label="Currency"
-                        value={line.currency}
-                        onChange={(val: string) => handleUpdatePaymentLine(line.id, 'currency', val)}
+                        label="Method"
+                        value={line.method}
+                        onChange={(val: string) => handleUpdatePaymentLine(line.id, 'method', val)}
                       >
-                        {CURRENCIES.map(c => <option key={c} value={c}>{c}</option>)}
+                        <option value="" disabled>Select a method</option>
+                        {validMethods.map(methodKey => (
+                          <option key={methodKey} value={methodKey}>
+                            {PAYMENT_PROVIDERS[methodKey].label}
+                          </option>
+                        ))}
                       </FormSelect>
-                    </div>
-                    
-                    {/* ** NEW: MANUAL EXCHANGE INPUT ** */}
-                    {line.currency !== invoiceCurrency && (
-                      <div className="border-t border-dashed border-blue-400 pt-3">
+                      
+                      <div className="grid grid-cols-2 gap-2">
                         <FormInput
-                          label={`Value in ${invoiceCurrency}`}
+                          label="Amount"
                           type="number"
                           placeholder="0.00"
-                          value={line.valueInInvoiceCurrency}
-                          onChange={(val: string) => handleUpdatePaymentLine(line.id, 'valueInInvoiceCurrency', val)}
-                          className="[&_input]:border-blue-500 [&_input]:ring-1 [&_input]:ring-blue-200"
+                          value={line.amount}
+                          onChange={(val: string) => handleUpdatePaymentLine(line.id, 'amount', val)}
                         />
+                        <FormSelect 
+                          label="Currency"
+                          value={line.currency}
+                          onChange={(val: string) => handleUpdatePaymentLine(line.id, 'currency', val)}
+                        >
+                          {CURRENCIES.map(c => <option key={c} value={c}>{c}</option>)}
+                        </FormSelect>
                       </div>
-                    )}
-                  </div>
-                ))}
+                      
+                      {/* ** NEW: MANUAL EXCHANGE INPUT ** */}
+                      {line.currency !== invoiceCurrency && (
+                        <div className="border-t border-dashed border-blue-400 pt-3">
+                          <FormInput
+                            label={`Value in ${invoiceCurrency}`}
+                            type="number"
+                            placeholder="0.00"
+                            value={line.valueInInvoiceCurrency}
+                            onChange={(val: string) => handleUpdatePaymentLine(line.id, 'valueInInvoiceCurrency', val)}
+                            className="[&_input]:border-blue-500 [&_input]:ring-1 [&_input]:ring-blue-200"
+                          />
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
                 
                 {/* --- Add New Payment Button --- */}
                 <button 
@@ -755,7 +828,11 @@ function PosForm() {
               <div className="space-y-2 pt-2">
                 <TotalRow label="Total Amount" value={formatCurrency(totalAmount, invoiceCurrency)} isBold={true} />
                 
-                <TotalRow label="Total Paid" value={formatCurrency(totalPaid, invoiceCurrency)} />
+                <TotalRow 
+                  label="Total Paid" 
+                  value={formatCurrency(totalPaid, invoiceCurrency)} 
+                  isDebt={isOverpaid} // Show as "debt" (red) if overpaid
+                />
                 
                 {/* Show breakdown of actual currencies received */}
                 <div className="pl-4">
@@ -769,9 +846,9 @@ function PosForm() {
                 <hr className="my-2 dark:border-gray-600" />
 
                 <TotalRow 
-                  label={`Debt Remaining`}
-                  value={formatCurrency(debtRemaining, invoiceCurrency)}
-                  isDebt={debtRemaining > 0}
+                  label={isOverpaid ? `Change Due` : `Debt Remaining`}
+                  value={formatCurrency(isOverpaid ? totalPaid - totalAmount : debtRemaining, invoiceCurrency)}
+                  isDebt={!isOverpaid && debtRemaining > 0}
                   isBold={true} 
                   className="text-2xl"
                 />
@@ -780,14 +857,18 @@ function PosForm() {
           </div>
         </div>
 
-        {/* G. BOTTOM ACTION BAR */}
+        {/* G. BOTTOM ACTION BAR (MODIFIED) */}
         <div className="sticky bottom-0 left-0 right-0 z-10 mt-6 border-t border-gray-200 bg-white p-4 shadow-lg dark:border-gray-700 dark:bg-gray-800">
+          {/* --- (NEW) Overpayment Error --- */}
+          {isOverpaid && <p className="mb-2 text-center text-sm text-red-600">Overpayment is not allowed. Please adjust payment amounts.</p>}
           {error && <p className="mb-2 text-center text-sm text-red-600">{error}</p>}
+          
           <div className="mx-auto flex max-w-7xl flex-col gap-2 sm:flex-row">
             <button
               type="submit"
               title="Save this sale"
-              disabled={isSaving || items.length === 0 || !customer}
+              // --- (MODIFIED) Disable if overpaid ---
+              disabled={isSaving || items.length === 0 || !customer || isOverpaid}
               className="flex-2 flex items-center justify-center gap-2 rounded-lg bg-blue-600 px-5 py-3 text-base font-medium text-white shadow-sm hover:bg-blue-700 disabled:opacity-50"
             >
               {isSaving ? <Loader2 className="h-5 w-5 animate-spin" /> : <Save className="h-5 w-5" />}
@@ -797,7 +878,8 @@ function PosForm() {
               type="button"
               title="Save and open print dialog"
               onClick={() => handleSaveSale('save_print')}
-              disabled={isSaving || items.length === 0 || !customer}
+              // --- (MODIFIED) Disable if overpaid ---
+              disabled={isSaving || items.length === 0 || !customer || isOverpaid}
               className="flex-1 flex items-center justify-center gap-2 rounded-lg bg-gray-600 px-4 py-2 text-sm font-medium text-white hover:bg-gray-700 disabled:opacity-50"
             >
               <Printer className="h-4 w-4" />
@@ -1103,7 +1185,7 @@ function CalendarGrid({
         className="grid grid-cols-7 gap-1 mt-2"
         onMouseLeave={() => !singleDateMode && setHoveredDate(undefined)}
       >
-        {days.map(day => {
+      {days.map(day => {
           const isCurrentMonth = isSameMonth(day, month);
           const isSelectedStart = !!selectedDate?.from && isSameDay(day, selectedDate.from);
           const isSelectedEnd = !!selectedDate?.to && isSameDay(day, selectedDate.to);
@@ -1112,10 +1194,18 @@ function CalendarGrid({
                             isAfter(day, selectedDate.from) && 
                             isBefore(day, selectedDate.to);
           const isHovering = !!(selectedDate?.from && !selectedDate.to && hoveredDate) && !singleDateMode;
-          const isHoverStart = isHovering && hoveredDate && selectedDate.from && isBefore(hoveredDate, selectedDate.from) ? hoveredDate : selectedDate?.from;
-           const isHoverEnd = isHovering && hoveredDate && selectedDate.from && isAfter(hoveredDate, selectedDate.from) ? hoveredDate : selectedDate?.from;
+
+          // ✅ Added missing definitions for hover range
+          const isHoverStart = isHovering && hoveredDate && selectedDate.from && isBefore(hoveredDate, selectedDate.from)
+            ? hoveredDate 
+            : selectedDate?.from;
+
+          const isHoverEnd = isHovering && hoveredDate && selectedDate.from && isAfter(hoveredDate, selectedDate.from)
+            ? hoveredDate 
+            : selectedDate?.from;
+
           const isInHoverRange = isHovering && isHoverStart && isHoverEnd && isAfter(day, isHoverStart) && isBefore(day, isHoverEnd);
-          return (
+   return (
             <button
               key={day.toString()}
               type="button"

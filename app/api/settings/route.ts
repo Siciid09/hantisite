@@ -1,13 +1,13 @@
 // File: app/api/settings/route.ts
-// Description: API route to GET and POST system-wide settings.
+// Description: API for managing ALL settings (GET, PUT) and deletion (DELETE).
 // -----------------------------------------------------------------------------
 
 import { NextResponse, NextRequest } from "next/server";
 import { firestoreAdmin, authAdmin } from "@/lib/firebaseAdmin";
 import { FieldValue } from "firebase-admin/firestore";
 
-// Helper function to get the user's storeId from their auth token
-async function getStoreIdFromRequest(request: NextRequest) {
+// Helper function
+async function getAuth(request: NextRequest) {
   const authHeader = request.headers.get("Authorization");
   if (!authHeader || !authHeader.startsWith("Bearer ")) {
     throw new Error("Unauthorized.");
@@ -16,126 +16,169 @@ async function getStoreIdFromRequest(request: NextRequest) {
   const decodedToken = await authAdmin.verifyIdToken(token);
   const uid = decodedToken.uid;
   const userDoc = await firestoreAdmin.collection("users").doc(uid).get();
-  if (!userDoc.exists) {
-    throw new Error("User not found.");
-  }
-  const storeId = userDoc.data()?.storeId;
-  if (!storeId) {
-    throw new Error("User has no store.");
-  }
-  return storeId;
+  if (!userDoc.exists) throw new Error("User not found.");
+
+  const userData = userDoc.data()!;
+  const storeId = userData.storeId;
+  const role = userData.role;
+  if (!storeId) throw new Error("User has no store.");
+  if (!role) throw new Error("Permission Denied.");
+
+  return { storeId, uid, email: userData.email, role };
+}
+
+// Helper to get or create the settings doc
+async function getSettingsRef(storeId: string) {
+    const settingsQuery = firestoreAdmin.collection('settings').where('storeId', '==', storeId).limit(1);
+    const settingsSnap = await settingsQuery.get();
+    
+    if (!settingsSnap.empty) {
+        return settingsSnap.docs[0].ref;
+    } else {
+        const storeDoc = await firestoreAdmin.collection('stores').doc(storeId).get();
+        const storeData = storeDoc.data();
+        
+        const newSettingsRef = firestoreAdmin.collection('settings').doc();
+        await newSettingsRef.set({
+            storeId: storeId,
+            storeName: storeData?.name || "My Store",
+            storePhone: storeData?.phone || "",
+            storeAddress: storeData?.address || "",
+            currencies: storeData?.currencies || ["USD"], 
+            invoiceTemplate: "default",
+            createdAt: FieldValue.serverTimestamp(),
+        });
+        return newSettingsRef;
+    }
 }
 
 // -----------------------------------------------------------------------------
-// 🚀 GET - Fetch All Settings
+// 📋 GET - Get Store Settings
 // -----------------------------------------------------------------------------
 export async function GET(request: NextRequest) {
-  if (!authAdmin || !firestoreAdmin) {
-    return NextResponse.json(
-      { error: "Internal server error: Admin SDK not configured." },
-      { status: 500 }
-    );
-  }
-
   try {
-    const storeId = await getStoreIdFromRequest(request);
+    const { storeId } = await getAuth(request);
 
-    // Fetch the main settings document
-    const settingsRef = firestoreAdmin.collection("settings").doc(storeId);
+    // --- (FIX) Only fetch settings. Plans are static in the UI. ---
+    const settingsRef = await getSettingsRef(storeId);
     const settingsDoc = await settingsRef.get();
-
-    // Fetch store/company info
-    const storeRef = firestoreAdmin.collection("stores").doc(storeId);
-    const storeDoc = await storeRef.get();
-
-    if (!settingsDoc.exists || !storeDoc.exists) {
-      // Create default settings if they don't exist
-      const defaultSettings = {
-        language: "en",
-        isDarkMode: false,
-        primaryColor: "#0057FF",
-        currencies: ["USD", "SLSH"],
-        paymentMethods: { zaad: true, edahab: true, cash: true },
-        // ... other defaults
-      };
-      const defaultStoreInfo = {
-        name: "Your Company Name",
-        address: "Your Address",
-        phone: "+252 63 000000",
-        // ... other defaults
-      };
-      
-      await settingsRef.set(defaultSettings, { merge: true });
-      await storeRef.set(defaultStoreInfo, { merge: true });
-
-      return NextResponse.json({
-        settings: defaultSettings,
-        company: defaultStoreInfo,
-      });
-    }
-
-    return NextResponse.json({
-      settings: settingsDoc.data(),
-      company: storeDoc.data(),
-    });
+    const settings = settingsDoc.data();
+    
+    return NextResponse.json(settings);
 
   } catch (error: any) {
-    console.error("[Settings API GET] Error:", error.stack || error.message);
-    return NextResponse.json(
-      { error: `Failed to load settings. ${error.message}` },
-      { status: 500 }
-    );
+    console.error("[SETTINGS API GET] Error:", error.message);
+    return NextResponse.json({ error: error.message }, { status: 401 });
   }
 }
 
 // -----------------------------------------------------------------------------
-// 💾 POST - Update Settings (Partial)
+// ✏️ PUT - Update Store OR Profile Settings
 // -----------------------------------------------------------------------------
-export async function POST(request: NextRequest) {
-  if (!authAdmin || !firestoreAdmin) {
-    return NextResponse.json(
-      { error: "Internal server error: Admin SDK not configured." },
-      { status: 500 }
-    );
-  }
-
+export async function PUT(request: NextRequest) {
   try {
-    const storeId = await getStoreIdFromRequest(request);
-    const { type, payload } = await request.json();
+    const { storeId, uid, role } = await getAuth(request);
+    const body = await request.json();
 
-    if (!type || !payload) {
-      return NextResponse.json(
-        { error: "Invalid request body. 'type' and 'payload' are required." },
-        { status: 400 }
-      );
+    // --- Part 1: Handle Profile Update (name, phone) ---
+    if (body.name !== undefined || body.phone !== undefined) {
+      const { name, phone } = body;
+      const userRef = firestoreAdmin.collection("users").doc(uid);
+      
+      const profileUpdate: any = {};
+      if (name !== undefined) profileUpdate.name = name;
+      if (phone !== undefined) profileUpdate.phone = phone;
+
+      await userRef.update(profileUpdate);
+      
+      if (name) {
+        await authAdmin.updateUser(uid, { displayName: name });
+      }
+      return NextResponse.json({ success: true, ...profileUpdate });
     }
 
-    let docRef;
-
-    // We update different documents based on the 'type'
-    if (type === "company") {
-      docRef = firestoreAdmin.collection("stores").doc(storeId);
-    } else if (type === "settings") {
-      docRef = firestoreAdmin.collection("settings").doc(storeId);
-    } else {
-      return NextResponse.json(
-        { error: "Invalid settings type." },
-        { status: 400 }
-      );
+    // --- Part 2: Handle Store/Business Settings ---
+    if (role !== "admin") {
+      return NextResponse.json({ error: "Permission Denied: Admin role required to update settings." }, { status: 403 });
     }
 
-    // Update the document with the partial payload
-    await docRef.update(payload);
+    // --- (MODIFIED) Added 'currencies' ---
+    const { storeName, storePhone, storeAddress, currencies, invoiceTemplate } = body;
+    const settingsRef = await getSettingsRef(storeId);
+    
+    const settingsUpdate: any = { updatedAt: FieldValue.serverTimestamp() };
+    if (storeName !== undefined) settingsUpdate.storeName = storeName;
+    if (storePhone !== undefined) settingsUpdate.storePhone = storePhone;
+    if (storeAddress !== undefined) settingsUpdate.storeAddress = storeAddress;
+    // --- (MODIFIED) Save 'currencies' array ---
+    if (currencies !== undefined) {
+       // (FIX) Ensure at least one currency, default to USD if array is empty
+       settingsUpdate.currencies = Array.isArray(currencies) && currencies.length > 0 ? currencies : ["USD"];
+    }
+    if (invoiceTemplate !== undefined) settingsUpdate.invoiceTemplate = invoiceTemplate;
+    
+    await settingsRef.update(settingsUpdate);
+    
+    // Also update the main 'stores' doc if name/currencies changed
+    const storeUpdate: any = {};
+    if (storeName !== undefined) storeUpdate.name = storeName;
+    if (settingsUpdate.currencies) storeUpdate.currencies = settingsUpdate.currencies;
+    
+    if (Object.keys(storeUpdate).length > 0) {
+        await firestoreAdmin.collection('stores').doc(storeId).update(storeUpdate);
+    }
+    
+    return NextResponse.json({ success: true, ...settingsUpdate });
 
-    return NextResponse.json(
-      { success: true, message: `${type} settings updated.` },
-      { status: 200 }
-    );
   } catch (error: any) {
-    console.error("[Settings API POST] Error:", error.stack || error.message);
-    return NextResponse.json(
-      { error: `Failed to save settings. ${error.message}` },
-      { status: 500 }
-    );
+    console.error("[SETTINGS API PUT] Error:", error.message);
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+}
+
+// -----------------------------------------------------------------------------
+// 🗑️ DELETE - Delete Store
+// -----------------------------------------------------------------------------
+export async function DELETE(request: NextRequest) {
+  try {
+    const { storeId, uid, role } = await getAuth(request);
+
+    if (role !== "admin") {
+      return NextResponse.json({ error: "Permission Denied: Only the store admin can delete the store." }, { status: 403 });
+    }
+
+    const { password } = await request.json();
+    if (!password) {
+      return NextResponse.json({ error: "Password is required." }, { status: 400 });
+    }
+
+    // We trust the client's re-authentication.
+
+    const batch = firestoreAdmin.batch();
+    
+    // Delete all users in the store
+    const usersSnap = await firestoreAdmin.collection('users').where('storeId', '==', storeId).get();
+    const userIds = usersSnap.docs.map(doc => doc.id);
+    
+    for (const userId of userIds) {
+      batch.delete(firestoreAdmin.collection('users').doc(userId));
+      await authAdmin.deleteUser(userId); 
+    }
+    
+    // (TODO): This MUST be handled by a Firebase Cloud Function for sub-collections.
+    
+    const settingsRef = await getSettingsRef(storeId);
+    batch.delete(settingsRef);
+    batch.delete(firestoreAdmin.collection('stores').doc(storeId));
+    
+    await batch.commit();
+
+    const response = NextResponse.json({ success: true, message: "Store deleted." });
+    response.cookies.set('session', '', { maxAge: -1 }); // Delete cookie
+    return response;
+
+  } catch (error: any) {
+    console.error("[SETTINGS API DELETE] Error:", error.message);
+    return NextResponse.json({ error: "Incorrect password or server error." }, { status: 500 });
   }
 }

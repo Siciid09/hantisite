@@ -6,6 +6,8 @@
 //    moved *inside* the `if/else if/else` block. This ensures
 //    `customerRef` is always assigned before it is used.
 // 3. (KEPT) All other logic (income, debt creation) is the same.
+// --- (NEW MODIFICATION) ---
+// 4. (NEW) Added server-side overpayment validation inside the transaction.
 // -----------------------------------------------------------------------------
 
 import { NextResponse, NextRequest } from "next/server";
@@ -50,7 +52,7 @@ async function checkAuth(
 }
 
 // =============================================================================
-// 🚀 POST - Create New Sale (SOLVED)
+// 🚀 POST - Create New Sale (MODIFIED)
 // =============================================================================
 export async function POST(request: NextRequest) {
   if (!authAdmin || !firestoreAdmin) {
@@ -174,11 +176,18 @@ export async function POST(request: NextRequest) {
       
       // b. Calculate Payment Totals
       const totalPaid = paymentLines.reduce((sum: number, p: any) => sum + (p.valueInInvoiceCurrency || 0), 0);
+      
+      // --- (NEW) Server-Side Overpayment Prevention ---
+      // Allow a tiny margin for floating point errors (e.g., 0.01)
+      if (totalPaid > totalAmount + 0.01) {
+        throw new Error(`Overpayment is not allowed. Total paid (${totalPaid}) exceeds total amount (${totalAmount}).`);
+      }
+      // --- (END NEW) ---
+      
       const debtAmount = totalAmount - totalPaid;
       const paymentStatus = debtAmount <= 0.01 ? 'paid' : (totalPaid > 0 ? 'partial' : 'unpaid');
 
-      // --- (FIX for ts(2454)) ---
-      // a. Handle Customer & Update KPIs (Moved KPI logic here)
+      // a. Handle Customer & Update KPIs
       let customerRef: FirebaseFirestore.DocumentReference;
 
       if (customer.id === "walkin") {
@@ -233,7 +242,6 @@ export async function POST(request: NextRequest) {
           });
         }
       }
-      // --- (END FIX) ---
 
       // c. Prepare Sale Document
       const newSaleRef = db.collection("sales").doc();
@@ -308,8 +316,6 @@ export async function POST(request: NextRequest) {
         });
       }
       
-      // h. (REMOVED) The KPI logic was moved to step 'a'
-      
       return newSaleData; // Return the final sale data
     }); // End of Transaction
 
@@ -318,6 +324,10 @@ export async function POST(request: NextRequest) {
 
   } catch (error: any) {
     console.error("[Sales API POST] Error:", error.stack || error.message);
+    // --- (NEW) Send specific error message for overpayment ---
+    if (error.message.startsWith("Overpayment detected")) {
+      return NextResponse.json({ error: error.message }, { status: 400 });
+    }
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }

@@ -2198,6 +2198,12 @@ const Pricing: React.FC<PricingProps> = ({ onDemoClick }) => {
     return <span className="text-gray-300">{value}</span>;
   };
 
+  // (GEMINI) NEW: Define plan data for mobile map
+  const plans = [
+    { name: 'Standard', price: 5 },
+    { name: 'Business', price: 10 }
+  ];
+
   return (
     <section id="pricing" className="container mx-auto px-6 py-24">
       <h2 className="scroll-reveal text-4xl md:text-5xl font-bold text-center mb-4">Choose Your Plan</h2>
@@ -2205,7 +2211,8 @@ const Pricing: React.FC<PricingProps> = ({ onDemoClick }) => {
         Simple, transparent pricing. No hidden fees. Start your 14-day free trial.
       </p>
       
-      <div className="scroll-reveal max-w-6xl mx-auto overflow-x-auto">
+      {/* --- (GEMINI) DESKTOP (MD+) WIDE TABLE --- */}
+      <div className="scroll-reveal hidden md:block max-w-6xl mx-auto overflow-x-auto">
         <div className="min-w-[800px] md:min-w-full">
           {/* Header Row */}
           <div className="grid grid-cols-3 gap-4 p-4 rounded-t-lg bg-gray-900/50 border-b border-gray-700">
@@ -2256,6 +2263,45 @@ const Pricing: React.FC<PricingProps> = ({ onDemoClick }) => {
             </div>
           </div>
         </div>
+      </div>
+
+      {/* --- (GEMINI) MOBILE (<MD) STACKED CARDS --- */}
+      <div className="scroll-reveal block md:hidden space-y-8">
+        {plans.map((plan) => (
+          <div key={plan.name} className="bg-gray-800/30 border border-gray-700/50 rounded-2xl overflow-hidden shadow-xl shadow-cyan-500/10">
+            {/* Plan Header */}
+            <div className="p-6 text-center bg-gray-900/50">
+              <h3 className="font-bold text-white text-2xl">{plan.name}</h3>
+              <p className="text-4xl font-extrabold text-cyan-400 mt-2">
+                ${plan.price}
+                <span className="text-lg font-normal text-gray-400">/mo</span>
+              </p>
+            </div>
+            
+            {/* Plan Features */}
+            <div className="p-6">
+              <ul className="space-y-4">
+                {features.map((feature) => (
+                  <li key={feature.name} className="flex justify-between items-center text-sm">
+                    <span className="text-white font-medium">{feature.name}</span>
+                    {/* (GEMINI) Use ternary to pick the correct feature value */}
+                    {renderFeatureValue(plan.name === 'Standard' ? feature.standard : feature.business)}
+                  </li>
+                ))}
+              </ul>
+            </div>
+
+            {/* Plan Button */}
+            <div className="p-6 bg-gray-900/50 border-t border-gray-700/50">
+              <SpotlightButton 
+                className="w-full text-white font-semibold py-3 px-6 rounded-full" 
+                onClick={() => onDemoClick(plan.name, plan.price)}
+              >
+                Start Free Trial
+              </SpotlightButton>
+            </div>
+          </div>
+        ))}
       </div>
 
       <div id="download" className="text-center mt-24 scroll-reveal">

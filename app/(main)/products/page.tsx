@@ -1,12 +1,16 @@
 // File: app/(main)/products/page.tsx
 //
-// --- LATEST 2 UPDATES ---
+// --- LATEST 3 UPDATES ---
 // 1. (FIX - Problem 1) UI DEAD-END: In `ProductListTab`, the product name
 //    is now wrapped in a `<Link>` component, pointing to `products/[id]`.
 // 2. (FIX - Problem 2) BROWSER CRASH: `ProductReportModal` is rewritten.
 //    - It NO LONGER fetches all data or builds the file client-side.
 //    - Its "Download" buttons now call the new `/api/products/export`
 //      route, which builds the file on the server.
+// 3. (FIX - USER REQ) All 3 requested front-end fixes applied:
+//    - `AdjustmentModal` has "Add/Deduct" UI.
+//    - `ProductFormModal` is wrapped in `React.memo` to fix number input bug.
+//    - `ProductViewModal` now shows Sales & Adjustment history tables.
 // -----------------------------------------------------------------------------
 
 "use client";
@@ -1179,10 +1183,6 @@ function InventoryReportsTab() {
 // This component is now REWRITTEN.
 // It no longer fetches data itself. It just builds a URL and
 // calls the new `/api/products/export` endpoint.
-// --- (FIX 2) PRODUCT REPORT MODAL ---
-// This component is now REWRITTEN.
-// It no longer fetches data itself. It just builds a URL and
-// calls the new `/api/products/export` endpoint.
 function ProductReportModal({ onClose }: { onClose: () => void }) {
   const { data: categoriesData } = useSWR("/api/products?tab=categories", fetcher);
   
@@ -1196,10 +1196,6 @@ function ProductReportModal({ onClose }: { onClose: () => void }) {
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  // --- THIS IS THE FIX ---
-  // The argument 'format' has been renamed to 'fileFormat'
-  // to avoid conflict with the 'format' function from date-fns.
-  // This new handler calls the server-side export API
   const handleDownload = async (fileFormat: 'excel' | 'pdf') => {
     setIsLoading(true);
     setErrorMessage(null);
@@ -1208,18 +1204,15 @@ function ProductReportModal({ onClose }: { onClose: () => void }) {
       const token = await auth.currentUser?.getIdToken();
       if (!token) throw new Error("Not authenticated.");
 
-      // 1. Build the query params for the new API
       const params = new URLSearchParams({
-        format: fileFormat, // <-- Use new variable name
+        format: fileFormat,
         currency: reportCurrency,
       });
       if (category) params.set("category", category);
       
-      // These lines will now use the correct 'format' FUNCTION
       if (date?.from) params.set("startDate", format(date.from, "yyyy-MM-dd"));
       if (date?.to) params.set("endDate", format(date.to, "yyyy-MM-dd"));
       
-      // 2. Call the new export API
       const res = await fetch(`/api/products/export?${params.toString()}`, {
         headers: { Authorization: `Bearer ${token}` }
       });
@@ -1229,21 +1222,16 @@ function ProductReportModal({ onClose }: { onClose: () => void }) {
         throw new Error(err.error || "Failed to generate report.");
       }
 
-      // 3. Get the file blob from the response
       const blob = await res.blob();
       const url = window.URL.createObjectURL(blob);
-      
-      // 4. Create a hidden link to trigger the download
       const a = document.createElement("a");
       a.href = url;
-      a.download = `products_report_${reportCurrency}_${dayjs().format("YYYYMMDD")}.${fileFormat}`; // <-- Use new variable name
+      a.download = `products_report_${reportCurrency}_${dayjs().format("YYYYMMDD")}.${fileFormat}`;
       document.body.appendChild(a);
       a.click();
-      
-      // 5. Clean up
       window.URL.revokeObjectURL(url);
       a.remove();
-      onClose(); // Close modal on success
+      onClose();
 
     } catch (err: any) {
       setErrorMessage(err.message);
@@ -1297,7 +1285,6 @@ function ProductReportModal({ onClose }: { onClose: () => void }) {
             </div>
           )}
           
-          {/* These buttons now call handleDownload with the string, which is fine */}
           <div className="flex flex-col sm:flex-row gap-4">
             <button 
               onClick={() => handleDownload('excel')} 
@@ -1322,28 +1309,36 @@ function ProductReportModal({ onClose }: { onClose: () => void }) {
   );
 }
 
-// --- All Other Modals & Helpers (Unchanged) ---
-// (ProductViewModal, ProductFormModal, StockLevelsModal, AdjustmentModal, TransferModal)
-// (CategoryList, Card, KpiCard, Loaders, ErrorDisplay, TableEmptyState, ModalBase, Form Helpers)
-// ...
+// --- (FIX 3) PRODUCT VIEW MODAL (UPDATED) ---
+// Now fetches and displays history tables.
 function ProductViewModal({ product, onClose, displayCurrency }: {
   product: any,
   onClose: () => void,
   displayCurrency: string
 }) {
-  const { data: stockLevels, error } = useSWR(
+  // Original SWR hook for per-warehouse stock levels
+  const { data: stockLevels, error: stockError } = useSWR(
     `/api/products?tab=stock&productId=${product.id}`, 
     fetcher
   );
+
+  // --- (FIX) New SWR hook for hub data (sales, adjustments) ---
+  const { data: hubData, error: hubError, isLoading: hubLoading } = useSWR(
+    `/api/products/${product.id}`, 
+    fetcher
+  );
+  // --- END FIX ---
+
   const allPrices = useMemo(() => {
     const salePrices = product.salePrices || {};
     const costPrices = product.costPrices || {};
     const allCurrencies = new Set([...Object.keys(salePrices), ...Object.keys(costPrices)]);
     return Array.from(allCurrencies);
   }, [product]);
+
   return (
     <ModalBase title="Product Details" onClose={onClose}>
-      <div className="mt-4 space-y-4 max-h-[70vh] overflow-y-auto pr-2">
+      <div className="mt-4 space-y-4 max-h-[80vh] overflow-y-auto pr-2">
         <div className="flex flex-col sm:flex-row gap-4">
           <div className="flex-shrink-0">
             {product.imageUrl ? (
@@ -1394,8 +1389,8 @@ function ProductViewModal({ product, onClose, displayCurrency }: {
           <div>
             <h4 className="font-semibold mb-2">Stock Levels</h4>
             <div className="space-y-2 rounded-lg border p-3 dark:border-gray-600">
-              {error && <p className="text-sm text-red-500">Error loading stock.</p>}
-              {!stockLevels && !error && <TableLoader />}
+              {stockError && <p className="text-sm text-red-500">Error loading stock.</p>}
+              {!stockLevels && !stockError && <TableLoader />}
               {stockLevels && stockLevels.length === 0 && (
                 <p className="text-sm text-gray-400">No stock recorded.</p>
               )}
@@ -1412,17 +1407,44 @@ function ProductViewModal({ product, onClose, displayCurrency }: {
             </div>
           </div>
         </div>
+
+        {/* --- (FIX) ADDED HISTORY TABLES --- */}
+        <div className="mt-4 pt-4 border-t dark:border-gray-700">
+          {hubLoading && <TableLoader />}
+          {hubError && <ErrorDisplay error={hubError} />}
+          {hubData && (
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+              <div>
+                <h4 className="font-semibold mb-2">Recent Sales</h4>
+                <div className="max-h-60 overflow-y-auto">
+                  <SalesHistoryTable sales={hubData.salesHistory} />
+                </div>
+              </div>
+              <div>
+                <h4 className="font-semibold mb-2">Stock Adjustments</h4>
+                <div className="max-h-60 overflow-y-auto">
+                  <AdjustmentsHistoryTable adjustments={hubData.adjustmentHistory} />
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+        {/* --- END FIX --- */}
+
       </div>
     </ModalBase>
   );
 }
+
 type ProductFormErrors = {
   name?: string;
   category?: string;
   warehouseId?: string;
   quantity?: string;
 };
-function ProductFormModal({ productToEdit, onClose, storeId }: { 
+
+// --- (FIX 2) WRAPPED IN React.memo ---
+const ProductFormModal = React.memo(function ProductFormModal({ productToEdit, onClose, storeId }: { 
   productToEdit: any | null, 
   onClose: () => void, 
   storeId: string 
@@ -1750,6 +1772,7 @@ function ProductFormModal({ productToEdit, onClose, storeId }: {
                 value={quantity} 
                 onChange={setQuantity} 
                 error={formErrors.quantity}
+                min="0"
               />
               <div className="flex items-end gap-2">
                 <FormSelect 
@@ -1845,9 +1868,82 @@ function ProductFormModal({ productToEdit, onClose, storeId }: {
       </form>
     </ModalBase>
   );
-}
+});
+// --- END FIX ---
 
-//end of here LLLLLLLLLLLLLLL
+
+// --- (FIX 3) HELPER COMPONENTS (COPIED FROM pag.tsx) ---
+// These are required by the updated ProductViewModal
+const SalesHistoryTable = ({ sales }: { sales: any[] }) => {
+  if (!sales || sales.length === 0) {
+    return <TableEmptyState message="No sales history found for this product." />;
+  }
+  return (
+    <div className="flow-root">
+      <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+        <thead>
+          <tr>
+            <th className="py-3 text-left text-xs font-medium uppercase text-gray-500">Invoice</th>
+            <th className="py-3 text-left text-xs font-medium uppercase text-gray-500">Date</th>
+            <th className="py-3 text-left text-xs font-medium uppercase text-gray-500">Qty</th>
+            <th className="py-3 text-left text-xs font-medium uppercase text-gray-500">Price</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
+          {sales.map((sale) => (
+            <tr key={sale.id}>
+              <td className="py-4 text-sm font-medium">
+                <Link href={`/sales/${sale.id}`} className="text-blue-600 hover:underline">
+                  {sale.invoiceId}
+                </Link>
+              </td>
+              <td className="py-4 text-sm">{dayjs(sale.createdAt).format("DD MMM YYYY")}</td>
+              <td className="py-4 text-sm font-bold">{sale.quantitySold}</td>
+              <td className="py-4 text-sm">
+                {formatCurrency(sale.salePrice, sale.currency)}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+};
+
+const AdjustmentsHistoryTable = ({ adjustments }: { adjustments: any[] }) => {
+  if (!adjustments || adjustments.length === 0) {
+    return <TableEmptyState message="No stock adjustments found." />;
+  }
+  return (
+    <div className="flow-root">
+      <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+        <thead>
+          <tr>
+            <th className="py-3 text-left text-xs font-medium uppercase text-gray-500">Reason</th>
+            <th className="py-3 text-left text-xs font-medium uppercase text-gray-500">Date</th>
+            <th className="py-3 text-left text-xs font-medium uppercase text-gray-500">Change</th>
+            <th className="py-3 text-left text-xs font-medium uppercase text-gray-500">Warehouse</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
+          {adjustments.map((adj) => (
+            <tr key={adj.id}>
+              <td className="py-4 text-sm font-medium">{adj.reason}</td>
+              <td className="py-4 text-sm">{dayjs(adj.timestamp).format("DD MMM YYYY")}</td>
+              <td className={`py-4 text-sm font-bold ${adj.change > 0 ? 'text-green-600' : 'text-red-600'}`}>
+                {adj.change > 0 ? `+${adj.change}` : adj.change}
+              </td>
+              <td className="py-4 text-sm">{adj.warehouseName}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+};
+// --- END FIX 3 HELPERS ---
+
+
 function StockLevelsModal({ productId, onClose }: { productId: string, onClose: () => void }) {
   const { data, error, isLoading } = useSWR(`/api/products?tab=stock&productId=${productId}`, fetcher);
   return (
@@ -1866,48 +1962,86 @@ function StockLevelsModal({ productId, onClose }: { productId: string, onClose: 
     </ModalBase>
   );
 }
+
+// --- (FIX 1) ADJUSTMENT MODAL (UPDATED) ---
+// Now has "Add/Deduct" UI and logic
 function AdjustmentModal({ products, warehouses, onClose }: { products: any[], warehouses: any[], onClose: () => void }) {
   const [selectedProduct, setSelectedProduct] = useState("");
   const [selectedWarehouse, setSelectedWarehouse] = useState("");
-  const [change, setChange] = useState("");
+  
+  // --- (FIX) Renamed 'change' to 'quantity' and added 'adjustmentType' ---
+  const [adjustmentType, setAdjustmentType] = useState<"add" | "deduct">("add");
+  const [quantity, setQuantity] = useState("");
+  // --- END FIX ---
+
   const [reason, setReason] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const { mutate } = useSWRConfig();
   const [errors, setErrors] = useState<any>({});
+  
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrors({});
+
+    // --- (FIX) Updated validation ---
     if (!selectedProduct) { setErrors({ product: "Please select a product." }); return; }
     if (!selectedWarehouse) { setErrors({ warehouse: "Please select a warehouse." }); return; }
-    if (!change || Number(change) === 0) { setErrors({ change: "Please enter a valid change amount." }); return; }
+    if (!quantity || Number(quantity) <= 0) { 
+      setErrors({ quantity: "Please enter a valid, positive quantity." }); 
+      return; 
+    }
     if (!reason) { setErrors({ reason: "Please provide a reason." }); return; }
+    // --- END FIX ---
+
     setIsSubmitting(true);
+    
+    // --- (FIX) Calculate the final change amount ---
+    const changeAmount = adjustmentType === 'add' ? Number(quantity) : -Number(quantity);
+    // --- END FIX ---
+
     const warehouse = warehouses.find(w => w.id === selectedWarehouse);
     const user = auth.currentUser;
     if (!user || !warehouse) { setIsSubmitting(false); return; }
     const token = await user.getIdToken();
-    await fetch("/api/products", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-      body: JSON.stringify({
-        type: "adjustment",
-        productId: selectedProduct,
-        warehouseId: warehouse.id,
-        warehouseName: warehouse.name,
-        change: Number(change),
-        reason,
-      }),
-    });
-    mutate("/api/products?tab=adjustments");
-    mutate((key: any) => typeof key === 'string' && key.startsWith('/api/products?tab=products'), undefined, { revalidate: true });
-    mutate("/api/products?tab=stock");
-    mutate(`/api/products?tab=stock&productId=${selectedProduct}`);
-    setIsSubmitting(false);
-    onClose();
+    
+    try {
+      const res = await fetch("/api/products", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          type: "adjustment",
+          productId: selectedProduct,
+          warehouseId: warehouse.id,
+          warehouseName: warehouse.name,
+          change: changeAmount, // <-- (FIX) Send the calculated amount
+          reason,
+        }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || "Failed to save adjustment.");
+      }
+
+      // Re-fetch all data (this is correct)
+      mutate("/api/products?tab=adjustments");
+      mutate((key: any) => typeof key === 'string' && key.startsWith('/api/products?tab=products'), undefined, { revalidate: true });
+      mutate("/api/products?tab=stock");
+      mutate(`/api/products?tab=stock&productId=${selectedProduct}`);
+      setIsSubmitting(false);
+      onClose();
+
+    } catch (error: any) {
+      console.error(error.message);
+      setErrors({ general: error.message || "An unknown error occurred." });
+      setIsSubmitting(false);
+    }
   };
   return (
     <ModalBase title="New Stock Adjustment" onClose={onClose}>
       <form onSubmit={handleSubmit} className="mt-4 space-y-4">
+        {errors.general && <ErrorDisplay error={errors.general} />}
+        
         <FormSelect label="Product" value={selectedProduct} onChange={setSelectedProduct} error={errors.product}>
           <option value="">-- Select Product --</option>
           {products.map((p: any) => <option key={p.id} value={p.id}>{p.name}</option>)}
@@ -1916,8 +2050,54 @@ function AdjustmentModal({ products, warehouses, onClose }: { products: any[], w
           <option value="">-- Select Warehouse --</option>
           {warehouses.map((w: any) => <option key={w.id} value={w.id}>{w.name}</option>)}
         </FormSelect>
-        <FormInput label="Change (+10 or -5)" type="number" value={change} onChange={setChange} error={errors.change} />
-        <FormInput label="Reason (e.g., 'Initial Stock', 'Damaged')" value={reason} onChange={setReason} error={errors.reason} />
+        
+        {/* --- (FIX) ADDED ADJUSTMENT TYPE UI --- */}
+        <div>
+          <label className="mb-1 block text-sm font-medium">Adjustment Type</label>
+          <div className="flex gap-4">
+            <label className="flex items-center gap-2">
+              <input 
+                type="radio"
+                name="adjustmentType"
+                value="add"
+                checked={adjustmentType === 'add'}
+                onChange={() => setAdjustmentType('add')}
+                className="h-4 w-4 text-blue-600"
+              />
+              Add to Stock (+)
+            </label>
+            <label className="flex items-center gap-2">
+              <input 
+                type="radio"
+                name="adjustmentType"
+                value="deduct"
+                checked={adjustmentType === 'deduct'}
+                onChange={() => setAdjustmentType('deduct')}
+                className="h-4 w-4 text-blue-600"
+              />
+              Deduct from Stock (-)
+            </label>
+          </div>
+        </div>
+        {/* --- END FIX --- */}
+        
+        <FormInput 
+          label="Quantity (Positive Number)" 
+          type="number" 
+          value={quantity} 
+          onChange={setQuantity} 
+          error={errors.quantity}
+          min="0"
+          placeholder="e.g., 10"
+        />
+        
+        <FormInput 
+          label="Reason (e.g., 'Initial Stock', 'Damaged')" 
+          value={reason} 
+          onChange={setReason} 
+          error={errors.reason} 
+        />
+        
         <div className="flex justify-end gap-3 pt-4">
           <button type="button" onClick={onClose} className="rounded-lg border px-4 py-2 text-sm dark:border-gray-600">Cancel</button>
           <button type="submit" disabled={isSubmitting} className="rounded-lg bg-blue-600 px-4 py-2 text-sm text-white disabled:opacity-50">
@@ -1928,6 +2108,8 @@ function AdjustmentModal({ products, warehouses, onClose }: { products: any[], w
     </ModalBase>
   );
 }
+// --- END FIX ---
+
 function TransferModal({ products, warehouses, onClose }: { products: any[], warehouses: any[], onClose: () => void }) {
   const [selectedProduct, setSelectedProduct] = useState("");
   const [fromWarehouse, setFromWarehouse] = useState("");
@@ -1936,6 +2118,7 @@ function TransferModal({ products, warehouses, onClose }: { products: any[], war
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errors, setErrors] = useState<any>({});
   const { mutate } = useSWRConfig();
+  
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrors({});
@@ -1944,31 +2127,47 @@ function TransferModal({ products, warehouses, onClose }: { products: any[], war
     if (!toWarehouse) { setErrors({ to: "Please select a destination warehouse." }); return; }
     if (fromWarehouse === toWarehouse) { setErrors({ to: "Cannot transfer to and from the same warehouse." }); return; }
     if (!quantity || Number(quantity) <= 0) { setErrors({ quantity: "Please enter a valid quantity." }); return; }
+    
     setIsSubmitting(true);
     const fromWH = warehouses.find(w => w.id === fromWarehouse);
     const toWH = warehouses.find(w => w.id === toWarehouse);
     const user = auth.currentUser;
     if (!user || !fromWH || !toWH) { setIsSubmitting(false); return; }
-    const token = await user.getIdToken();
-    await fetch("/api/products", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-      body: JSON.stringify({
-        type: "transfer",
-        productId: selectedProduct,
-        fromWarehouse: { id: fromWH.id, name: fromWH.name },
-        toWarehouse: { id: toWH.id, name: toWH.name },
-        quantity: Number(quantity),
-      }),
-    });
-    mutate("/api/products?tab=adjustments");
-    mutate(`/api/products?tab=stock&productId=${selectedProduct}`);
-    setIsSubmitting(false);
-    onClose();
+    
+    try {
+      const token = await user.getIdToken();
+      const res = await fetch("/api/products", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          type: "transfer",
+          productId: selectedProduct,
+          fromWarehouse: { id: fromWH.id, name: fromWH.name },
+          toWarehouse: { id: toWH.id, name: toWH.name },
+          quantity: Number(quantity),
+        }),
+      });
+      
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || "Failed to complete transfer.");
+      }
+
+      mutate("/api/products?tab=adjustments");
+      mutate(`/api/products?tab=stock&productId=${selectedProduct}`);
+      setIsSubmitting(false);
+      onClose();
+
+    } catch (error: any) {
+      console.error(error.message);
+      setErrors({ general: error.message || "An unknown error occurred." });
+      setIsSubmitting(false);
+    }
   };
   return (
     <ModalBase title="New Stock Transfer" onClose={onClose}>
       <form onSubmit={handleSubmit} className="mt-4 space-y-4">
+        {errors.general && <ErrorDisplay error={errors.general} />}
         <FormSelect label="Product" value={selectedProduct} onChange={setSelectedProduct} error={errors.product}>
           <option value="">-- Select Product --</option>
           {products.map((p: any) => <option key={p.id} value={p.id}>{p.name}</option>)}
@@ -1981,7 +2180,14 @@ function TransferModal({ products, warehouses, onClose }: { products: any[], war
           <option value="">-- Select Warehouse --</option>
           {warehouses.map((w: any) => <option key={w.id} value={w.id}>{w.name}</option>)}
         </FormSelect>
-        <FormInput label="Quantity to Transfer" type="number" value={quantity} onChange={setQuantity} error={errors.quantity} />
+        <FormInput 
+          label="Quantity to Transfer" 
+          type="number" 
+          value={quantity} 
+          onChange={setQuantity} 
+          error={errors.quantity}
+          min="0"
+        />
         <div className="flex justify-end gap-3 pt-4">
           <button type="button" onClick={onClose} className="rounded-lg border px-4 py-2 text-sm dark:border-gray-600">Cancel</button>
           <button type="submit" disabled={isSubmitting} className="rounded-lg bg-blue-600 px-4 py-2 text-sm text-white disabled:opacity-50">
@@ -1992,6 +2198,9 @@ function TransferModal({ products, warehouses, onClose }: { products: any[], war
     </ModalBase>
   );
 }
+
+// ... All remaining helper components (CategoryList, Card, KpiCard, etc.) are unchanged ...
+
 function CategoryList({ title, type, items, onAdd, onDelete }: {
   title: string,
   type: "category" | "brand",
@@ -2092,13 +2301,13 @@ const TableLoader = () => (
     <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
   </div>
 );
-const ErrorDisplay = ({ error }: { error: Error }) => (
+const ErrorDisplay = ({ error }: { error: Error | string }) => (
   <div className="rounded-lg border border-red-300 bg-red-50 p-4 text-red-700 dark:border-red-700 dark:bg-red-900/20 dark:text-red-400">
     <div className="flex items-center gap-3">
       <AlertTriangle className="h-5 w-5" />
       <div>
-        <h3 className="font-semibold">Error Loading Data</h3>
-        <p className="text-sm">{error.message}</p>
+        <h3 className="font-semibold">Error</h3>
+        <p className="text-sm">{typeof error === 'string' ? error : error.message}</p>
       </div>
     </div>
   </div>
@@ -2111,7 +2320,7 @@ const TableEmptyState = ({ message }: { message: string }) => (
 );
 const ModalBase = ({ title, onClose, children }: { title: string, onClose: () => void, children: React.ReactNode }) => (
   <div 
-    className="fixed inset-0 z-50 flex items-center justify-center p-4"
+    className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50"
     onClick={onClose}
   >
     <div 

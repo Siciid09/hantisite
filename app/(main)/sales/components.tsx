@@ -1,6 +1,6 @@
 // File: app/(main)/sales/components.tsx
 //
-// --- FINAL VERSION (FIXED) ---
+// --- FINAL VERSION (MODIFIED FOR DELETE) ---
 // 1. (FIX) La beddelay "EURO" oo laga dhigay "EUR" si loo saxo
 //    'Invalid currency code' error.
 // 2. (FIX) Sidoo kale 'formatCurrency' function-ka ayaa laga
@@ -10,6 +10,13 @@
 // 4. (FIX) 'ViewSaleModal' now reads 'sale.invoiceCurrency', 'sale.totalPaid',
 //    'sale.debtAmount', and 'sale.paymentLines' to show correct data.
 // 5. (FIX) 'NewReturnModal' now reads 'sale.invoiceCurrency' when a sale is selected.
+// --- (ADMIN DELETE MODIFICATIONS) ---
+// 6. (NEW) Added 'Trash2' to lucide imports.
+// 7. (NEW) Added 'DeleteConfirmModal' component and exported it.
+// 8. (MOD) 'ActionsMenu' now accepts 'userRole' and 'onDelete' and shows a conditional delete button.
+// 9. (MOD) 'SalesTable' now accepts 'userRole' and 'onDelete' and passes them to 'ActionsMenu'.
+// 10. (MOD) 'SalesDashboard', 'SalesDataContainer', 'SalesHistory', 'SalesInvoices'
+//     all updated to pass down 'userRole' and 'onDeleteSale' props.
 // -----------------------------------------------------------------------------
 
 "use client";
@@ -26,7 +33,7 @@ import {
   Search, SlidersHorizontal, ChevronLeft, ChevronRight,
   MoreVertical, X, AlertTriangle, FileText, CheckCircle, Clock, 
   XCircle, Info, TrendingUp, Send, Undo, FileWarning, Printer,
-  Loader2, DollarSign, Receipt, CreditCard, Plus
+  Loader2, DollarSign, Receipt, CreditCard, Plus, Trash2 // <-- (NEW) Added Trash2
 } from "lucide-react"; 
 import { Dialog, Transition, Popover } from "@headlessui/react";
 import { generateInvoicePdf } from "@/lib/pdfService"; 
@@ -257,7 +264,7 @@ const getPaymentSummary = (methods: any[]) => {
   return methods.map(m => m.method.toUpperCase()).join(', ');
 };
 
-export const SalesTable = ({ sales, isLoading, currency, onView, onPrint, onRefund }: any) => {
+export const SalesTable = ({ sales, isLoading, currency, onView, onPrint, onRefund, userRole, onDelete }: any) => {
   if (isLoading) return <TableLoadingSkeleton />;
   if (!sales || sales.length === 0) return <TableEmptyState message="No sales found matching your filters." />;
   
@@ -303,6 +310,8 @@ export const SalesTable = ({ sales, isLoading, currency, onView, onPrint, onRefu
                       onView={() => onView(sale)} 
                       onPrint={() => onPrint(sale)}
                       onRefund={() => onRefund(sale)}
+                      onDelete={() => onDelete(sale)} // <-- (NEW) Pass handler
+                      userRole={userRole} // <-- (NEW) Pass role
                     />
                   </td>
                 </tr>
@@ -364,12 +373,14 @@ export const ReturnsTable = ({ returns, isLoading, currency, onView }: any) => {
 };
 
 
-// --- Action Menu for Table (FIXED) ---
-export const ActionsMenu = ({ saleId, onView, onPrint, onRefund }: { 
+// --- Action Menu for Table (MODIFIED) ---
+export const ActionsMenu = ({ saleId, onView, onPrint, onRefund, onDelete, userRole }: { 
   saleId: string, 
   onView: () => void, 
   onPrint: () => void,
-  onRefund: () => void 
+  onRefund: () => void,
+  onDelete: () => void, // <-- (NEW)
+  userRole: string     // <-- (NEW)
 }) => {
   return (
     <Popover className="relative">
@@ -407,6 +418,22 @@ export const ActionsMenu = ({ saleId, onView, onPrint, onRefund }: {
             >
               Refund
             </button>
+
+            {/* --- (NEW) Admin-only Delete Button --- */}
+            {userRole === 'admin' && (
+              <>
+                <div className="my-1 h-px bg-gray-100 dark:bg-gray-700" />
+                <button
+                  onClick={onDelete}
+                  className="flex items-center gap-2 w-full px-4 py-2 text-left text-sm text-red-600 hover:bg-gray-100 dark:text-red-400 dark:hover:bg-gray-700"
+                >
+                  <Trash2 className="h-4 w-4" />
+                  Delete
+                </button>
+              </>
+            )}
+            {/* --- (END NEW) --- */}
+            
           </div>
         </Popover.Panel>
       </Transition>
@@ -1067,10 +1094,70 @@ export const CreateInvoiceModal = ({ isOpen, onClose, onPrint, globalFilters }: 
 };
 
 
+// --- (NEW) Delete Confirmation Modal ---
+export const DeleteConfirmModal = ({ 
+  isOpen, 
+  onClose, 
+  onConfirm, 
+  isDeleting, 
+  saleInvoiceId 
+}: { 
+  isOpen: boolean, 
+  onClose: () => void, 
+  onConfirm: () => void, 
+  isDeleting: boolean, 
+  saleInvoiceId: string 
+}) => {
+  return (
+    <TransitionedModal isOpen={isOpen} onClose={onClose} size="md">
+      <Dialog.Title as="h3" className="text-lg font-medium leading-6 text-gray-900 dark:text-white">
+        Delete Sale
+      </Dialog.Title>
+      <div className="mt-4">
+        <div className="flex items-start gap-3">
+          <div className="flex-shrink-0">
+            <AlertTriangle className="h-10 w-10 text-red-500" />
+          </div>
+          <div>
+            <p className="text-sm text-gray-600 dark:text-gray-300">
+              Are you sure you want to permanently delete (void) this sale?
+            </p>
+            <p className="mt-1 text-sm font-semibold text-gray-800 dark:text-gray-100">
+              Invoice #: {saleInvoiceId}
+            </p>
+            <p className="mt-3 text-xs text-gray-500 dark:text-gray-400">
+              This action will restock the items, reverse any income, and cancel any outstanding debts associated with this sale. This cannot be undone.
+            </p>
+          </div>
+        </div>
+      </div>
+      <div className="mt-6 flex justify-end gap-3">
+        <button
+          type="button"
+          className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 disabled:opacity-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
+          onClick={onClose}
+          disabled={isDeleting}
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          className="flex min-w-[100px] items-center justify-center rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-red-700 disabled:opacity-50"
+          onClick={onConfirm}
+          disabled={isDeleting}
+        >
+          {isDeleting ? <Loader2 className="h-4 w-4 animate-spin" /> : "Yes, Delete"}
+        </button>
+      </div>
+    </TransitionedModal>
+  );
+};
+
+
 // =============================================================================
 // **NEW: Self-Contained SalesDashboard Component**
 // =============================================================================
-export const SalesDashboard = ({ filters, onViewSale, onPrintSale, onRefund }: any) => {
+export const SalesDashboard = ({ filters, onViewSale, onPrintSale, onRefund, userRole, onDeleteSale }: any) => {
   const [page, setPage] = useState(1);
   
   const queryString = useMemo(() => {
@@ -1122,6 +1209,8 @@ export const SalesDashboard = ({ filters, onViewSale, onPrintSale, onRefund }: a
           onView={onViewSale}
           onPrint={onPrintSale}
           onRefund={onRefund} 
+          userRole={userRole} // <-- (NEW) Pass prop
+          onDelete={onDeleteSale} // <-- (NEW) Pass prop
         />
         <Pagination pagination={data?.pagination} onPageChange={handlePageChange} />
       </Card>
@@ -1133,7 +1222,7 @@ export const SalesDashboard = ({ filters, onViewSale, onPrintSale, onRefund }: a
 // ** FIX: Hoisting - Define History & Invoices components BEFORE DataContainer
 // =============================================================================
 
-const SalesHistory = ({ data, isLoading, currency, onPageChange, onViewSale, onPrintSale, onRefund }: any) => {
+const SalesHistory = ({ data, isLoading, currency, onPageChange, onViewSale, onPrintSale, onRefund, userRole, onDeleteSale }: any) => {
   return (
     <Card>
       <h3 className="text-lg font-semibold dark:text-white">Sales History</h3>
@@ -1147,13 +1236,15 @@ const SalesHistory = ({ data, isLoading, currency, onPageChange, onViewSale, onP
         onView={onViewSale}
         onPrint={onPrintSale}
         onRefund={onRefund}
+        userRole={userRole} // <-- (NEW) Pass prop
+        onDelete={onDeleteSale} // <-- (NEW) Pass prop
       />
       <Pagination pagination={data?.pagination} onPageChange={onPageChange} />
     </Card>
   );
 };
 
-const SalesInvoices = ({ data, isLoading, currency, onPageChange, onViewSale, onPrintSale, onCreateInvoice, onRefund }: any) => {
+const SalesInvoices = ({ data, isLoading, currency, onPageChange, onViewSale, onPrintSale, onCreateInvoice, onRefund, userRole, onDeleteSale }: any) => {
   return (
     <div className="space-y-6">
       <Card>
@@ -1179,6 +1270,8 @@ const SalesInvoices = ({ data, isLoading, currency, onPageChange, onViewSale, on
           onView={onViewSale}
           onPrint={onPrintSale}
           onRefund={onRefund}
+          userRole={userRole} // <-- (NEW) Pass prop
+          onDelete={onDeleteSale} // <-- (NEW) Pass prop
         />
         <Pagination pagination={data?.pagination} onPageChange={onPageChange} />
       </Card>
@@ -1189,7 +1282,7 @@ const SalesInvoices = ({ data, isLoading, currency, onPageChange, onViewSale, on
 // =============================================================================
 // **NEW: Data Container for History & Invoices**
 // =============================================================================
-export const SalesDataContainer = ({ filters, view, onViewSale, onPrintSale, onRefund, onCreateInvoice }: any) => {
+export const SalesDataContainer = ({ filters, view, onViewSale, onPrintSale, onRefund, onCreateInvoice, userRole, onDeleteSale }: any) => {
   const [page, setPage] = useState(1);
   
   const queryString = useMemo(() => {
@@ -1224,6 +1317,8 @@ export const SalesDataContainer = ({ filters, view, onViewSale, onPrintSale, onR
         onViewSale={onViewSale}
         onPrintSale={onPrintSale}
         onRefund={onRefund}
+        userRole={userRole} // <-- (NEW) Pass prop
+        onDeleteSale={onDeleteSale} // <-- (NEW) Pass prop
       />
     );
   }
@@ -1239,6 +1334,8 @@ export const SalesDataContainer = ({ filters, view, onViewSale, onPrintSale, onR
         onPrintSale={onPrintSale}
         onCreateInvoice={onCreateInvoice}
         onRefund={onRefund}
+        userRole={userRole} // <-- (NEW) Pass prop
+        onDeleteSale={onDeleteSale} // <-- (NEW) Pass prop
       />
     );
   }

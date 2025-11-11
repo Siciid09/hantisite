@@ -1,99 +1,57 @@
-Here’s your list of issues **reorganized and numbered by section** for clarity 👇
+problems new
+salary should deduct as expense 
+payment methods should be usd sos slsh euro ksh birr
+payment methods should be linked to dropdown currency
+usd > shows as method >cash, bank, zaad, edahab, somnet, evc pluse, sahal,other
+sos> shows method cash bamk others
+slsh> shows cash, bank, edahab, zaad, other
+birr> cash, bank, ebirr, other
+ksh>bank, cash, other, m-pessa
+euro> cash, bank, other
 
----
-dashbaord neeeeeeeeeeeeeeeeds add income expenses
+1: products 
+here are some problmes produc pages have 
+adjsustments not adding if you try to adjust and save it deosnt make any changes like if i try to select
+ warehouse product and ading quanty and the previews qunaty was 0 its still 0 no change o save button
+edit should  save also there should be also deduct and add dropdown - + icon i mean adjustments both take deduct and increase
+so in the feild to type numbers there should be buttons to select with tick modern button or radio which saves this as + pr - this is required
 
-### 🧾 **1. Sales Page**
 
-1. Currency name shows as **undefined**.
-2. **Invoice problem** (not specified, likely generation or data error).
-3. **Product stock value** not showing.
-4. **Delete button** should be available.
-5. **Total sales report** shows `000000`.
+form: numbers auto change before save after inseting e,g you put 4 it becomes 3
+report doesnt completly work and dynamic 
+no product history
 
----
+new sales
+user can say it paid mor then total
+sales neeeeed to have delete button only for admins
 
-### 🛒 **2. Purchases Page**
+2:purchases 
 
-6. **Purchase form problem** (likely form submission or validation error).
-7. **Download single report** not ready.
-8. **Download all reports** has no data.
-9. **Delete function** should work properly.
+form shows auto number select change 3 to 2
 
----
 
-### 🚚 **3. Suppliers Page**
+3:suppliers
+need to have delete button which also deletes their debt
 
-10. **Supplier list money** not showing.
-11. **View problem** (possibly modal or detail view not working).
-12. Console error:
+paymetnt methods not compelte listed
 
-    ```
-    Uncaught TypeError: Cannot read properties of undefined (reading 'currentPage')
-    ```
 
-    Likely pagination or data mapping issue.
+income expenses 
 
----
+payment methods error
+expense show na for  xpense Breakdow
 
-### 💰 **4. Income & Expense / Cash Management**
 
-13. **Cash on hand**, **cash payments**, and **bank payments** should display correctly.
-14. **Digital wallet** should have a **dropdown based on selected currency** and show **each wallet’s balance**.
-15. **Account payable** section should show **amount owed**.
+report custom report remove 
 
----
+others
 
-### 📊 **5. Income Tab**
-
-16. Unknown **method and category** values appearing.
-
----
-
-### 💳 **6. Payments Tab**
-
-17. Error:
-
-    ```
-    Error Loading Financial Data
-    Invalid tab: Payments
-    ```
-18. Should display **each card’s balance** when the selected currency supports it.
-
----
-
-### 📈 **7. Reports Page**
-
-19. **Total debts** not showing.
-20. **Sales tab** shows `000000`.
-
----
-
-### 👥 **8. HR Page**
-
-21. Note: Sales analytics depend on `userId` field in sales collection.
-22. **Staff name unknown** (missing linkage between userId and name).
-23. Error:
-
-    ```
-    Name, Email, Role, and Department are required.
-    ```
-24. Should **save new login data** (newly registered/logged-in staff).
-25. Should have a **“Pay Employee” button** that asks for **amount input**.
-
----
-
-### 💸 **9. Debtors Page**
-
-26. Firestore error:
-
-    ```
-    transactions require all reads to be executed before all writes
-    ```
-27. **Form** should allow **selecting existing or adding new debtor**.
-28. **History not loading** – shows “Could not load history.”
-29. **No payment history found** – likely due to missing query or filter logic.
-
----
-
-Would you like me to make this into a **developer task list (with priorities and fixes suggested)** next? That would make it easier to fix issue by issue.
+allll payment methods should be checked and create method
+w
+alll rules for firebase should be checked
+all roles should be fixed
+all settings should be fixed
+app and web same
+main super admin
+comunitcatipon 
+feedback a=super admin page should see all info
