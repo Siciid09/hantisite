@@ -3,7 +3,7 @@
 // -----------------------------------------------------------------------------
 // File: app/(main)/settings/page.tsx
 // Description: The main "Settings" page.
-// Features a 3-part tabbed interface for Profile, Help, and Feedback.
+// Features a 2-part tabbed interface for Help and Feedback.
 // -----------------------------------------------------------------------------
 
 import React, { useState, FormEvent, Fragment } from "react";
@@ -16,10 +16,8 @@ dayjs.extend(relativeTime);
 
 // --- Icons ---
 import {
-  User,
   MessageSquare,
   Star,
-  LogOut,
   Send,
   Loader2,
   AlertTriangle,
@@ -47,7 +45,8 @@ const fetcher = async (url: string) => {
 // --- (B) Main Settings Page Component ---
 export default function SettingsModulePage() {
   const { user, loading: authLoading } = useAuth();
-  const [activeTab, setActiveTab] = useState("Profile");
+  // Default tab changed to "Help & Support"
+  const [activeTab, setActiveTab] = useState("Help & Support");
 
   if (authLoading) {
     return <LoadingSpinner />;
@@ -64,7 +63,7 @@ export default function SettingsModulePage() {
       <header className="mb-6">
         <h1 className="text-3xl font-bold">Settings & Support</h1>
         <p className="text-gray-500 dark:text-gray-400">
-          Manage your profile, get help, and send us feedback.
+          Get help and send us feedback.
         </p>
       </header>
 
@@ -73,7 +72,7 @@ export default function SettingsModulePage() {
 
       {/* --- Tab Content --- */}
       <div className="mt-6">
-        {activeTab === "Profile" && <ProfileTab user={user} />}
+        {/* ProfileTab removed */}
         {activeTab === "Help & Support" && <HelpSupportTab />}
         {activeTab === "Feedback" && <FeedbackTab />}
       </div>
@@ -84,7 +83,7 @@ export default function SettingsModulePage() {
 // --- (C) Tab Navigation Component ---
 
 const TABS = [
-  { name: "Profile", icon: User },
+  // "Profile" tab removed
   { name: "Help & Support", icon: MessageSquare },
   { name: "Feedback", icon: Star },
 ];
@@ -115,44 +114,7 @@ const TabNav = ({ activeTab, onTabChange }: { activeTab: string, onTabChange: (t
 
 // --- (D) Tab Content Components ---
 
-// --- TAB 1: Profile ---
-function ProfileTab({ user }: { user: any }) {
-  const [name, setName] = useState(user.displayName || "");
-  const [isSubmitting, setIsSubmitting] = useState(false);
-
-  const handleUpdateProfile = async (e: FormEvent) => {
-    e.preventDefault();
-    setIsSubmitting(true);
-    // TODO: Implement a POST/PUT to '/api/users' to update the name
-    // in auth and Firestore
-    alert("Profile update logic not yet implemented.");
-    setIsSubmitting(false);
-  };
-
-  return (
-    <Card className="max-w-2xl">
-      <h3 className="text-lg font-semibold">Your Profile</h3>
-      <form onSubmit={handleUpdateProfile} className="mt-4 space-y-4">
-        <FormInput label="Display Name" value={name} onChange={setName} />
-        <FormInput label="Email Address" value={user.email} onChange={() => {}} disabled />
-        
-        <div className="flex justify-between gap-4 pt-2">
-          <button
-            type="button"
-            onClick={() => auth.signOut()}
-            className="flex items-center gap-2 rounded-lg border border-red-500 px-4 py-2 text-sm font-medium text-red-500 hover:bg-red-50 dark:hover:bg-red-900/50"
-          >
-            <LogOut className="h-4 w-4" />
-            Sign Out
-          </button>
-          <button type="submit" disabled={isSubmitting} className="rounded-lg bg-blue-600 px-4 py-2 text-sm text-white disabled:opacity-50">
-            {isSubmitting ? <Loader2 className="animate-spin" /> : "Save Changes"}
-          </button>
-        </div>
-      </form>
-    </Card>
-  );
-}
+// --- TAB 1: Profile (REMOVED) ---
 
 // --- TAB 2: Help & Support ---
 function HelpSupportTab() {
@@ -258,7 +220,7 @@ function SupportTicketList({ onSelectTicket }: { onSelectTicket: (ticketId: stri
             <div>
               <p className="font-semibold">{ticket.subject}</p>
               <p className="text-sm text-gray-500">
-                {dayjs(ticket.createdAt.toDate()).fromNow()}
+                {dayjs(ticket.createdAt).fromNow()}
               </p>
             </div>
             <div className="flex items-center gap-2">
@@ -289,7 +251,6 @@ const handleReply = async (e: FormEvent) => {
     e.preventDefault();
     if (!replyText) return;
 
-    // ✅ ADD THIS CHECK
     if (!auth.currentUser) {
       alert("You are not signed in.");
       return;
@@ -297,7 +258,7 @@ const handleReply = async (e: FormEvent) => {
 
     setIsSubmitting(true);
     try {
-      const token = await auth.currentUser.getIdToken(); // <-- No error now
+      const token = await auth.currentUser.getIdToken();
       await fetch("/api/support", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
@@ -329,8 +290,6 @@ const handleReply = async (e: FormEvent) => {
           {error && <ErrorDisplay error={error} />}
           {data?.map((msg: any) => {
           const isUser = msg.senderId === user?.uid;
-            // Admin senderId might be different, e.g., 'admin_user_id'
-            // For now, we assume if it's not the user, it's admin/support
             return (
               <div key={msg.id} className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
                 <div className={`max-w-xs rounded-lg px-4 py-2 lg:max-w-md ${
@@ -338,8 +297,7 @@ const handleReply = async (e: FormEvent) => {
                 }`}>
                   <p className="text-sm">{msg.text}</p>
                   <p className={`text-xs opacity-70 ${isUser ? 'text-blue-200' : 'text-gray-500'} mt-1`}>
-                
-                {msg.senderName} &bull; {dayjs(msg.sentAt.toDate()).fromNow()}
+                    {msg.senderName} &bull; {dayjs(msg.sentAt).fromNow()}
                   </p>
                 </div>
               </div>
@@ -495,7 +453,7 @@ const TableEmptyState = ({ message }: { message: string }) => (
 );
 
 const FormInput = ({ label, value, onChange, ...props }: {
-  label: string,
+  label:string,
   value: string,
   onChange: (val: string) => void,
   [key: string]: any

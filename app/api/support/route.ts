@@ -42,7 +42,17 @@ export async function GET(request: NextRequest) {
           .where("userId", "==", uid)
           .orderBy("createdAt", "desc")
           .get();
-        data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        
+        // ✅ UPDATED: Convert Timestamp to standard ISO string
+        data = snapshot.docs.map(doc => {
+          const docData = doc.data();
+          return {
+            id: doc.id,
+            ...docData,
+            // Convert timestamp to a string the client can read
+            createdAt: docData.createdAt.toDate().toISOString(), 
+          };
+        });
         break;
       }
 
@@ -63,7 +73,17 @@ export async function GET(request: NextRequest) {
         const snapshot = await ticketRef.collection("messages")
           .orderBy("sentAt", "asc")
           .get();
-        data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        
+        // ✅ UPDATED: Convert Timestamp to standard ISO string
+        data = snapshot.docs.map(doc => {
+          const docData = doc.data();
+          return {
+            id: doc.id,
+            ...docData,
+            // Convert timestamp to a string the client can read
+            sentAt: docData.sentAt.toDate().toISOString(),
+          };
+        });
         break;
       }
 
@@ -102,7 +122,7 @@ export async function POST(request: NextRequest) {
     // 2. Get Request Body
     const body = await request.json();
     const type = body.type;
-    const now = Timestamp.now();
+    const now = Timestamp.now(); // Keep this as a Timestamp for saving to DB
 
     // 3. Route to correct create logic
     switch (type) {
@@ -125,7 +145,7 @@ export async function POST(request: NextRequest) {
           subject,
           message, // Storing first message for quick preview
           status: "open",
-          createdAt: now,
+          createdAt: now, // Save as Timestamp
         });
 
         // 2. Create the first message in the sub-collection
@@ -134,7 +154,7 @@ export async function POST(request: NextRequest) {
           senderId: uid,
           senderName: userName,
           text: message,
-          sentAt: now,
+          sentAt: now, // Save as Timestamp
         });
         
         await batch.commit();
@@ -161,7 +181,7 @@ export async function POST(request: NextRequest) {
           senderId: uid,
           senderName: userName,
           text: text,
-          sentAt: now,
+          sentAt: now, // Save as Timestamp
         });
         
         // Re-open the ticket if it was closed
@@ -185,7 +205,7 @@ export async function POST(request: NextRequest) {
           storeId: storeId,
           rating: Number(rating),
           message: message || "",
-          createdAt: now,
+          createdAt: now, // Save as Timestamp
         });
         return NextResponse.json({ success: true }, { status: 201 });
       }
