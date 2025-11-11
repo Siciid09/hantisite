@@ -1,61 +1,43 @@
-// File: app/(main)/layout.tsx (COMPLETE AND FINAL FIX)
+// File: app/(main)/layout.tsx (FIXED)
 
 "use client";
 
-import React, { useState, useEffect } from "react";
-import { usePathname } from "next/navigation";
-import Sidebar from '@/app/components/layout/Sidebar'; // Your original path
-import Header from "./header";   // Your original path
-import { useAuth } from "@/app/contexts/AuthContext"; // Import useAuth
-import SubscriptionWarning from "./SubscriptionWarning"; // The warning component
-import dayjs from "dayjs"; // <-- This import is critical
+// 1. IMPORT useEffect
+import React, { useState, useEffect } from "react"; 
+import { usePathname, useRouter } from "next/navigation";
+import Sidebar from '@/app/components/layout/Sidebar';
+import Header from "./header";
+import { useAuth } from "@/app/contexts/AuthContext";
+import SubscriptionWarning from "./SubscriptionWarning";
+import dayjs from "dayjs";
 
-/**
- * THIS IS THE NEW, CORRECTED FUNCTION.
- * It now checks BOTH the 'status' AND the 'subscriptionExpiryDate'.
- */
+// ... (isSubscriptionActive function and FullScreenSpinner are unchanged) ...
 function isSubscriptionActive(subscription: any): boolean {
   if (!subscription) {
-    return false; // No subscription object
+    return false;
   }
-
-  // --- 1. Check the Status (from subscribtion.dart & database) ---
   let isStatusActive = false;
   if (subscription.status && typeof subscription.status === 'string') {
     const status = subscription.status.toLowerCase();
-    // Allowed statuses are 'active', 'trial', or 'trialing'
     isStatusActive = status === 'active' || status === 'trial' || status === 'trialing';
   }
-
-  // --- 2. Check the Expiry Date (from database) ---
   let isDateValid = false;
-  const expiryDate = subscription.subscriptionExpiryDate; // e.g., "4 November 2025..."
-
+  const expiryDate = subscription.subscriptionExpiryDate;
   if (expiryDate && typeof expiryDate.toDate === 'function') {
-    // This is a Firestore Timestamp
     const expires = dayjs(expiryDate.toDate());
-    
-    // Check if the expiry date is *after* right now.
-    // If it expires today at 7:50 AM, at 7:51 AM this will be false.
     isDateValid = expires.isAfter(dayjs()); 
   } else {
-    // If the date field is missing or not a timestamp, they are not valid
     console.error("Subscription Error: 'subscriptionExpiryDate' is missing or not a Timestamp.");
     isDateValid = false;
   }
-
-  // --- 3. Both must be true to be active ---
-  // The user is active ONLY IF their status is good AND their date is in the future.
   return isStatusActive && isDateValid;
 }
-
-
-// --- Loading Component ---
 const FullScreenSpinner = () => (
   <div className="flex h-screen w-full items-center justify-center bg-gray-50 dark:bg-gray-900">
     <div className="h-12 w-12 animate-spin rounded-full border-4 border-blue-500 border-t-transparent" />
   </div>
 );
+// ... (End of hidden functions) ...
 
 
 export default function MainLayout({
@@ -66,47 +48,36 @@ export default function MainLayout({
   const [isDesktopSidebarClosed, setIsDesktopSidebarClosed] = useState(false);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   const pathname = usePathname();
+  const router = useRouter(); 
 
-  // Get user, subscription, AND loading state from your AuthContext
   const { user, subscription, loading } = useAuth();
 
+  // 2. THIS IS THE FIX 
+  // We move the redirect logic into a useEffect hook.
+  // This runs *after* render, so it doesn't cause the error.
   useEffect(() => {
-    setIsMobileSidebarOpen(false);
-  }, [pathname]);
+    // Only run this check if loading is finished AND there is no user
+    if (!loading && !user) {
+      router.push("/login");
+    }
+  }, [loading, user, router]); // Re-run when these values change
 
-  // 1. Don't show this layout on public pages like /login
+  // 3. Don't run this layout on public pages
   if (pathname.startsWith("/login") || pathname.startsWith("/register")) {
     return <>{children}</>;
   }
 
-  // 2. Show a full-screen spinner while auth is being checked
-  // This prevents all "flashing" bugs.
-  if (loading) {
+  // 4. Show a spinner while loading OR while the redirect is preparing
+  if (loading || !user) {
     return <FullScreenSpinner />;
   }
 
-  // 3. (FIX for Logged-out users)
-  // If loading is done and there is NO user.
-  if (!user) {
-    return (
-      <main className="h-screen w-full bg-gray-50 p-8 dark:bg-gray-900">
-        {/* This will render the "Please log in to view..." message */}
-        {children}
-      </main>
-    );
-  }
-
-  // 4. (FIX for Active users)
-  // A `user` EXISTS. Now we safely check their subscription
-  // using the CORRECT 'status' AND 'date' logic.
+  // 5. Check subscription (now that we know a user exists)
   if (!isSubscriptionActive(subscription)) {
-    // User is logged in, but status is 'expired' OR date has passed.
-    // Show *only* the warning screen.
     return <SubscriptionWarning />;
   }
 
-  // 5. If we are here, the user is logged in AND subscribed.
-  // Show the full app layout.
+  // 6. User is loaded, logged in, and subscribed. Show the app.
   return (
     <div className="flex h-screen bg-gray-50 dark:bg-gray-900">
       <Sidebar

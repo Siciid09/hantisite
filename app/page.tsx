@@ -2261,8 +2261,8 @@ const Pricing: React.FC<PricingProps> = ({ onDemoClick }) => {
       <div id="download" className="text-center mt-24 scroll-reveal">
         <h3 className="text-2xl font-bold text-white mb-6">Download The App Now</h3>
         <div className="flex flex-col md:flex-row justify-center items-center space-y-4 md:space-y-0 md:space-x-4">
-          <DownloadButton platform="apple" href="https://www.apple.com/app-store/" />
-          <DownloadButton platform="google" href="https://play.google.com/store" />
+          <DownloadButton platform="apple" href="https://www.garaadbiixi.com/p/hantikaab11.html" />
+          <DownloadButton platform="google" href="https://www.garaadbiixi.com/p/hantikaab11.html" />
         </div>
       </div>
     </section>
@@ -2309,14 +2309,14 @@ const Footer = () => {
         <div>
           <h4 className="font-semibold text-white mb-4">Get The App</h4>
           <div className="flex flex-col space-y-3">
-            <a href="https://www.apple.com/app-store/" target="_blank" rel="noopener noreferrer" className="bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white flex items-center space-x-2 hover:bg-gray-700 transition-all">
+            <a href="https://www.garaadbiixi.com/p/hantikaab11.html" target="_blank" rel="noopener noreferrer" className="bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white flex items-center space-x-2 hover:bg-gray-700 transition-all">
               {/* <Icon name="logo-apple" className="h-7 w-7" /> */} {/* Icon removed as requested */}
               <div>
                 <p className="text-xs">Download on the</p>
                 <p className="text-lg font-semibold">App Store</p>
               </div>
             </a>
-            <a href="https://play.google.com/store" target="_blank" rel="noopener noreferrer" className="bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white flex items-center space-x-2 hover:bg-gray-700 transition-all">
+            <a href="https://www.garaadbiixi.com/p/hantikaab11.html" target="_blank" rel="noopener noreferrer" className="bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white flex items-center space-x-2 hover:bg-gray-700 transition-all">
               {/* <Icon name="logo-google-playstore" className="h-7 w-7" /> */} {/* Icon removed as requested */}
               <div>
                 <p className="text-xs">GET IT ON</p>
