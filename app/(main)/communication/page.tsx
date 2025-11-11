@@ -1,11 +1,9 @@
 "use client";
 
 // -----------------------------------------------------------------------------
-// File: app/(main)/messages/page.tsx
-// Description: The main "Communication" page.
-// **MODIFIED:** Added explicit types for useSWR hooks to fix 'any' type error.
-// - Corrected Day.js usage (removed .toDate())
-// - Corrected Announcement render (uses a.message, not a.body)
+// File: app/(main)/communication/page.tsx
+// Description: This is your frontend page. It correctly connects
+// to the /api/messages route.
 // -----------------------------------------------------------------------------
 
 import React, { useState, Fragment } from "react";
@@ -136,7 +134,7 @@ const TabNav = ({ activeTab, onTabChange }: { activeTab: string, onTabChange: (t
 
 // --- TAB 1: Notifications ---
 function NotificationsTab() {
-  // **FIX:** Provided the PersonalNotification[] type to useSWR
+  // Provided the PersonalNotification[] type to useSWR
   const { data, error, isLoading, mutate } = useSWR<PersonalNotification[]>(
     "/api/messages?tab=notifications", 
     fetcher
@@ -190,7 +188,7 @@ function NotificationsTab() {
             <div className="flex-1">
               <p className="font-medium">{n.message}</p>
               <p className="text-sm text-gray-500">
-                {/* **FIX:** Removed .toDate() - createdAt is now a string */}
+                {/* createdAt is now a string, so this is correct */}
                 {dayjs(n.createdAt).fromNow()}
               </p>
             </div>
@@ -212,7 +210,7 @@ function NotificationsTab() {
 
 // --- TAB 2: Announcements ---
 function AnnouncementsTab() {
-  // **FIX:** Provided the Announcement[] type to useSWR
+  // Provided the Announcement[] type to useSWR
   const { data, error, isLoading } = useSWR<Announcement[]>(
     "/api/messages?tab=announcements", 
     fetcher
@@ -230,10 +228,9 @@ function AnnouncementsTab() {
         {data?.map((a) => (
           <div key={a.id} className="rounded-lg border p-3 dark:border-gray-700">
             <p className="font-semibold">{a.title}</p>
-            {/* **FIX:** Changed a.body to a.message */}
             <p className="my-1 text-sm">{a.message}</p>
             <p className="text-xs text-gray-500">
-              by Hantikaab Admin &bull; {/* **FIX:** Removed .toDate() */}
+              by Hantikaab Admin &bull; {/* createdAt is now a string */}
               {dayjs(a.createdAt).fromNow()}
             </p>
           </div>
