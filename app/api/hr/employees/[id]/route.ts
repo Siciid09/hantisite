@@ -7,6 +7,7 @@ import { FieldValue } from "firebase-admin/firestore";
 
 // Helper function
 async function getAuth(request: NextRequest) {
+  // ... (your existing function, no changes needed)
   const authHeader = request.headers.get("Authorization");
   if (!authHeader || !authHeader.startsWith("Bearer ")) {
     throw new Error("Unauthorized.");
@@ -35,13 +36,13 @@ function getStoreCollection(storeId: string, collectionName: string) {
 // -----------------------------------------------------------------------------
 export async function PUT(
   request: NextRequest, 
-  context: { params: { id: string } } 
+  context: { params: Promise<{ id: string }> } // <-- CHANGED
 ) {
   if (!authAdmin || !firestoreAdmin) {
     return NextResponse.json({ error: "Admin SDK not configured." }, { status: 500 });
   }
 
-  const employeeId = context.params.id; 
+  const { id: employeeId } = await context.params; // <-- CHANGED
 
   if (!employeeId) {
     return NextResponse.json({ error: "Employee ID is required." }, { status: 400 });
@@ -110,13 +111,13 @@ export async function PUT(
 // -----------------------------------------------------------------------------
 export async function DELETE(
   request: NextRequest, 
-  context: { params: { id: string } }
+  context: { params: Promise<{ id: string }> } // <-- CHANGED
 ) {
   if (!authAdmin || !firestoreAdmin) {
     return NextResponse.json({ error: "Admin SDK not configured." }, { status: 500 });
   }
 
-  const employeeId = context.params.id; 
+  const { id: employeeId } = await context.params; // <-- CHANGED
 
   if (!employeeId) {
     return NextResponse.json({ error: "Employee ID is required." }, { status: 400 });
