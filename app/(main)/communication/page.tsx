@@ -2,8 +2,10 @@
 
 // -----------------------------------------------------------------------------
 // File: app/(main)/communication/page.tsx
-// Description: This is your frontend page. It correctly connects
-// to the /api/messages route.
+// Description: [MODIFIED]
+// - Added a "View" button to the "Announcements" tab.
+// - Clicking "View" opens a modal to read the full announcement.
+// - Tracks "viewed" announcements and dims them (session only).
 // -----------------------------------------------------------------------------
 
 import React, { useState, Fragment } from "react";
@@ -24,21 +26,20 @@ import {
   List,
   CreditCard,
   AlertCircle,
+  X, // Added for the modal close button
 } from "lucide-react";
 
 // --- (A) Type Definitions ---
 
-// Type for personal notifications (billing, support, etc.)
 interface PersonalNotification {
   id: string;
   read: boolean;
   type: string;
   message: string;
-  createdAt: string; // ISO date string from JSON
+  createdAt: string; 
   userId: string;
 }
 
-// Type for global announcements (from SAdmin panel)
 interface Announcement {
   id: string;
   title: string;
@@ -46,7 +47,7 @@ interface Announcement {
   targetType: string;
   targetStores: string[];
   status: string;
-  createdAt: string; // ISO date string from JSON
+  createdAt: string;
 }
 
 
@@ -69,6 +70,9 @@ const fetcher = async (url: string) => {
 export default function MessagesModulePage() {
   const { user, loading: authLoading } = useAuth();
   const [activeTab, setActiveTab] = useState("Notifications");
+  
+  // --- MODIFIED: State for the Announcement Modal ---
+  const [selectedAnnouncement, setSelectedAnnouncement] = useState<Announcement | null>(null);
 
   if (authLoading) {
     return <LoadingSpinner />;
@@ -78,28 +82,43 @@ export default function MessagesModulePage() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 p-4 pt-6 text-gray-900 dark:bg-gray-900 dark:text-gray-100 md:p-8">
-      {/* --- Header --- */}
-      <header className="mb-6">
-        <h1 className="text-3xl font-bold">Communications</h1>
-        <p className="text-gray-500 dark:text-gray-400">
-          Internal notifications and company announcements.
-        </p>
-      </header>
+    <>
+      {/* --- MODIFIED: Modal is rendered here at the top level --- */}
+      {selectedAnnouncement && (
+        <AnnouncementModal
+          announcement={selectedAnnouncement}
+          onClose={() => setSelectedAnnouncement(null)}
+        />
+      )}
 
-      {/* --- Tab Navigation --- */}
-      <TabNav activeTab={activeTab} onTabChange={setActiveTab} />
+      <div className="min-h-screen bg-gray-50 p-4 pt-6 text-gray-900 dark:bg-gray-900 dark:text-gray-100 md:p-8">
+        {/* --- Header --- */}
+        <header className="mb-6">
+          <h1 className="text-3xl font-bold">Communications</h1>
+          <p className="text-gray-500 dark:text-gray-400">
+            Internal notifications and company announcements.
+          </p>
+        </header>
 
-      {/* --- Tab Content --- */}
-      <div className="mt-6">
-        {activeTab === "Notifications" && <NotificationsTab />}
-        {activeTab === "Announcements" && <AnnouncementsTab />}
+        {/* --- Tab Navigation --- */}
+        <TabNav activeTab={activeTab} onTabChange={setActiveTab} />
+
+        {/* --- Tab Content --- */}
+        <div className="mt-6">
+          {activeTab === "Notifications" && <NotificationsTab />}
+          {/* --- MODIFIED: Pass the setSelectedAnnouncement function --- */}
+          {activeTab === "Announcements" && (
+            <AnnouncementsTab 
+              onViewAnnouncement={setSelectedAnnouncement} 
+            />
+          )}
+        </div>
       </div>
-    </div>
+    </>
   );
 }
 
-// --- (D) Tab Navigation Component ---
+// --- (D) Tab Navigation Component (Unchanged) ---
 
 const TABS = [
   { name: "Notifications", icon: Bell },
@@ -132,9 +151,8 @@ const TabNav = ({ activeTab, onTabChange }: { activeTab: string, onTabChange: (t
 
 // --- (E) Tab Content Components ---
 
-// --- TAB 1: Notifications ---
+// --- TAB 1: Notifications (Unchanged) ---
 function NotificationsTab() {
-  // Provided the PersonalNotification[] type to useSWR
   const { data, error, isLoading, mutate } = useSWR<PersonalNotification[]>(
     "/api/messages?tab=notifications", 
     fetcher
@@ -188,7 +206,6 @@ function NotificationsTab() {
             <div className="flex-1">
               <p className="font-medium">{n.message}</p>
               <p className="text-sm text-gray-500">
-                {/* createdAt is now a string, so this is correct */}
                 {dayjs(n.createdAt).fromNow()}
               </p>
             </div>
@@ -208,13 +225,22 @@ function NotificationsTab() {
   );
 }
 
-// --- TAB 2: Announcements ---
-function AnnouncementsTab() {
-  // Provided the Announcement[] type to useSWR
+// --- TAB 2: Announcements (MODIFIED) ---
+function AnnouncementsTab({ onViewAnnouncement }: {
+  onViewAnnouncement: (announcement: Announcement) => void;
+}) {
   const { data, error, isLoading } = useSWR<Announcement[]>(
     "/api/messages?tab=announcements", 
     fetcher
   );
+
+  // This state tracks "viewed" items just for this session
+  const [viewedIds, setViewedIds] = useState<Set<string>>(new Set());
+
+  const handleViewClick = (announcement: Announcement) => {
+    onViewAnnouncement(announcement);
+    setViewedIds(prev => new Set(prev).add(announcement.id));
+  };
 
   return (
     <Card>
@@ -225,23 +251,42 @@ function AnnouncementsTab() {
       <div className="mt-4 max-h-[70vh] space-y-3 overflow-y-auto">
         {isLoading && <TableLoader />}
         {error && <ErrorDisplay error={error} />}
-        {data?.map((a) => (
-          <div key={a.id} className="rounded-lg border p-3 dark:border-gray-700">
-            <p className="font-semibold">{a.title}</p>
-            <p className="my-1 text-sm">{a.message}</p>
-            <p className="text-xs text-gray-500">
-              by Hantikaab Admin &bull; {/* createdAt is now a string */}
-              {dayjs(a.createdAt).fromNow()}
-            </p>
-          </div>
-        ))}
+        {data?.map((a) => {
+          const hasViewed = viewedIds.has(a.id);
+          return (
+            <div 
+              key={a.id} 
+              className={`flex items-start gap-3 rounded-lg border p-3 dark:border-gray-700 ${
+                hasViewed ? 'opacity-60' : '' // Dims the item if viewed
+              }`}
+            >
+              <div className="flex-1">
+                <p className="font-semibold">{a.title}</p>
+                <p className="my-1 truncate text-sm">{a.message}</p>
+                <p className="text-xs text-gray-500">
+                  by Hantikaab Admin &bull; {dayjs(a.createdAt).fromNow()}
+                </p>
+              </div>
+              <button
+                onClick={() => handleViewClick(a)}
+                className={`flex-shrink-0 rounded-lg border px-3 py-1 text-xs ${
+                  hasViewed
+                    ? 'border-gray-400 text-gray-500 dark:border-gray-600 dark:text-gray-400'
+                    : 'border-blue-500 text-blue-600 hover:bg-blue-50 dark:border-blue-400 dark:text-blue-400 dark:hover:bg-blue-900/50'
+                }`}
+              >
+                {hasViewed ? 'Viewed' : 'View'}
+              </button>
+            </div>
+          );
+        })}
         {!isLoading && data?.length === 0 && <TableEmptyState message="No announcements found." />}
       </div>
     </Card>
   );
 }
 
-// --- (F) Helper Components ---
+// --- (F) Helper Components (Unchanged) ---
 
 const Card = ({ children, className = "" }: { children: React.ReactNode; className?: string }) => (
   <div className={`rounded-xl border border-gray-200 bg-white p-4 shadow-sm dark:border-gray-700 dark:bg-gray-800 ${className}`}>
@@ -279,3 +324,51 @@ const TableEmptyState = ({ message }: { message: string }) => (
     {message}
   </div>
 );
+
+
+// --- (G) NEW: Announcement Modal Component ---
+
+function AnnouncementModal({ announcement, onClose }: {
+  announcement: Announcement;
+  onClose: () => void;
+}) {
+  return (
+    <div 
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
+      onClick={onClose}
+    >
+      <div 
+        className="relative w-full max-w-lg rounded-xl bg-white p-6 shadow-2xl dark:bg-gray-800"
+        onClick={(e) => e.stopPropagation()} // Prevents modal from closing when clicking inside
+      >
+        <button
+          onClick={onClose}
+          className="absolute right-4 top-4 rounded-full p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-gray-700 dark:hover:text-gray-300"
+        >
+          <X className="h-5 w-5" />
+        </button>
+        
+        <h2 className="text-xl font-bold">{announcement.title}</h2>
+        <p className="mt-1 text-xs text-gray-500">
+          Posted {dayjs(announcement.createdAt).fromNow()}
+        </p>
+
+        <div className="mt-4 max-h-[60vh] overflow-y-auto pr-2 text-sm text-gray-700 dark:text-gray-300">
+          {/* Using whitespace-pre-wrap to respect newlines in the message */}
+          <p style={{ whiteSpace: "pre-wrap" }}>
+            {announcement.message}
+          </p>
+        </div>
+        
+        <div className="mt-6 flex justify-end">
+          <button
+            onClick={onClose}
+            className="rounded-lg bg-gray-100 px-4 py-2 text-sm font-medium text-gray-800 hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600"
+          >
+            Close
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}

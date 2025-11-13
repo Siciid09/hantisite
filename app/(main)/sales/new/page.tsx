@@ -1,27 +1,24 @@
 // File: app/(main)/sales/new/page.tsx
 //
-// --- FINAL VERSION (REBUILT) ---
-// 1. (NEW) Added "Invoice Currency" dropdown. This is now the base currency for the sale.
-// 2. (NEW) Replaced "Customer Search" modal with an inline Combobox, matching the Product Search.
-// 3. (NEW) Implemented "Missing Price" modal: If a product has no price for the
-//    selected Invoice Currency, a popup will ask the cashier to enter the price.
-// 4. (NEW) Rebuilt Payment Section for "Manual Exchange": If a payment currency
-//    does not match the Invoice Currency, a "Value in [CURRENCY]" box appears.
-// 5. (NEW) 'handleSaveSale' is now secure. It sends raw data (items, payments with value)
-//    to the API and trusts the server to do all calculations.
-// 6. (NEW) Added modern "NewDateRangePicker" for the Sale Date.
-// --- (MODIFICATIONS) ---
-// 7. (FIX) Replaced product table <input> with <FormInput> to fix inconsistencies.
-// 8. (NEW) Added 'paymentMethodsByCurrency' for smart payment method filtering.
-// 9. (NEW) 'handleUpdatePaymentLine' now resets method when currency changes.
-// 10. (NEW) 'handleSaveSale' now prevents overpayment.
+// --- COMPLETE FIXES ---
+// 1. (PDF) Removed old 'generateInvoicePdf' (html2pdf.js).
+// 2. (PDF) Added 'PDFDownloadLink' from '@react-pdf/renderer'.
+// 3. (PDF) Added 'getTemplateComponent' from your new 'lib/pdfService.ts'.
+// 4. (PDF) 'handleSaveSale' now saves the sale, then opens a modal with a
+//    <PDFDownloadLink> to render the REAL text, high-quality PDF.
+// 5. (PDF) 'storeInfo' is now passed to the PDF, using your real subscription data.
+// 6. (FIX) Payment methods are now correctly filtered by 'paymentMethodsByCurrency'.
+// 7. (FIX) Customer creation is built-in with the 'CustomerSearch' combobox.
+// 8. (NEW) Added a '+' button to open the 'ProductFormModal'.
+// 9. (FIX) All 'Cannot find name' errors are fixed by adding imports
+//    (like ProductFormModal, NewDateRangePicker, etc.)
 // -----------------------------------------------------------------------------
 
 "use client";
 
 import React, { useState, useEffect, Suspense, useMemo, Fragment } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
-import useSWR from "swr";
+import useSWR, { useSWRConfig } from "swr";
 import { useAuth } from "@/app/contexts/AuthContext";
 import dayjs from "dayjs";
 import {
@@ -33,9 +30,15 @@ import {
   Loader2, Edit, ChevronUp, CheckSquare, Coins, Calendar as CalendarIconLucide
 } from "lucide-react";
 import { Dialog, Transition, Combobox } from "@headlessui/react";
-import { generateInvoicePdf } from "@/lib/pdfService";
 import { type DateRange } from "react-day-picker";
 
+// --- (NEW) PDF Imports ---
+import { PDFDownloadLink } from '@react-pdf/renderer';
+import { getTemplateComponent, ReportType } from '@/lib/pdfService'; // Your new "brain"
+
+// --- (NEW) Import Product Modal ---
+// We borrow this from your products page
+import { ProductFormModal } from '../../products/ProductFormModal'; 
 // --- HELPERS (Copied from your products/page.tsx and utils.ts) ---
 import { type ClassValue, clsx } from "clsx"
 import { twMerge } from "tailwind-merge"
@@ -70,30 +73,22 @@ const fetcher = async (url: string) => {
   return res.json();
 };
 
-// --- (MODIFIED) Updated 'formatCurrency' to match 'pagee.tsx' (EUR fix) ---
 const formatCurrency = (amount: number | undefined | null, currency: string): string => {
   if (amount == null) amount = 0;
-  
-  // Use 'EUR' for formatting, not 'EURO'
   const displayCurrency = currency === "EURO" ? "EUR" : currency;
-  
   const style = (displayCurrency === "USD" || displayCurrency === "EUR") ? "currency" : "decimal";
   const options: Intl.NumberFormatOptions = {
     style: style,
     minimumFractionDigits: (currency === "SLSH" || currency === "SOS" || currency === "BIRR") ? 0 : 2,
     maximumFractionDigits: (currency === "SLSH" || currency === "SOS" || currency === "BIRR") ? 0 : 2,
   };
-  
   if (style === "currency") {
     options.currency = displayCurrency;
     options.currencyDisplay = "symbol";
   }
-  
   const formatter = new Intl.NumberFormat("en-US", options);
   let formatted = formatter.format(amount);
-  
   if (style === "decimal") {
-    // Show the original code (e.g., "KSH")
     formatted = `${currency} ${formatted}`; 
   }
   return formatted;
@@ -119,11 +114,8 @@ function useDebounce(value: string, delay: number) {
 // =============================================================================
 // 💰 Currency & Payment Constants (MODIFIED)
 // =============================================================================
-
-// --- (NEW) Currency list based on your request ---
 const CURRENCIES = ["USD", "SOS", "SLSH", "EUR", "KSH", "BIRR"];
 
-// --- (MODIFIED) Added SOMNET and updated list ---
 const PAYMENT_PROVIDERS = {
   CASH: { label: "Cash" },
   BANK: { label: "Bank Transfer" },
@@ -131,13 +123,13 @@ const PAYMENT_PROVIDERS = {
   EDAHAB: { label: "E-Dahab" },
   EVC_PLUS: { label: "EVC Plus" },
   SAHAL: { label: "Sahal (Golis)" },
-  SOMNET: { label: "Somnet" }, // <-- ADDED
+  SOMNET: { label: "Somnet" },
   E_BIRR: { label: "E-Birr" },
   M_PESA: { label: "M-Pesa" },
-  OTHER: { label: "Other" }, // <-- Changed from SI_KALE for clarity
+  OTHER: { label: "Other" },
 };
 
-// --- (NEW) Smart Payment Method map based on your request ---
+// --- (FIX) This map now correctly filters payment methods ---
 const paymentMethodsByCurrency: { [key: string]: (keyof typeof PAYMENT_PROVIDERS)[] } = {
   USD: ["CASH", "BANK", "ZAAD", "EDAHAB", "SOMNET", "EVC_PLUS", "SAHAL", "OTHER"],
   SOS: ["CASH", "BANK", "OTHER"],
@@ -166,11 +158,11 @@ interface LineItem {
   productId: string; 
   productName: string;
   quantity: string;
-  pricePerUnit: string; // This is in 'invoiceCurrency'
-  costPriceUsd: number; // For server profit calculation
+  pricePerUnit: string;
+  costPriceUsd: number;
   stock: number;
   discount: string;
-  manualPrice: boolean; // Flag to show if price was entered manually
+  manualPrice: boolean;
 }
 
 interface Customer {
@@ -182,13 +174,12 @@ interface Customer {
   saveToContacts?: boolean;
 }
 
-// NEW: Payment line with manual exchange value
 interface PaymentLine {
   id: string; 
-  method: keyof typeof PAYMENT_PROVIDERS | ""; // Can be empty
-  amount: string; // The amount in the payment's currency (e.g., "50" for USD)
-  currency: string; // The currency of the payment (e.g., "USD")
-  valueInInvoiceCurrency: string; // The value of 'amount' in the 'invoiceCurrency' (e.g., "4700" for BIRR)
+  method: keyof typeof PAYMENT_PROVIDERS | "";
+  amount: string;
+  currency: string;
+  valueInInvoiceCurrency: string;
 }
 
 interface ProductForPricing {
@@ -230,7 +221,7 @@ const CustomerSearch = ({ customer, onCustomerSelect }: { customer: Customer | n
     }
     
     onCustomerSelect(newCustomer);
-    setQuery(newCustomer.name); // Set the input field to the name
+    setQuery(newCustomer.name);
   };
 
   return (
@@ -343,7 +334,6 @@ const ProductSearch = ({ onProductSelect, invoiceCurrency }: { onProductSelect: 
               <Combobox.Option key={product.id} className={({ active }) => `relative cursor-pointer select-none py-2 pl-4 pr-4 ${active ? 'bg-blue-600 text-white' : 'text-gray-900 dark:text-gray-200'}`} value={product}>
                 <div className="flex justify-between">
                   <span className="block truncate font-medium">{product.name}</span>
-                  {/* Show price in selected currency if available */}
                   <span className="text-sm">
                     {product.salePrices?.[invoiceCurrency] 
                       ? formatCurrency(product.salePrices[invoiceCurrency], invoiceCurrency)
@@ -366,14 +356,16 @@ const ProductSearch = ({ onProductSelect, invoiceCurrency }: { onProductSelect: 
 // 🛒 The Main POS Form (REBUILT)
 // =============================================================================
 function PosForm() {
-  const { user } = useAuth();
+  // --- (MODIFIED) Get subscription from useAuth ---
+  const { user, subscription } = useAuth();
   const router = useRouter();
+  const { mutate } = useSWRConfig(); // For refreshing product list
 
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   
   // --- Form State ---
-  const [invoiceCurrency, setInvoiceCurrency] = useState("USD"); // ** NEW **
+  const [invoiceCurrency, setInvoiceCurrency] = useState("USD");
   const [items, setItems] = useState<LineItem[]>([]);
   const [customer, setCustomer] = useState<Customer | null>({ id: "walkin", name: "Walk-in Customer", phone: "", whatsapp: "", notes: "" });
   const [paymentLines, setPaymentLines] = useState<PaymentLine[]>([]);
@@ -381,7 +373,12 @@ function PosForm() {
   
   // Modals
   const [productForPricing, setProductForPricing] = useState<ProductForPricing | null>(null);
+  const [showAddProductModal, setShowAddProductModal] = useState(false); // <-- (NEW)
   
+  // --- (NEW) PDF Modal State ---
+  const [saleToPrint, setSaleToPrint] = useState<any | null>(null);
+  const [PdfTemplate, setPdfTemplate] = useState<React.ElementType | null>(null);
+
   // Additional Info
   const [salesperson, setSalesperson] = useState(user?.name || "Current User");
   const [additionalNotes, setAdditionalNotes] = useState("");
@@ -396,24 +393,19 @@ function PosForm() {
     }, 0);
   }, [items]);
   
-  // ** NEW: totalPaid is now the sum of 'valueInInvoiceCurrency' **
   const totalPaid = useMemo(() => {
     return paymentLines.reduce((sum, line) => {
       return sum + (Number(line.valueInInvoiceCurrency) || 0);
     }, 0);
   }, [paymentLines]);
 
-  // ** NEW: debtRemaining is now simple **
   const debtRemaining = useMemo(() => {
     return totalAmount - totalPaid;
   }, [totalAmount, totalPaid]);
 
-  // --- (NEW) Check for overpayment ---
   const isOverpaid = useMemo(() => {
-    // Allow for tiny floating point errors, e.g., 0.01
     return totalPaid > totalAmount + 0.01; 
   }, [totalAmount, totalPaid]);
-
   
   // --- Handlers ---
   
@@ -426,34 +418,29 @@ function PosForm() {
     setAdditionalNotes("");
     setError(null);
     setIsSaving(false);
+    // (Do not reset PDF state here, let the modal close it)
   };
 
-  // ** NEW: Handle product select (with missing price logic) **
   const handleProductSelect = (product: any) => {
     if (!product || !product.id) return;
-
     const price = product.salePrices?.[invoiceCurrency];
 
     if (price === undefined || price === null || price === 0) {
-      // Price is missing! Open the modal.
       setProductForPricing({ product, manualPrice: "" });
     } else {
-      // Price exists, add to cart.
       addItemToCart(product, price.toString(), false);
     }
   };
 
-  // ** NEW: Handle missing price submission **
   const handleManualPriceSubmit = () => {
     if (!productForPricing) return;
     const price = productForPricing.manualPrice;
     if (Number(price) > 0) {
       addItemToCart(productForPricing.product, price, true);
-      setProductForPricing(null); // Close modal
+      setProductForPricing(null);
     }
   };
 
-  // ** NEW: Central function to add an item **
   const addItemToCart = (product: any, price: string, manualPrice: boolean) => {
     setItems(prev => [
       ...prev,
@@ -463,7 +450,7 @@ function PosForm() {
         productName: product.name,
         quantity: "1",
         pricePerUnit: price, 
-        costPriceUsd: product.costPrices?.USD || 0, // Send cost price for profit
+        costPriceUsd: product.costPrices?.USD || 0,
         stock: product.quantity,
         discount: "0",
         manualPrice: manualPrice,
@@ -479,15 +466,14 @@ function PosForm() {
     setItems(prev => prev.filter(item => item.id !== id));
   };
   
-  // --- **NEW PAYMENT HANDLERS (MODIFIED)** ---
-  
+  // --- Payment Handlers (Unchanged) ---
   const handleAddPaymentLine = () => {
     const newPaymentLine: PaymentLine = {
       id: crypto.randomUUID(),
-      method: '', // Start empty
+      method: '',
       amount: "",
-      currency: invoiceCurrency, // Default to invoice currency
-      valueInInvoiceCurrency: "", // Will be set on change
+      currency: invoiceCurrency,
+      valueInInvoiceCurrency: "",
     };
     setPaymentLines(prev => [...prev, newPaymentLine]);
   };
@@ -495,39 +481,25 @@ function PosForm() {
   const handleUpdatePaymentLine = (id: string, field: keyof PaymentLine, value: string) => {
     setPaymentLines(prev => prev.map(line => {
       if (line.id !== id) return line;
-
       let updatedLine = { ...line, [field]: value };
-
-      // ** (MODIFIED) Manual Exchange & Smart Method Logic **
-      
       if (field === 'currency') {
-        // --- (NEW) Reset method when currency changes ---
         updatedLine.method = ""; 
-        
         if (updatedLine.currency === invoiceCurrency) {
-          // If currency is the SAME as the invoice, value = amount
           updatedLine.valueInInvoiceCurrency = updatedLine.amount;
         } else {
-          // If currency is DIFFERENT, clear the value
           updatedLine.valueInInvoiceCurrency = "";
         }
       }
-      
       if (field === 'amount') {
         if (updatedLine.currency === invoiceCurrency) {
-          // If currency is the SAME, value always = amount
           updatedLine.valueInInvoiceCurrency = updatedLine.amount;
         } else {
-          // If currency is DIFFERENT, clear value to force re-entry
           updatedLine.valueInInvoiceCurrency = ""; 
         }
       }
-      
-      // If we are updating the value field, just update it
       if (field === 'valueInInvoiceCurrency') {
          updatedLine.valueInInvoiceCurrency = value;
       }
-      
       return updatedLine;
     }));
   };
@@ -537,39 +509,31 @@ function PosForm() {
   };
   
   
-  // ** NEW SECURE SAVE LOGIC (MODIFIED) **
+  // --- (MODIFIED) handleSaveSale ---
+  // Now handles the PDF link generation
   const handleSaveSale = async (action: 'save' | 'save_print') => {
-    setError(null); // Clear previous errors
-    
-    // --- (NEW) Overpayment Validation ---
+    setError(null); 
     if (isOverpaid) {
       setError("Overpayment is not allowed. Total paid cannot exceed total amount.");
       return;
     }
-    
     if (items.length === 0) { setError("Please add at least one item."); return; }
     if (!customer) { setError("Please select or create a customer."); return; }
-    
-    // Check for incomplete payment methods
     const incompletePayment = paymentLines.some(line => (Number(line.amount) > 0) && !line.method);
     if (incompletePayment) {
       setError("Please select a payment method for all added payments.");
       return;
     }
-
     setIsSaving(true);
-
-    // 1. Create the 'raw items' payload for the server
+    
     const itemsPayload = items.map(item => ({
       productId: item.productId,
       productName: item.productName,
       quantity: Number(item.quantity) || 0,
       discount: Number(item.discount) || 0,
-      // If price was manual, send it. Otherwise, let server fetch it.
       pricePerUnit: item.manualPrice ? (Number(item.pricePerUnit) || 0) : null,
     }));
     
-    // 2. Create the 'raw payments' payload
     const paymentsPayload = paymentLines
       .filter(line => (Number(line.amount) || 0) > 0 && line.method)
       .map(line => ({
@@ -579,29 +543,22 @@ function PosForm() {
         valueInInvoiceCurrency: Number(line.valueInInvoiceCurrency) || 0,
       }));
 
-    // 3. Create the final transaction object
     const transaction = {
-      // Customer
-      customer, // Send full customer object (server will handle new/existing)
-      
-      // Sale Info
+      customer,
       invoiceCurrency: invoiceCurrency,
       items: itemsPayload,
       paymentLines: paymentsPayload,
       saleDate: saleDate?.from ? format(saleDate.from, "yyyy-MM-dd") : format(new Date(), "yyyy-MM-dd"),
-      
-      // Additional Info
       salesperson: salesperson,
       notes: additionalNotes,
     };
     
     try {
       if (!user || !user.firebaseUser) {
-        throw new Error("Authentication error. User context is not available. Please re-login.");
+        throw new Error("Authentication error. Please re-login.");
       }
       const token = await user.firebaseUser.getIdToken();
 
-      // ** NEW: Send raw data to the secure server API **
       const res = await fetch("/api/sales", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
@@ -609,20 +566,30 @@ function PosForm() {
       });
 
       if (!res.ok) { const err = await res.json(); throw new Error(err.error || "Failed to save sale."); }
-     // ...
-      const data = await res.json(); // Server returns the final, calculated sale
+     
+      const data = await res.json();
       
       if (action === 'save_print') {
-        // --- (FIX) Pass dynamic store info from the user context ---
-       const storeInfo = {
-          name: (user as any)?.storeName || "My Store", // <-- Use user.storeName
-          address: (user as any)?.address || "Hargeisa, Somalia", // <-- Use user.address
-          phone: (user as any)?.phone || "N/A"                 // <-- Use user.phone
+        // --- (NEW) PDF Generation ---
+        
+        // 1. Get the store info from the AuthContext subscription
+        const storeInfo = {
+          name: subscription?.storeName || "My Store",
+          address: subscription?.storeAddress || "123 Main St",
+          phone: subscription?.storePhone || "555-1234",
+          logoUrl: subscription?.logoUrl,
+          planId: subscription?.planId,
         };
-        generateInvoicePdf(data.sale, storeInfo);
+        
+        // 2. Get the correct template component from the "brain"
+        const TemplateComponent = getTemplateComponent('invoice' as ReportType, subscription);
+        
+        // 3. Set state to show the PDF download modal
+        setPdfTemplate(() => TemplateComponent); // Store the component
+        setSaleToPrint({ data: data.sale, store: storeInfo }); // Store the data
+        
         resetForm(); 
       } else {
-// ... 
         resetForm();
         router.push('/sales?view=history');
       }
@@ -650,12 +617,11 @@ function PosForm() {
                   label="1. Set Invoice Currency"
                   value={invoiceCurrency}
                   onChange={(val: string) => setInvoiceCurrency(val)}
-                  disabled={items.length > 0} // Lock if items are added
+                  disabled={items.length > 0}
                 >
                   {CURRENCIES.map(c => <option key={c} value={c}>{c}</option>)}
                 </FormSelect>
                 
-                {/* NEW: Inline Customer Search */}
                 <CustomerSearch customer={customer} onCustomerSelect={setCustomer} />
               </div>
               {items.length > 0 && <p className="text-xs text-orange-600 mt-2">Invoice currency is locked because items are in the cart.</p>}
@@ -663,12 +629,23 @@ function PosForm() {
             
             {/* B. PRODUCTS SECTION */}
             <Card>
-              <h3 className="mb-4 text-lg font-semibold dark:text-white">3. Products (Prices in {invoiceCurrency})</h3>
               <div className="flex items-start gap-2">
                 <ProductSearch onProductSelect={handleProductSelect} invoiceCurrency={invoiceCurrency} />
+                {/* --- (NEW) Add Product Button --- */}
+                <div className="flex-shrink-0">
+                   <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">&nbsp;</label>
+                   <button
+                    type="button"
+                    title="Add New Product"
+                    onClick={() => setShowAddProductModal(true)}
+                    className="flex h-[42px] w-[42px] items-center justify-center rounded-lg border border-gray-300 bg-white shadow-sm hover:bg-gray-100 dark:border-gray-600 dark:bg-gray-700"
+                  >
+                    <Plus className="h-5 w-5" />
+                  </button>
+                </div>
               </div>
               
-              {/* Product Table (FIXED: Using FormInput) */}
+              {/* Product Table */}
               <div className="mt-4 flow-root">
                 <div className="-mx-4 overflow-x-auto">
                   <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
@@ -692,7 +669,6 @@ function PosForm() {
                             {item.productName}
                             {item.manualPrice && <span title="Price entered manually" className="ml-1 text-orange-400">*</span>}
                           </td>
-                          {/* --- (FIX) Using FormInput for consistency --- */}
                           <td className="px-2 py-2 w-20">
                             <FormInput type="number" value={item.quantity} onChange={(val: string) => handleUpdateItem(item.id, 'quantity', val)} className="w-full" />
                           </td>
@@ -714,7 +690,7 @@ function PosForm() {
               </div>
             </Card>
 
-            {/* D. ADDITIONAL INFO SECTION (with Date Picker) */}
+            {/* D. ADDITIONAL INFO SECTION */}
             <Card>
               <h3 className="mb-4 text-lg font-semibold dark:text-white">5. Additional Info</h3>
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -726,13 +702,12 @@ function PosForm() {
                   className="[&_input]:bg-gray-100 dark:[&_input]:bg-gray-700/50" 
                 />
                 
-                {/* NEW: Modern Date Picker */}
                 <div>
                   <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">Sale Date</label>
                   <NewDateRangePicker
                     date={saleDate}
                     onApply={(newDate) => setSaleDate(newDate)}
-                    singleDateMode={true} // Use a custom prop to hide 'to' date
+                    singleDateMode={true}
                   />
                 </div>
                 
@@ -752,7 +727,7 @@ function PosForm() {
               
               <div className="space-y-4">
                 {paymentLines.map((line, index) => {
-                  // --- (NEW) Get the list of valid methods for this line's currency ---
+                  // --- (FIX) Get the list of valid methods for this line's currency ---
                   const validMethods = paymentMethodsByCurrency[line.currency] || [];
                   
                   return (
@@ -762,7 +737,7 @@ function PosForm() {
                         <button type="button" onClick={() => handleRemovePaymentLine(line.id)} className="text-red-500 hover:text-red-700"><X className="h-4 w-4" /></button>
                       </div>
 
-                      {/* --- (MODIFIED) Smart Method Dropdown --- */}
+                      {/* --- (FIX) Smart Method Dropdown --- */}
                       <FormSelect 
                         label="Method"
                         value={line.method}
@@ -793,7 +768,6 @@ function PosForm() {
                         </FormSelect>
                       </div>
                       
-                      {/* ** NEW: MANUAL EXCHANGE INPUT ** */}
                       {line.currency !== invoiceCurrency && (
                         <div className="border-t border-dashed border-blue-400 pt-3">
                           <FormInput
@@ -810,7 +784,6 @@ function PosForm() {
                   );
                 })}
                 
-                {/* --- Add New Payment Button --- */}
                 <button 
                   type="button" 
                   onClick={handleAddPaymentLine} 
@@ -831,10 +804,9 @@ function PosForm() {
                 <TotalRow 
                   label="Total Paid" 
                   value={formatCurrency(totalPaid, invoiceCurrency)} 
-                  isDebt={isOverpaid} // Show as "debt" (red) if overpaid
+                  isDebt={isOverpaid}
                 />
                 
-                {/* Show breakdown of actual currencies received */}
                 <div className="pl-4">
                   {paymentLines.filter(l => Number(l.amount) > 0).map(l => (
                     <p key={l.id} className="text-sm text-gray-500 dark:text-gray-400">
@@ -859,7 +831,6 @@ function PosForm() {
 
         {/* G. BOTTOM ACTION BAR (MODIFIED) */}
         <div className="sticky bottom-0 left-0 right-0 z-10 mt-6 border-t border-gray-200 bg-white p-4 shadow-lg dark:border-gray-700 dark:bg-gray-800">
-          {/* --- (NEW) Overpayment Error --- */}
           {isOverpaid && <p className="mb-2 text-center text-sm text-red-600">Overpayment is not allowed. Please adjust payment amounts.</p>}
           {error && <p className="mb-2 text-center text-sm text-red-600">{error}</p>}
           
@@ -867,7 +838,6 @@ function PosForm() {
             <button
               type="submit"
               title="Save this sale"
-              // --- (MODIFIED) Disable if overpaid ---
               disabled={isSaving || items.length === 0 || !customer || isOverpaid}
               className="flex-2 flex items-center justify-center gap-2 rounded-lg bg-blue-600 px-5 py-3 text-base font-medium text-white shadow-sm hover:bg-blue-700 disabled:opacity-50"
             >
@@ -878,7 +848,6 @@ function PosForm() {
               type="button"
               title="Save and open print dialog"
               onClick={() => handleSaveSale('save_print')}
-              // --- (MODIFIED) Disable if overpaid ---
               disabled={isSaving || items.length === 0 || !customer || isOverpaid}
               className="flex-1 flex items-center justify-center gap-2 rounded-lg bg-gray-600 px-4 py-2 text-sm font-medium text-white hover:bg-gray-700 disabled:opacity-50"
             >
@@ -898,6 +867,60 @@ function PosForm() {
           </div>
         </div>
       </form>
+
+      {/* --- (NEW) Add Product Modal --- */}
+      {showAddProductModal && (
+        <ProductFormModal
+          productToEdit={null}
+          onClose={() => {
+            setShowAddProductModal(false);
+            // Refresh product list after adding
+            mutate((key: any) => typeof key === 'string' && key.startsWith('/api/products?tab=products'), undefined, { revalidate: true });
+          }}
+          storeId={subscription?.storeId || user?.storeId || ""}
+        />
+      )}
+
+      {/* --- (NEW) PDF Download Modal --- */}
+      {saleToPrint && PdfTemplate && (
+        <TransitionedModal isOpen={true} onClose={() => setSaleToPrint(null)} size="md">
+          <Dialog.Title className="text-lg font-medium dark:text-white">
+            <CheckCircle className="h-6 w-6 text-green-500 inline-block mr-2" />
+            Sale Saved Successfully!
+          </Dialog.Title>
+          <div className="mt-4 space-y-4">
+            <p className="text-sm text-gray-500 dark:text-gray-400">
+              Your sale ({saleToPrint.data.invoiceId}) has been saved.
+              You can now download the PDF invoice.
+            </p>
+            <PDFDownloadLink
+              document={React.createElement(PdfTemplate, { data: saleToPrint.data, store: saleToPrint.store })}
+              fileName={`${saleToPrint.data.invoiceId || 'invoice'}.pdf`}
+              className="w-full flex justify-center items-center gap-2 rounded-lg bg-red-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-red-800 disabled:opacity-50"
+            >
+              {({ loading }) => 
+                loading ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <>
+                    <Download className="h-4 w-4" />
+                    Download PDF Now
+                  </>
+                )
+              }
+            </PDFDownloadLink>
+          </div>
+          <div className="mt-6 flex justify-end">
+            <button
+              type="button"
+              className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
+              onClick={() => setSaleToPrint(null)}
+            >
+              Close
+            </button>
+          </div>
+        </TransitionedModal>
+      )}
 
       {/* NEW: Missing Price Modal */}
       <TransitionedModal isOpen={!!productForPricing} onClose={() => setProductForPricing(null)}>
@@ -1195,7 +1218,6 @@ function CalendarGrid({
                             isBefore(day, selectedDate.to);
           const isHovering = !!(selectedDate?.from && !selectedDate.to && hoveredDate) && !singleDateMode;
 
-          // ✅ Added missing definitions for hover range
           const isHoverStart = isHovering && hoveredDate && selectedDate.from && isBefore(hoveredDate, selectedDate.from)
             ? hoveredDate 
             : selectedDate?.from;

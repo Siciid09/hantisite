@@ -1,0 +1,22 @@
+$source = "C:\FProjects\hantisite\hantikaab\app"
+$destination = "C:\FProjects\hantisite\allll files"
+
+# Make sure destination exists
+New-Item -ItemType Directory -Path $destination -Force
+
+Get-ChildItem -LiteralPath $source -Recurse -File | ForEach-Object {
+    # Get relative path from source
+    $relativePath = ""
+    if ($_.DirectoryName.Length -gt $source.Length) {
+        $relativePath = $_.DirectoryName.Substring($source.Length + 1) -replace '[\\\[\]\(\)]', '_'
+    }
+    # Sanitize file name
+    $safeFileName = $_.Name -replace '[\[\]\(\)]', '_'
+    
+    # Build final file name
+    $newName = if ($relativePath) { "$relativePath`_$safeFileName" } else { $safeFileName }
+    
+    # Use -LiteralPath to handle special characters like [ ] in paths
+    Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $destination $newName)
+    Write-Host "Copied: $($_.FullName) → $newName"
+}

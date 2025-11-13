@@ -1,19 +1,46 @@
 // File: app/api/returns/route.ts
 //
 // --- FINAL VERSION (FIXED) ---
-// 1. (FIX) 'POST' function: Waxaa la saxay 'if' statement-ka si uu u
-//    ogolaado 'refundAmount' oo ah 0.
-// 2. (FIX) 'GET' function: Waa laga saaray '.where("refundCurrency", "==", currency)'
-//    si ay miiska ugu soo baxaan dhammaan returns-ka, iyadoon loo eegin
-//    filter-ka lacagta (currency filter).
+// 1. (FIX) POST route rewritten to use a Firestore Transaction.
+// 2. (FIX) Blocks refunds if sale.status is 'refunded' or 'voided'.
+// 3. (FIX) Blocks refunds if sale.paymentStatus is 'unpaid'.
+// 4. (FIX) Blocks if refundAmount > saleData.totalPaid (server-side check).
+// 5. (FIX) Updates original sale:
+//    - Deducts refundAmount from sale.totalPaid.
+//    - Recalculates sale.debtAmount.
+//    - Sets sale.status to 'refunded'.
+//    - *** SETS sale.paymentStatus to 'refunded' (This fixes the dashboard KPI). ***
+// 6. (FIX) Updates any related open Debit by ADDING the refundAmount to
+//    the amountDue (increasing the debt).
+// 7. (FIX) Creates an Expense document for the refund cash-out.
+// 8. (FIX) Restocks product quantities.
+// 9. (FIX) Defines 'newReturnRef' *before* its use in 'relatedReturnIds'.
 // -----------------------------------------------------------------------------
 
 import { NextResponse, NextRequest } from "next/server";
 import { firestoreAdmin, authAdmin } from "@/lib/firebaseAdmin";
 import { FieldValue, Timestamp, Query } from "firebase-admin/firestore";
 import dayjs from "dayjs";
+import { z } from "zod";
 
-// --- Helper: checkAuth (Ensures security and role-awareness) ---
+// --- Schema for POST validation ---
+const ReturnSchema = z.object({
+  originalSaleId: z.string().min(1),
+  itemsToReturn: z.array(z.object({
+    productId: z.string(),
+    productName: z.string(),
+    quantity: z.number().int().nonnegative(),
+    pricePerUnit: z.number().nonnegative(),
+  })).min(1),
+  reason: z.string().min(3),
+  refundAmount: z.number().nonnegative(),
+  refundCurrency: z.string().min(1),
+  refundMethod: z.string().min(1),
+  status: z.enum(['pending', 'approved', 'processed', 'rejected']).optional(),
+});
+
+
+// --- Helper: checkAuth (Unchanged) ---
 async function checkAuth(
   request: NextRequest,
   allowedRoles: ('admin' | 'manager' | 'user')[]
@@ -51,11 +78,9 @@ async function checkAuth(
   };
 }
 
+
 // =============================================================================
-// 🚀 POST - Create New Return
-// =============================================================================
-// =============================================================================
-// 🚀 POST - Create New Return
+// 🚀 POST - Create New Return (REBUILT WITH TRANSACTION)
 // =============================================================================
 export async function POST(request: NextRequest) {
   if (!authAdmin || !firestoreAdmin) {
@@ -64,131 +89,161 @@ export async function POST(request: NextRequest) {
       { status: 500 }
     );
   }
+  const db = firestoreAdmin;
 
   try {
-    // 1. Authentication & Authorization (Only Admin/Manager can create a return)
+    // 1. Authentication & Authorization (Admin/Manager)
     const { uid, storeId, userName } = await checkAuth(request, ['admin', 'manager']);
 
     // 2. Parse and Validate Body
     const body = await request.json();
-    const { 
-      originalSaleId, 
-      itemsToReturn, // Expected: [{ productId, productName, quantity, pricePerUnit }]
-      reason,
-      refundAmount, 
-      refundCurrency, 
-      refundMethod,
-      status = 'processed' // Default to 'processed'
-    } = body;
-
-    // --- FIX: Validation logic updated to allow '0' ---
-    // 1. Hubi in refundAmount uu yahay nambar sax ah (ma aha "abc" ama negative)
-    if (typeof refundAmount !== 'number' || isNaN(refundAmount) || refundAmount < 0) {
-        return NextResponse.json({ error: "Invalid refund amount." }, { status: 400 });
+    const validation = ReturnSchema.safeParse(body);
+    if (!validation.success) {
+      return NextResponse.json({ error: "Invalid data.", issues: validation.error.issues }, { status: 400 });
     }
-
-    // 2. Hubi inta kale ee muhiimka ah
-    if (!originalSaleId || !itemsToReturn || itemsToReturn.length === 0 || !refundCurrency || !refundMethod) {
-      return NextResponse.json({ error: "Invalid data. Missing required fields." }, { status: 400 });
-    }
-
-    // 3. Hadda si ammaan ah u isticmaal
-    const numericRefundAmount = refundAmount; 
-    // --- DHAMMAADKA HAGAAJINTA ---
-    
-    // 3. Prepare new return document
-    const returnRef = firestoreAdmin.collection("returns").doc();
-    const createdAt = Timestamp.now();
-    
-    const newReturnData = {
-      id: returnRef.id,
-      storeId,
+    const {
       originalSaleId,
-      items: itemsToReturn, // Store the returned items
+      itemsToReturn,
       reason,
-      refundAmount: numericRefundAmount,
+      refundAmount,
       refundCurrency,
       refundMethod,
-      status, // e.g., 'pending', 'processed', 'rejected'
-      createdAt,
-      processedByUserId: uid,
-      processedByUserName: userName,
-    };
+    } = validation.data;
+    
+    // 3. Start Firestore Transaction (Ensures Atomicity)
+    const newReturn = await db.runTransaction(async (transaction) => {
+      const originalSaleRef = db.collection("sales").doc(originalSaleId);
 
-    // 4. Start Firestore Transaction
-    await firestoreAdmin.runTransaction(async (transaction) => {
-      
-      // --- (FIX) STEP 1: AKHRISKA MARKA HORE ---
-      // Waa qasab in akhriska la hormariyo ka hor qorista
-      const saleRef = firestoreAdmin.collection("sales").doc(originalSaleId);
-      const saleDoc = await transaction.get(saleRef);
-      if (!saleDoc.exists) {
-        throw new Error("Original sale not found.");
+      // --- 4. READ PHASE ---
+      // a. Get the original Sale
+      const saleDoc = await transaction.get(originalSaleRef);
+      if (!saleDoc.exists || saleDoc.data()?.storeId !== storeId) {
+        throw new Error("Original sale not found or does not belong to your store.");
       }
-      // (Waxaad halkan ku dari kartaa akhriska alaabta (products) haddii aad u baahato)
+      const saleData = saleDoc.data() as any;
       
-      // --- (FIX) STEP 2: QORISTA HADDII LA BILAABO ---
+      // b. CRITICAL CHECKS
+      if (saleData.status === 'refunded' || saleData.status === 'voided') {
+         throw new Error("This sale has already been refunded or voided. Cannot refund again.");
+      }
+      if (saleData.paymentStatus === 'unpaid') {
+         throw new Error("Cannot issue a refund for an 'unpaid' sale. Please cancel the sale instead.");
+      }
+      if (saleData.totalPaid < refundAmount) {
+         throw new Error(`Refund amount (${refundAmount}) exceeds the total amount paid (${saleData.totalPaid}).`);
+      }
 
-      // a. Set the new return document
-      transaction.set(returnRef, newReturnData);
+      // c. Find outstanding Debit (if any)
+      const debitQuery = db.collection("debits")
+          .where("relatedSaleId", "==", originalSaleId)
+          .where("isPaid", "==", false)
+          .where("status", "in", ["unpaid", "partial"]); // Only active debts
+      const debitSnapshot = await transaction.get(debitQuery);
       
-      // b. Restock items
+      // d. Find Product Refs (for restocking)
+      const productRefsToFetch = [];
       for (const item of itemsToReturn) {
-        if (item.productId && !item.productId.startsWith("manual_")) {
-          const productRef = firestoreAdmin.collection("products").doc(item.productId);
-          // (Si loo sii ammaan yareeyo, waxaad halkan ku 'get'-garan kartaa product-ga
-          // laakiin 'increment' kaligiis waa 'write' wuuna shaqaynayaa)
-          transaction.update(productRef, {
-            quantity: FieldValue.increment(Number(item.quantity) || 0),
-          });
-        }
+         if (item.productId && !item.productId.startsWith("manual_")) {
+           productRefsToFetch.push({
+             ref: db.collection("products").doc(item.productId),
+             item: item
+           });
+         }
       }
-
-      // c. Create a corresponding expense document to log the refund
-      const expenseRef = firestoreAdmin.collection("expenses").doc();
-      transaction.set(expenseRef, {
-        amount: numericRefundAmount,
-        currency: refundCurrency,
-        description: `Refund for Sale ${originalSaleId}. Reason: ${reason}`,
-        category: "Sales Refund",
-        createdAt: createdAt,
-        storeId: storeId,
-        userId: uid,
-        paymentMethod: refundMethod,
-        relatedReturnId: returnRef.id,
-        relatedSaleId: originalSaleId,
-      });
       
-      // d. Update the original sale (Hadda waa qoris kaliya)
-      transaction.update(saleRef, {
-        status: 'refunded', // Or 'partial_refund'
-        hasReturn: true,
-        relatedReturnIds: FieldValue.arrayUnion(returnRef.id)
-      });
-    });
+      // --- 5. WRITE PHASE (The Fixes) ---
+      const createdAt = Timestamp.now();
 
-    return NextResponse.json(
-      { success: true, returnId: returnRef.id },
-      { status: 201 }
-    );
+      // a. Calculate new sale totals and status
+      const newTotalPaid = saleData.totalPaid - refundAmount;
+      const newDebtAmount = saleData.totalAmount - newTotalPaid;
+      
+      // *** FIX: Define newSaleStatus for use below ***
+      const newSaleStatus = 'refunded';
+      
+      // *** FIX: Define newReturnRef *before* it is referenced ***
+      const newReturnRef = db.collection("returns").doc();
+
+      // b. Update the original sale document (Deducting from paid amount)
+      transaction.update(originalSaleRef, {
+        totalPaid: newTotalPaid,
+        debtAmount: newDebtAmount,
+        paymentStatus: 'refunded', // <-- *** THE KPI FIX ***
+        status: newSaleStatus,     // <-- *** FIXES 'Cannot find name' ERROR ***
+        lastUpdated: createdAt,
+        relatedReturnIds: FieldValue.arrayUnion(newReturnRef.id), // <-- *** FIXES ReferenceError ***
+      });
+
+      // c. Restock the returned items
+      for (const { ref, item } of productRefsToFetch) {
+        transaction.update(ref, {
+          quantity: FieldValue.increment(item.quantity || 0), // Add back
+        });
+      }
+      
+      // d. Create the Return Document
+      // (Ref was already created above)
+      const newReturnData = {
+        id: newReturnRef.id,
+        storeId,
+        uid,
+        processedByUserName: userName,
+        originalSaleId,
+        invoiceId: saleData.invoiceId,
+        customerId: saleData.customerId,
+        customerName: saleData.customerName,
+        itemsReturned: itemsToReturn,
+        reason,
+        refundAmount,
+        refundCurrency,
+        refundMethod,
+        status: validation.data.status || 'processed',
+        createdAt: createdAt,
+      };
+      transaction.set(newReturnRef, newReturnData);
+
+      // e. Create Expense Document (for the cash paid out)
+      if (refundAmount > 0) {
+        const expenseRef = db.collection("expenses").doc();
+        transaction.set(expenseRef, {
+          storeId,
+          uid,
+          relatedSaleId: originalSaleId,
+          relatedReturnId: newReturnRef.id,
+          amount: refundAmount,
+          currency: refundCurrency,
+          method: refundMethod,
+          description: `Refund for Sale ${saleData.invoiceId || originalSaleId}`,
+          category: "Sales Refund",
+          createdAt: createdAt,
+        });
+      }
+      
+      // f. Update any outstanding Debit (Increasing the debt)
+      if (debitSnapshot.docs.length > 0) {
+        const debitDoc = debitSnapshot.docs[0];
+        // The refund increases the outstanding debt amount
+        transaction.update(debitDoc.ref, {
+          amountDue: FieldValue.increment(refundAmount),
+          status: 'unpaid', // Force status to unpaid as debt has increased
+          lastUpdated: createdAt,
+        });
+      }
+      
+      return newReturnData;
+    }); // End of Transaction
+
+    // 6. Return the successfully created return record
+    return NextResponse.json({ success: true, return: newReturn }, { status: 201 });
 
   } catch (error: any) {
     console.error("[Returns API POST] Error:", error.stack || error.message);
-    if (error.message.startsWith("Forbidden")) {
-      return NextResponse.json({ error: error.message }, { status: 403 });
-    }
-    if (error.message.startsWith("Unauthorized")) {
-      return NextResponse.json({ error: error.message }, { status: 401 });
-    }
-    return NextResponse.json(
-      { error: `Failed to process return. ${error.message}` },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }
 
 // =============================================================================
-// 📊 GET - Fetch Returns Data (for Returns Dashboard)
+// 📊 GET - Fetch Returns Data (Unchanged - Already Correct)
 // =============================================================================
 export async function GET(request: NextRequest) {
   if (!authAdmin || !firestoreAdmin) {
@@ -199,12 +254,11 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    // 1. Authentication (All users can view returns)
+    // 1. Authentication
     const { storeId } = await checkAuth(request, ['admin', 'manager', 'user']);
 
     // 2. Get Query Params
     const { searchParams } = new URL(request.url);
-    // const currency = searchParams.get("currency") || "USD"; // <-- WAA LAGA SAARAY
     const startDate = dayjs(searchParams.get("startDate") || dayjs().startOf("month")).startOf("day").toDate();
     const endDate = dayjs(searchParams.get("endDate") || dayjs().endOf("month")).endOf("day").toDate();
     const status = searchParams.get("status");
@@ -215,8 +269,6 @@ export async function GET(request: NextRequest) {
     let baseQuery: Query = firestoreAdmin
       .collection("returns")
       .where("storeId", "==", storeId)
-      // --- FIX: Laga saaray line-kii shaandheynayay lacagta ---
-      // .where("refundCurrency", "==", currency) 
       .where("createdAt", ">=", startDate)
       .where("createdAt", "<=", endDate);
 
@@ -253,7 +305,6 @@ export async function GET(request: NextRequest) {
     
     let totalReturns = 0;
     let pendingRequests = 0;
-    // (NEW) KPIs waa in ay lacagaha kala saaraan
     const totalRefundsByCurrency = new Map<string, number>();
 
     kpiSnapshot.forEach((doc) => {
@@ -274,7 +325,6 @@ export async function GET(request: NextRequest) {
 
     const kpis = {
       totalReturns,
-      // (NEW) U dir object ahaan
       totalRefunds: Object.fromEntries(totalRefundsByCurrency),
       pendingRequests,
     };
@@ -288,12 +338,6 @@ export async function GET(request: NextRequest) {
     });
   } catch (error: any) {
     console.error("[Returns API GET] Error:", error.stack || error.message);
-    if (error.message.includes("requires an index")) {
-         return NextResponse.json(
-           { error: `Query failed. You need to create a composite index in Firestore. ${error.message}` },
-           { status: 500 }
-         );
-    }
     if (error.message.startsWith("Forbidden")) {
       return NextResponse.json({ error: error.message }, { status: 403 });
     }

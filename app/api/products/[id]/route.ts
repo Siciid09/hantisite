@@ -1,8 +1,10 @@
 // File: app/api/products/[id]/route.ts
 //
-// --- LATEST UPDATE ---
+// --- LATEST UPDATE (Product History Bug) ---
 // 1. (FIX) Added 'role' check to 'checkAuth' function.
-//    Only users with 'role: "admin"' can now access this route.
+// 2. (CRITICAL FIX) Replaced the broken `array-contains` query
+//    with a query on the new `productIds` field. This will
+//    now correctly find the sales history for this product.
 // -----------------------------------------------------------------------------
 
 import { NextResponse, NextRequest } from "next/server";
@@ -65,11 +67,14 @@ export async function GET(
     const productData = productDoc.data();
 
     // 2. Get Sales History (query 'sales' collection)
+    // --- (CRITICAL FIX) ---
+    // Changed query from `items` to `productIds`
     const salesQuery = db.collection("sales")
       .where("storeId", "==", storeId)
-      .where("items", "array-contains", { productId: productId }) // This is a simple query
+      .where("productIds", "array-contains", productId) // <-- THIS IS THE FIX
       .orderBy("createdAt", "desc")
       .limit(20);
+    // --- (END FIX) ---
       
     // 3. Get Stock Adjustment History
     const adjustmentsQuery = db.collection("inventory_adjustments")
@@ -98,7 +103,7 @@ export async function GET(
             
             totalUnitsSold += quantity;
             // This is a simplification; ideally, you'd convert currencies
-            if (sale.currency === "USD") {
+            if (sale.invoiceCurrency === "USD") {
                 totalRevenue += itemRevenue;
             }
         }
@@ -107,9 +112,9 @@ export async function GET(
             id: doc.id,
             invoiceId: sale.invoiceId,
             createdAt: (sale.createdAt as Timestamp).toDate().toISOString(),
-            quantitySold: saleItem.quantity || 0,
-            salePrice: saleItem.pricePerUnit || 0,
-            currency: sale.currency
+            quantitySold: saleItem?.quantity || 0, // Added safe navigation
+            salePrice: saleItem?.pricePerUnit || 0, // Added safe navigation
+            currency: sale.invoiceCurrency
         };
     });
     
@@ -149,15 +154,12 @@ export async function GET(
       return NextResponse.json({ error: error.message }, { status: 403 });
     }
     
-    // Handle complex queries that might fail
+    // Handle query errors
     if (error.message.includes("array-contains")) {
-      return NextResponse.json({
-         product: productDoc?.data(), // Now visible here
-         kpis: { totalUnitsSold: 0, totalRevenueUsd: 0, currentStock: productDoc?.data()?.quantity || 0 },
-         salesHistory: [], // Return empty array
-         adjustmentHistory: [],
-         error: "Failed to query sales history. This query may require a composite index."
-      });
+       return NextResponse.json(
+           { error: `Query failed. You may need to create a composite index in Firestore. ${error.message}` },
+           { status: 500 }
+         );
     }
     return NextResponse.json({ error: error.message }, { status: 500 });
   }

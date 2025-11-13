@@ -1,5 +1,6 @@
 /** @type {import('tailwindcss').Config} */
 module.exports = {
+  future: { 'disableColorOpacityUtilities': true },
   // This line is essential for next-themes to work
   darkMode: 'class',
 

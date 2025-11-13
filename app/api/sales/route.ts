@@ -1,13 +1,12 @@
 // File: app/api/sales/route.ts
 //
-// --- LATEST FIX (ts(2454)) ---
+// --- LATEST FIX (Product History Bug) ---
 // 1. (FIX) The 'customerRef' (ts(2454)) error is fixed.
-// 2. (FIX) The customer KPI logic (`totalSpent`, `totalOwed`) has been
-//    moved *inside* the `if/else if/else` block. This ensures
-//    `customerRef` is always assigned before it is used.
+// 2. (FIX) The customer KPI logic moved inside if/else block.
 // 3. (KEPT) All other logic (income, debt creation) is the same.
-// --- (NEW MODIFICATION) ---
-// 4. (NEW) Added server-side overpayment validation inside the transaction.
+// 4. (NEW) Added server-side overpayment validation.
+// 5. (CRITICAL FIX) Added 'productIds' array to the 'newSaleData' object.
+//    This is required for the product details page to find sales.
 // -----------------------------------------------------------------------------
 
 import { NextResponse, NextRequest } from "next/server";
@@ -15,7 +14,7 @@ import { firestoreAdmin, authAdmin } from "@/lib/firebaseAdmin";
 import { FieldValue, Timestamp, Query } from "firebase-admin/firestore";
 import dayjs from "dayjs";
 
-// --- Helper: checkAuth ---
+// --- Helper: checkAuth (Unchanged) ---
 async function checkAuth(
   request: NextRequest,
   allowedRoles: ('admin' | 'manager' | 'user')[]
@@ -96,8 +95,6 @@ export async function POST(request: NextRequest) {
       const productUpdates = []; // Will store { ref, change }
       
       // --- 5. READ PHASE ---
-      // (This section is unchanged)
-      
       const productRefsToFetch = [];
       const manualItems = [];
 
@@ -116,8 +113,6 @@ export async function POST(request: NextRequest) {
       );
 
       // --- 6. PROCESS & VALIDATE (In-Memory) ---
-      // (This section is unchanged)
-
       for (let i = 0; i < productDocs.length; i++) {
         const productDoc = productDocs[i];
         const { ref, item } = productRefsToFetch[i]; 
@@ -177,12 +172,9 @@ export async function POST(request: NextRequest) {
       // b. Calculate Payment Totals
       const totalPaid = paymentLines.reduce((sum: number, p: any) => sum + (p.valueInInvoiceCurrency || 0), 0);
       
-      // --- (NEW) Server-Side Overpayment Prevention ---
-      // Allow a tiny margin for floating point errors (e.g., 0.01)
       if (totalPaid > totalAmount + 0.01) {
         throw new Error(`Overpayment is not allowed. Total paid (${totalPaid}) exceeds total amount (${totalAmount}).`);
       }
-      // --- (END NEW) ---
       
       const debtAmount = totalAmount - totalPaid;
       const paymentStatus = debtAmount <= 0.01 ? 'paid' : (totalPaid > 0 ? 'partial' : 'unpaid');
@@ -192,7 +184,6 @@ export async function POST(request: NextRequest) {
 
       if (customer.id === "walkin") {
         newCustomerId = "walkin";
-
       } else if (customer.id.startsWith("new_")) {
         // Create new customer
         customerRef = db.collection("customers").doc();
@@ -205,8 +196,8 @@ export async function POST(request: NextRequest) {
           whatsapp: customer.whatsapp || null,
           notes: customer.notes || null,
           createdAt: FieldValue.serverTimestamp(),
-          totalSpent: {}, // Initialize KPI
-          totalOwed: {}, // Initialize KPI
+          totalSpent: {},
+          totalOwed: {},
         }, { merge: true });
 
         // Update KPIs for the NEW customer
@@ -243,6 +234,11 @@ export async function POST(request: NextRequest) {
         }
       }
 
+      // --- (CRITICAL FIX) ---
+      // Create a simple array of product IDs for querying
+      const productIds = processedItems.map(item => item.productId);
+      // --- (END FIX) ---
+
       // c. Prepare Sale Document
       const newSaleRef = db.collection("sales").doc();
       const newSaleData = {
@@ -253,6 +249,7 @@ export async function POST(request: NextRequest) {
         customerId: newCustomerId,
         customerName: customer.name,
         items: processedItems,
+        productIds: productIds, // <-- ADDED THIS FIELD
         invoiceCurrency,
         totalAmount,
         totalCostUsd,
@@ -324,7 +321,6 @@ export async function POST(request: NextRequest) {
 
   } catch (error: any) {
     console.error("[Sales API POST] Error:", error.stack || error.message);
-    // --- (NEW) Send specific error message for overpayment ---
     if (error.message.startsWith("Overpayment detected")) {
       return NextResponse.json({ error: error.message }, { status: 400 });
     }

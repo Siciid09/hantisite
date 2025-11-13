@@ -1,0 +1,75 @@
+sales:::::
+
+paymetn currency undefined, search filter neeeeeeeds search button click
+sales refun report
+refund not showing up in the tables list sales refunded
+refund can be refunded eve the user havent paid and he is in debt
+customers new customer should have popup info phone and adress and whatsapp if create new custom 'naem searched not found'
+product should have + button which createas a product with popup info form t
+
+Product Image (Optional)
+Change Image
+Product Name
+Category
+
+-- Select Category --
+
+Description (Optional)
+Initial Stock
+Stock quantity is managed via adjustments after creation.
+
+Initial Quantity
+0
+Warehouse
+
+-- Select Warehouse --
+
+Prices
+Currency
+
+USD
+Sale Price
+e.g., 10
+Cost Price
+e.g., 5
+paymetns should be allll keep in mind with each currency having its own accounts methods see bwlo 
+payment methods should be usd sos slsh euro ksh birr
+payment methods should be linked to dropdown currency
+usd > shows as method >cash, bank, zaad, edahab, somnet, evc pluse, sahal,other
+sos> shows method cash bamk others
+slsh> shows cash, bank, edahab, zaad, other
+birr> cash, bank, ebirr, other
+ksh>bank, cash, other, m-pessa
+euro> cash, bank, other
+
+currency on new sale product which have non usd currency is still saying it dont have currency amount, while int the product it do
+
+note each payment method is account which read by reprot finance and dashbaord
+
+
+
+
+
+
+product
+
+product history shows no sales even the product got sales and deducted,, 
+product name click link product id opener shows this data       Total Units Sold     
+0
+
+   
+   
+       
+        
+   
+      Total Revenue (USD)     
+USD 0 it shows 0 and also sale hsitry shows no sales 
+
+
+
+
+
+
+purchases dont have scrollll currency all
+also it dont have in the form payment method
+and need to have inoice pdf or image uploadcle

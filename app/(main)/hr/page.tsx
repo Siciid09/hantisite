@@ -2,7 +2,11 @@
 // Description: Main HR & Staff page (MODIFIED)
 // -----------------------------------------------------------------------------
 "use client";
-
+// --- (NEW) IMPORTS FOR PDF MODAL ---
+import { PDFDownloadLink } from "@react-pdf/renderer";
+import { getTemplateComponent, ReportType } from "@/lib/pdfService"; // Your "brain"
+import { Download, FileText } from "lucide-react";
+// --- END NEW IMPORTS ---
 import React, { useState, Suspense, useEffect } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import useSWR, { useSWRConfig } from "swr";
@@ -65,6 +69,10 @@ function HRPage() {
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [editingMember, setEditingMember] = useState<any>(null);
+  // --- (NEW) PDF MODAL STATE ---
+  const [pdfData, setPdfData] = useState<any | null>(null);
+  const [PdfComponent, setPdfComponent] = useState<React.ElementType | null>(null);
+  // --- END NEW STATE ---
   const [isViewModalOpen, setIsViewModalOpen] = useState(false);
   const [viewingMember, setViewingMember] = useState<any>(null);
   const [isHRAccessGranted, setIsHRAccessGranted] = useState(false);
@@ -125,7 +133,25 @@ function HRPage() {
     setIsEditModalOpen(false);
     setEditingMember(null);
   };
-  
+  // --- (NEW) PDF MODAL HANDLER ---
+  const handleShowPdfModal = (paymentData: any) => {
+    // 1. Get store info from the subscription
+    const storeInfo = {
+      name: subscription?.storeName || "My Store",
+      address: subscription?.storeAddress || "123 Main St",
+      phone: subscription?.storePhone || "555-1234",
+      logoUrl: subscription?.logoUrl,
+      planId: subscription?.planId,
+    };
+
+    // 2. Get the correct template from the "brain"
+    // We use 'payroll' for this HR voucher
+    const Template = getTemplateComponent('payroll' as ReportType, subscription);
+
+    // 3. Set the state to open the modal
+    setPdfData({ data: paymentData, store: storeInfo });
+    setPdfComponent(() => Template); // Store the component itself
+  };
   if (authLoading || !user) {
     return <LoadingSpinner />;
   }
@@ -202,13 +228,16 @@ function HRPage() {
                 userRole={userRole}
               />
             )}
+      
             {view === 'payroll' && (
               <PayrollSalaries 
                 data={apiData} 
                 onPageChange={handlePageChange} 
                 onSuccess={handleActionSuccess}
+                onPrintVoucher={handleShowPdfModal} // <-- (NEW) Pass the handler down
               />
             )}
+
           </>
         )}
       </div>
@@ -241,6 +270,56 @@ function HRPage() {
           }}
         />
       )}
+
+      
+      {isViewModalOpen && viewingMember && (
+        <ViewEmployeeModal
+          member={viewingMember}
+          onClose={() => {
+            setIsViewModalOpen(false);
+            setViewingMember(null);
+          }}
+        />
+      )}
+      
+      {/* --- (NEW) PASTE THE PDF MODAL HERE --- */}
+      {pdfData && PdfComponent && (
+        <ModalBase title="PDF Ready for Download" onClose={() => setPdfData(null)}>
+          <div className="mt-4 space-y-4">
+            <p className="text-sm text-gray-500 dark:text-gray-400">
+              Your payroll voucher ({pdfData.data.userName}) is ready.
+            </p>
+            
+            <PDFDownloadLink
+              document={<PdfComponent data={pdfData.data} store={pdfData.store} />}
+              fileName={`voucher-${pdfData.data.userName.replace(" ", "_")}.pdf`}
+              className="w-full flex justify-center items-center gap-2 rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
+            >
+              {({ loading }) => 
+                loading ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <>
+                    <Download className="h-4 w-4" />
+                    Download PDF Now
+                  </>
+                )
+              }
+            </PDFDownloadLink>
+          </div>
+          <div className="mt-6 flex justify-end">
+            <button
+              type="button"
+              className="rounded-lg border bg-white px-4 py-2 text-sm font-medium hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-800 dark:hover:bg-gray-700"
+              onClick={() => setPdfData(null)}
+            >
+              Close
+            </button>
+          </div>
+        </ModalBase>
+      )}
+      {/* --- END NEW MODAL --- */}
+  
     </div>
   );
 }
@@ -387,8 +466,14 @@ const EmployeeList = ({ data, onPageChange, onEdit, onView, userRole }: {
 
 
 // 4. Payroll
-const PayrollSalaries = ({ data, onPageChange, onSuccess }: { data: any, onPageChange: (p: number) => void, onSuccess: () => void }) => {
-  const [isPayModalOpen, setIsPayModalOpen] = useState(false);
+const PayrollSalaries = ({ data, onPageChange, onSuccess, onPrintVoucher }: { 
+  data: any, 
+  onPageChange: (p: number) => void, 
+  onSuccess: () => void,
+  onPrintVoucher: (payment: any) => void // <-- (NEW) Accept the prop
+}) => {
+//
+const [isPayModalOpen, setIsPayModalOpen] = useState(false);
   const [payingEntry, setPayingEntry] = useState<any>(null);
 
   const handleOpenPayModal = (entry: any) => {
@@ -403,101 +488,7 @@ const PayrollSalaries = ({ data, onPageChange, onSuccess }: { data: any, onPageC
   };
 
   // --- (MODIFIED) PDF Print function (no changes, just copied) ---
-  const handlePrint = (payment: any) => {
-    const doc = new jsPDF();
-    const pageWidth = doc.internal.pageSize.getWidth();
-    const margin = 15;
-    const contentWidth = pageWidth - margin * 2;
-    let y = 30; 
-    
-    doc.setFontSize(22);
-    doc.setFont("helvetica", "bold");
-    doc.setTextColor(40, 55, 71); 
-    doc.text("PAYMENT VOUCHER", pageWidth / 2, y, { align: "center" });
-    y += 10;
-    
-    doc.setFontSize(10);
-    doc.setFont("helvetica", "normal");
-    doc.setTextColor(100, 100, 100); 
-    
-    doc.text("Invoice ID:", contentWidth + margin, y, { align: "right" });
-    doc.text(payment.id.substring(0, 10), contentWidth + margin - 20, y, { align: "left" });
-    y += 5;
-    
-    doc.text("Date Paid:", contentWidth + margin, y, { align: "right" });
-    doc.text(dayjs(payment.payDate).format("DD MMM YYYY"), contentWidth + margin - 20, y, { align: "left" });
-    y += 10;
-
-    doc.setLineWidth(0.2);
-    doc.line(margin, y, pageWidth - margin, y);
-    y += 10;
-    
-    doc.setFontSize(11);
-    doc.setFont("helvetica", "bold");
-    doc.setTextColor(40, 55, 71);
-    doc.text("Paid To:", margin, y);
-    doc.text("Paid By (Store):", pageWidth / 2, y);
-    
-    y += 6;
-    doc.setFont("helvetica", "normal");
-    doc.setTextColor(50, 50, 50);
-    doc.text(payment.userName, margin, y);
-    doc.text(payment.processedBy, pageWidth / 2, y); 
-    
-    y += 5;
-    doc.text(`User ID: ${payment.userId.substring(0, 10)}...`, margin, y);
-    doc.text(`Processed: ${dayjs(payment.processedAt).format("DD MMM YYYY")}`, pageWidth / 2, y);
-    y += 10;
-    
-    doc.setLineWidth(0.5);
-    doc.setFillColor(236, 240, 241); 
-    doc.rect(margin, y, contentWidth, 10, "F");
-    
-    doc.setFontSize(10);
-    doc.setFont("helvetica", "bold");
-    doc.setTextColor(40, 55, 71);
-    doc.text("Description", margin + 2, y + 7);
-    doc.text("Payment Method", margin + 110, y + 7);
-    doc.text("Amount", contentWidth + margin - 2, y + 7, { align: "right" });
-    y += 10;
-    
-    doc.setFontSize(10);
-    doc.setFont("helvetica", "normal");
-    doc.setTextColor(50, 50, 50);
-    doc.text(`Salary Payment (${dayjs(payment.payDate).format("MMM YYYY")})`, margin + 2, y + 7);
-    doc.text(payment.paymentMethod || "N/A", margin + 110, y + 7);
-    doc.text(`${payment.amount.toFixed(2)} ${payment.currency}`, contentWidth + margin - 2, y + 7, { align: "right" });
-    y += 15;
-
-    if (payment.notes) {
-      doc.setFontSize(10);
-      doc.setFont("helvetica", "bold");
-      doc.setTextColor(40, 55, 71);
-      doc.text("Notes:", margin, y);
-      y += 5;
-      doc.setFont("helvetica", "normal");
-      doc.setTextColor(50, 50, 50);
-      doc.text(payment.notes, margin, y, { maxWidth: contentWidth });
-      y += 15;
-    }
-
-    doc.setLineWidth(0.5);
-    doc.line(pageWidth / 2, y, pageWidth - margin, y);
-    y += 8;
-
-    doc.setFontSize(14);
-    doc.setFont("helvetica", "bold");
-    doc.setTextColor(40, 55, 71);
-    doc.text("Total Paid:", pageWidth / 2, y);
-    doc.text(`${payment.amount.toFixed(2)} ${payment.currency}`, contentWidth + margin, y, { align: "right" });
-    y += 15;
-    
-    doc.setFontSize(9);
-    doc.setTextColor(150, 150, 150);
-    doc.text("Thank you. This is an official payment record.", pageWidth / 2, y, { align: "center" });
-
-    doc.save(`voucher-${payment.userName.replace(" ", "_")}-${payment.id.substring(0,5)}.pdf`);
-  };
+  
 
   return (
     <>
@@ -565,9 +556,9 @@ const PayrollSalaries = ({ data, onPageChange, onSuccess }: { data: any, onPageC
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{payment.processedBy}</td>
                   <td className="px-6 py-4 whitespace-nowrap text-right">
                     <button 
-                      onClick={() => handlePrint(payment)}
+                      onClick={() => onPrintVoucher(payment)}
                       className="flex items-center gap-2 rounded-lg border bg-white px-3 py-1.5 text-xs font-medium text-gray-700 shadow-sm hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600"
-                    >
+                    > 
                       <Printer className="h-4 w-4" />
                       Print
                     </button>

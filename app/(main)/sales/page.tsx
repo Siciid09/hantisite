@@ -1,23 +1,20 @@
 // File: app/(main)/sales/page.tsx
 //
-// --- FINAL VERSION (MODIFIED FOR DELETE) ---
-// 1. (MOD) Imports 'useSWRConfig' for data mutation.
-// 2. (MOD) Imports 'DeleteConfirmModal' from components.
-// 3. (MOD) Imports 'auth' for getting user token.
-// 4. (NEW) Adds state for 'isDeleteModalOpen', 'saleToDelete', 'isDeleting', 'deleteError'.
-// 5. (NEW) Adds 'handleOpenDeleteModal', 'handleCloseDeleteModal', 'handleConfirmDelete' functions.
-// 6. (MOD) Gets 'userRole' from 'user' object.
-// 7. (MOD) Passes 'userRole' and 'onDeleteSale' props to 'SalesDashboard' and 'SalesDataContainer'.
-// 8. (NEW) Renders the 'DeleteConfirmModal' component.
+// --- FINAL VERSION (with NEW PDF SYSTEM MERGED) ---
+// 1. (REMOVED) Old PDF import.
+// 2. (NEW) Added imports for @react-pdf/renderer, lucide, and the new pdfService.
+// 3. (NEW) Added state for 'saleToPrint' and 'PdfTemplate'.
+// 4. (NEW) Updated useAuth to get 'subscription' info.
+// 5. (FIX) 'handlePrintSale' is now rewritten to open the new PDF modal.
+// 6. (NEW) Added the PDF Download Modal JSX.
 // -----------------------------------------------------------------------------
 
 "use client";
- 
+
 import React, { useState, useEffect, Suspense, useMemo, Fragment } from "react";
 import { useSearchParams } from "next/navigation";
-import useSWR, { useSWRConfig } from "swr"; // <-- (MOD) Import 'useSWRConfig'
-import { useAuth } from "@/app/contexts/AuthContext";
-import { auth } from "@/lib/firebaseConfig"; // <-- (NEW) Import auth
+import useSWR from "swr";
+import { useAuth } from "@/app/contexts/AuthContext"; // Corrected path
 import dayjs from "dayjs";
 import {
   AdvancedFilterBar,
@@ -30,21 +27,25 @@ import {
   SalesDashboard,
   SalesDataContainer,
   SalesReturns,
-  DeleteConfirmModal // <-- (NEW) Import DeleteConfirmModal
-} from "./components"; 
-import { generateInvoicePdf } from "@/lib/pdfService"; 
+  TransitionedModal // <-- (NEW) Added TransitionedModal
+} from "./components";
+import { Dialog } from "@headlessui/react";
+import { Download, Loader2, FileText } from "lucide-react"; // <-- (NEW) Imports for PDF Modal
+
+// --- (NEW) Correct imports for the NEW High-Quality PDF system ---
+import { PDFDownloadLink } from "@react-pdf/renderer";
+import { getTemplateComponent, ReportType } from "@/lib/pdfService";
+// --- (REMOVED) Old PDF import ---
+// import { generateInvoicePdf } from "@/lib/pdfService"; 
 
 // =============================================================================
 // 📝 Main Sales Page Component
 // =============================================================================
 function SalesPage() {
+  // --- (NEW) Get subscription from Auth ---
   const { user, loading: authLoading, subscription } = useAuth();
   const searchParams = useSearchParams();
   const view = searchParams.get("view") || "dashboard";
-  const { mutate } = useSWRConfig(); // <-- (NEW) Get mutate function
-
-  // --- (NEW) Get user role ---
-  const userRole = (user as any)?.role || 'user';
 
   // Global filters
   const [filters, setFilters] = useState({
@@ -70,12 +71,9 @@ function SalesPage() {
   const [isCreateInvoiceModalOpen, setIsCreateInvoiceModalOpen] = useState(false);
   const [saleToReturn, setSaleToReturn] = useState<any | null>(null);
 
-  // --- (NEW) Delete Modal State ---
-  const [saleToDelete, setSaleToDelete] = useState<any | null>(null);
-  const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
-  const [isDeleting, setIsDeleting] = useState(false);
-  const [deleteError, setDeleteError] = useState<string | null>(null);
-
+  // --- (NEW) PDF Modal State ---
+  const [saleToPrint, setSaleToPrint] = useState<any | null>(null);
+  const [PdfTemplate, setPdfTemplate] = useState<React.ElementType | null>(null);
 
   // --- SWR Data Fetching (Only for 'returns' view) ---
   const returnsQueryString = useMemo(() => {
@@ -110,13 +108,20 @@ function SalesPage() {
     setIsViewModalOpen(true);
   };
 
+  // --- (FIX) Replaced with new PDF Modal logic ---
   const handlePrintSale = (sale: any) => {
     const storeInfo = {
-      name: subscription?.name || subscription?.storeName || "Your Store",
-      address: subscription?.address || subscription?.storeAddress || "Your Address",
-      phone: subscription?.phone || subscription?.storePhone || "Your Phone"
+      name: subscription?.storeName || "My Store",
+      address: subscription?.storeAddress || "123 Main St",
+      phone: subscription?.storePhone || "555-1234",
+      logoUrl: subscription?.logoUrl, 
+      planId: subscription?.planId,   
     };
-    generateInvoicePdf(sale, storeInfo); 
+    
+    const TemplateComponent = getTemplateComponent('invoice' as ReportType, subscription);
+    
+    setPdfTemplate(() => TemplateComponent); 
+    setSaleToPrint({ data: sale, store: storeInfo }); 
   };
   
   // Handlers for the "New Return" modal
@@ -128,55 +133,6 @@ function SalesPage() {
   const handleCloseReturnModal = () => {
     setIsNewReturnModalOpen(false);
     setSaleToReturn(null); 
-  };
-
-  // --- (NEW) Delete Modal Handlers ---
-  const handleOpenDeleteModal = (sale: any) => {
-    setSaleToDelete(sale);
-    setIsDeleteModalOpen(true);
-    setDeleteError(null);
-  };
-
-  const handleCloseDeleteModal = () => {
-    if (isDeleting) return; // Don't close while deleting
-    setSaleToDelete(null);
-    setIsDeleteModalOpen(false);
-    setDeleteError(null);
-  };
-
-  const handleConfirmDelete = async () => {
-    if (!saleToDelete) return;
-
-    setIsDeleting(true);
-    setDeleteError(null);
-
-    try {
-      const firebaseUser = auth.currentUser;
-      if (!firebaseUser) throw new Error("User is not authenticated.");
-      const token = await firebaseUser.getIdToken();
-
-      const res = await fetch(`/api/sales/${saleToDelete.id}`, {
-        method: 'DELETE',
-        headers: { Authorization: `Bearer ${token}` },
-      });
-
-      if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.error || "Failed to delete sale.");
-      }
-
-      // Success! Close modal and refresh all data
-      handleCloseDeleteModal();
-      // Mutate all SWR keys that start with '/api/sales' or '/api/returns'
-      mutate((key) => typeof key === 'string' && key.startsWith('/api/sales'), undefined, { revalidate: true });
-      mutate((key) => typeof key === 'string' && key.startsWith('/api/returns'), undefined, { revalidate: true });
-
-    } catch (err: any) {
-      console.error("Delete Error:", err);
-      setDeleteError(err.message);
-    } finally {
-      setIsDeleting(false);
-    }
   };
 
   // ---------------------------------
@@ -191,22 +147,12 @@ function SalesPage() {
 
       {authLoading && <LoadingSpinner />}
       
-      {deleteError && (
-        <div className="mb-4 rounded-lg border border-red-300 bg-red-50 p-4 dark:border-red-700 dark:bg-red-900/20">
-          <p className="text-sm font-medium text-red-700 dark:text-red-400">
-            Error: {deleteError}
-          </p>
-        </div>
-      )}
-
       {view === 'dashboard' && (
         <SalesDashboard
           filters={filters}
           onViewSale={handleViewSale}
           onPrintSale={handlePrintSale}
           onRefund={handleOpenReturnModal}
-          userRole={userRole} // <-- (NEW) Pass role
-          onDeleteSale={handleOpenDeleteModal} // <-- (NEW) Pass handler
         />
       )}
       
@@ -217,8 +163,6 @@ function SalesPage() {
           onViewSale={handleViewSale}
           onPrintSale={handlePrintSale}
           onRefund={handleOpenReturnModal}
-          userRole={userRole} // <-- (NEW) Pass role
-          onDeleteSale={handleOpenDeleteModal} // <-- (NEW) Pass handler
         />
       )}
       
@@ -244,12 +188,10 @@ function SalesPage() {
           onPrintSale={handlePrintSale}
           onRefund={handleOpenReturnModal}
           onCreateInvoice={() => setIsCreateInvoiceModalOpen(true)}
-          userRole={userRole} // <-- (NEW) Pass role
-          onDeleteSale={handleOpenDeleteModal} // <-- (NEW) Pass handler
         />
       )}
       
-      {/* Modals */}
+      {/* --- Standard Modals --- */}
       <ViewSaleModal
         isOpen={isViewModalOpen}
         onClose={() => setIsViewModalOpen(false)}
@@ -271,18 +213,51 @@ function SalesPage() {
         globalFilters={filters}
       />
 
-      {/* --- (NEW) Delete Modal --- */}
-      <DeleteConfirmModal
-        isOpen={isDeleteModalOpen}
-        onClose={handleCloseDeleteModal}
-        onConfirm={handleConfirmDelete}
-        isDeleting={isDeleting}
-        saleInvoiceId={saleToDelete?.invoiceId || saleToDelete?.id || ''}
-      />
+      {/* --- (NEW) PDF Download Modal --- */}
+      {/* This modal opens when handlePrintSale is called */}
+      {saleToPrint && PdfTemplate && (
+        <TransitionedModal isOpen={true} onClose={() => setSaleToPrint(null)} size="md">
+          <Dialog.Title as="h3" className="text-lg font-medium leading-6 text-gray-900 dark:text-white flex items-center">
+            <FileText className="h-6 w-6 text-blue-500 inline-block mr-2" />
+            PDF Ready for Download
+          </Dialog.Title>
+          <div className="mt-4 space-y-4">
+            <p className="text-sm text-gray-500 dark:text-gray-400">
+              Your invoice ({saleToPrint.data.invoiceId}) is ready.
+            </p>
+            
+            {/* This component from @react-pdf/renderer generates the PDF */}
+            <PDFDownloadLink
+              document={React.createElement(PdfTemplate, { data: saleToPrint.data, store: saleToPrint.store })}
+              fileName={`${saleToPrint.data.invoiceId || 'invoice'}.pdf`}
+              className="w-full flex justify-center items-center gap-2 rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
+            >
+              {({ loading }) => 
+                loading ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <>
+                    <Download className="h-4 w-4" />
+                    Download PDF Now
+                  </>
+                )
+              }
+            </PDFDownloadLink>
+          </div>
+          <div className="mt-6 flex justify-end">
+            <button
+              type="button"
+              className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
+              onClick={() => setSaleToPrint(null)}
+            >
+              Close
+            </button>
+          </div>
+        </TransitionedModal>
+      )}
     </>
   );
 }
-
 
 // =============================================================================
 // 📦 Suspense Wrapper

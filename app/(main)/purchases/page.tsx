@@ -1,23 +1,23 @@
 // File: app/(main)/purchases/page.tsx
 //
-// --- FINAL PRODUCTION VERSION ---
-// 1. (FIX) 'AddPurchaseModal' is fully corrected.
-// 2. (FIX) 'AddSupplierModal' is now included and auto-selects.
-// 3. (FIX) All helper components ('FormInput', 'FormSelect', etc.) at the
-//    bottom are the "smart" versions, fixing all "read-only" bugs.
-// 4. (FIX) All 'onChange' handlers use '(val: string)' to fix TS errors.
-// 5. (FIX) All inline forms (Product, Warehouse, Category) auto-select.
-// 6. (FIX) All forms now have modern CSS/JS error handling.
+// --- FINAL PRODUCTION VERSION (Refactored with new PDF System) ---
+// 1. (NEW) Imports for @react-pdf/renderer and useAuth.
+// 2. (NEW) Added state for the PDF Modal.
+// 3. (FIX) Removed old jsPDF/autoTable code from ViewPurchaseModal.
+// 4. (FIX) ViewPurchaseModal "Download PDF" button now opens the new modal.
+// 5. (FIX) Added the missing 'AddSupplierModal' component.
+// 6. (NOTE) The 'ReportDownloadPopover' still uses the old server-side PDF
+//    API, as no "purchase list" template exists in AllTemplates.tsx.
 // -----------------------------------------------------------------------------
 "use client";
 
 import React, { useState, Suspense, useMemo, Fragment, useEffect } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import useSWR, { useSWRConfig } from "swr";
-import { useAuth } from "@/app/contexts/AuthContext";
+import { useAuth } from "@/app/contexts/AuthContext"; // <-- (NEW) IMPORT
 import { auth } from "@/lib/firebaseConfig";
 import dayjs from "dayjs";
-import { jsPDF } from "jspdf";
+import { jsPDF } from "jspdf"; // (Still needed for server-side report)
 import autoTable from "jspdf-autotable";
 import {
   PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer,
@@ -35,10 +35,16 @@ import {
   Check,
   Warehouse, Info, Download, Printer,
   ChevronDown,
-  FileText,
+  FileText, // <-- (NEW) IMPORT
   FileSpreadsheet,
   UserCheck,
 } from "lucide-react";
+
+// --- (NEW) IMPORTS FOR PDF ---
+import { PDFDownloadLink } from '@react-pdf/renderer';
+import { getTemplateComponent, ReportType } from '@/lib/pdfService';
+// --- END NEW IMPORTS ---
+
 
 // --- Helpers for Modern UI ---
 import { type DateRange } from "react-day-picker";
@@ -120,7 +126,8 @@ export default function PurchasesPageWrapper() {
 // 📝 Main Purchases Page Component
 // -----------------------------------------------------------------------------
 function PurchasesPage() {
-  const { user, loading: authLoading } = useAuth();
+  // --- (NEW) Get subscription from useAuth ---
+  const { user, loading: authLoading, subscription } = useAuth();
   const router = useRouter();
   const searchParams = useSearchParams();
   const { mutate: globalMutate } = useSWRConfig();
@@ -130,6 +137,10 @@ function PurchasesPage() {
   const [isPayModalOpen, setIsPayModalOpen] = useState<any | null>(null);
   const [isViewModalOpen, setIsViewModalOpen] = useState(false);
   const [viewingPurchase, setViewingPurchase] = useState<any | null>(null);
+  
+  // --- (NEW) PDF Modal State ---
+  const [pdfData, setPdfData] = useState<any | null>(null);
+  const [PdfComponent, setPdfComponent] = useState<React.ElementType | null>(null);
   
   const [filters, setFilters] = useState({
     currency: searchParams.get("currency") || "USD",
@@ -204,6 +215,26 @@ function PurchasesPage() {
     setViewingPurchase(null);
   };
 
+  // --- (NEW) PDF Modal Handler ---
+  const handlePrintPurchaseOrder = (purchase: any) => {
+    const storeInfo = {
+      name: subscription?.storeName || "My Store",
+      address: subscription?.storeAddress || "123 Main St",
+      phone: subscription?.storePhone || "555-1234",
+      logoUrl: subscription?.logoUrl,
+      planId: subscription?.planId,
+    };
+    
+    // Use the 'purchase' template
+    const Template = getTemplateComponent('purchase' as ReportType, subscription);
+    
+    setPdfData({ data: purchase, store: storeInfo });
+    setPdfComponent(() => Template);
+    
+    // Close the view modal
+    handleCloseViewModal();
+  };
+  
   // ---------------------------------
   // 🎨 Main Render
   // ---------------------------------
@@ -318,7 +349,45 @@ function PurchasesPage() {
         <ViewPurchaseModal
           purchase={viewingPurchase}
           onClose={handleCloseViewModal}
+          onPrint={handlePrintPurchaseOrder} // <-- (NEW) Pass the new handler
         />
+      )}
+      
+      {/* --- (NEW) PDF Download Modal --- */}
+      {pdfData && PdfComponent && (
+        <ModalBase title="PDF Ready for Download" onClose={() => setPdfData(null)} size="md">
+          <div className="mt-4 space-y-4">
+            <p className="text-sm text-gray-500 dark:text-gray-400">
+              Your Purchase Order ({pdfData.data.id.substring(0, 6)}...) is ready.
+            </p>
+            
+            <PDFDownloadLink
+              document={<PdfComponent data={pdfData.data} store={pdfData.store} />}
+              fileName={`PO_${pdfData.data.supplierName.replace(' ','-')}_${pdfData.data.id.substring(0, 6)}.pdf`}
+              className="w-full flex justify-center items-center gap-2 rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
+            >
+              {({ loading }) => 
+                loading ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <>
+                    <Download className="h-4 w-4" />
+                    Download PDF Now
+                  </>
+                )
+              }
+            </PDFDownloadLink>
+          </div>
+          <div className="mt-6 flex justify-end">
+            <button
+              type="button"
+              className="rounded-lg border bg-white px-4 py-2 text-sm font-medium hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-800 dark:hover:bg-gray-700"
+              onClick={() => setPdfData(null)}
+            >
+              Close
+            </button>
+          </div>
+        </ModalBase>
       )}
     </div>
   );
@@ -329,6 +398,7 @@ function PurchasesPage() {
 // -----------------------------------------------------------------------------
  
 // --- Report Download Popover Component ---
+// (Unchanged, still uses old API for PDF report list)
 const PRESETS = [
   { label: "Last 7 Days", range: { from: startOfDay(subDays(new Date(), 6)), to: endOfDay(new Date()) } },
   { label: "Last 30 Days", range: { from: startOfDay(subDays(new Date(), 29)), to: endOfDay(new Date()) } },
@@ -355,6 +425,8 @@ function ReportDownloadPopover({ formData, formIsLoading }: {
     setSupplierFilterOn(isOn);
     if (!isOn) { setSelectedSupplier(null); }
   };
+  
+  // (NOTE: This function is unchanged)
   const handleDownloadReport = async (reportType: 'excel' | 'pdf') => {
     setIsDownloading(true);
     try {
@@ -363,7 +435,7 @@ function ReportDownloadPopover({ formData, formIsLoading }: {
       const token = await user.getIdToken();
       const params = new URLSearchParams({
         action: 'download',
-        format: reportType === 'excel' ? 'csv' : 'pdf',
+        format: reportType === 'excel' ? 'csv' : 'pdf', // <-- Still calls for 'pdf'
         startDate: reportRange?.from ? format(reportRange.from, "yyyy-MM-dd") : '',
         endDate: reportRange?.to ? format(reportRange.to, "yyyy-MM-dd") : '',
         supplierId: supplierFilterOn && selectedSupplier ? selectedSupplier.id : '',
@@ -469,7 +541,7 @@ function ReportDownloadPopover({ formData, formIsLoading }: {
   );
 }
 
-// --- Filter Bar ---
+// ... (All other components like FilterBar, KpiCard, Charts, and PurchaseList are unchanged) ...
 const FilterBar = ({ filters, onFilterChange, onDateChange }: { 
   filters: any, 
   onFilterChange: (k: string, v: string | number) => void,
@@ -506,8 +578,6 @@ const FilterBar = ({ filters, onFilterChange, onDateChange }: {
     </div>
   </div>
 );
-
-// --- KpiCard ---
 const KpiCard = ({ title, value, icon: Icon, color }: any) => (
   <Card className="flex items-center gap-4">
     <div className={`flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-full ${color.replace('text-', 'bg-')} bg-opacity-10`}>
@@ -519,16 +589,12 @@ const KpiCard = ({ title, value, icon: Icon, color }: any) => (
     </div>
   </Card>
 );
-
-// --- ChartCard ---
 const ChartCard = ({ title, children }: { title: string, children: React.ReactNode }) => (
   <Card className="h-80">
     <h3 className="text-lg font-semibold text-gray-900 dark:text-white">{title}</h3>
     <div className="mt-4 h-[280px] w-full">{children}</div>
   </Card>
 );
-
-// --- PurchaseTrendChart ---
 const PurchaseTrendChart = ({ data, currency }: { data: any[], currency: string }) => {
   if (!data || data.length === 0) return <ChartEmptyState />;
   return (
@@ -543,8 +609,6 @@ const PurchaseTrendChart = ({ data, currency }: { data: any[], currency: string 
     </ResponsiveContainer>
   );
 };
-
-// --- TopSuppliersChart ---
 const TopSuppliersChart = ({ data, currency }: { data: { name: string, total: number }[], currency: string }) => {
   if (!data || data.length === 0) return <ChartEmptyState />;
   return (
@@ -559,12 +623,8 @@ const TopSuppliersChart = ({ data, currency }: { data: { name: string, total: nu
     </ResponsiveContainer>
   );
 };
-
-// --- PurchaseList ---
 const PurchaseList = ({ purchases, currency, onPay, onView, onDelete }: any) => {
   const [deletingId, setDeletingId] = useState<string | null>(null);
-  
-  // (FIX) All errors are now alerts
   const handleDelete = async (purchaseId: string) => {
     if (deletingId) return;
     if (window.confirm("Are you sure you want to delete this purchase? This will reverse any stock added. This action cannot be undone.")) {
@@ -581,15 +641,14 @@ const PurchaseList = ({ purchases, currency, onPay, onView, onDelete }: any) => 
           const err = await res.json();
           throw new Error(err.error || "Delete failed");
         }
-        onDelete(); // This is the mutate() function
+        onDelete();
       } catch (error: any) {
-        alert(`Error: ${error.message}`); // <-- (FIX) Use alert
+        alert(`Error: ${error.message}`);
       } finally {
         setDeletingId(null);
       }
     }
   };
-  
   if (!purchases || purchases.length === 0) {
     return <TableEmptyState message="No purchase orders found for these filters." />;
   }
@@ -659,6 +718,68 @@ const PurchaseList = ({ purchases, currency, onPay, onView, onDelete }: any) => 
 // (Define the PriceField type)
 type PriceField = { id: number, currency: string, sale: string, cost: string };
 
+// --- (FIX) 'AddSupplierModal' is now included in this file ---
+const AddSupplierModal = ({ onClose, onSuccess }: { onClose: () => void, onSuccess: (supplier: any) => void }) => {
+  const [formData, setFormData] = useState({ name: "", contactPerson: "", phone: "", email: "", address: "" });
+  const [isSaving, setIsSaving] = useState(false);
+  const [error, setError] = useState("");
+  
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(""); // Clear old errors
+    if (!formData.name || !formData.phone) {
+      setError("Supplier Name and Phone are required.");
+      return;
+    }
+    setIsSaving(true);
+    
+    try {
+      const user = auth.currentUser;
+      if (!user) throw new Error("User not authenticated.");
+      const token = await user.getIdToken();
+      
+      const res = await fetch("/api/suppliers", { // (Assuming /api/suppliers exists)
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify(formData),
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || "Failed to save supplier.");
+      }
+      
+      const newSupplier = await res.json();
+      onSuccess(newSupplier); // Pass new supplier back
+
+    } catch (err: any) {
+      setError((err as Error).message);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  return (
+    <ModalBase title="Add New Supplier" onClose={onClose}>
+      <form onSubmit={handleSubmit} className="space-y-4">
+        {error && <ErrorDisplay error={{name: "Save Error", message: error}} />}
+        <FormInput label="Supplier Name" name="name" value={formData.name} onChange={(val: string) => setFormData(prev => ({...prev, name: val}))} required error={error && !formData.name ? " " : ""} />
+        <FormInput label="Contact Person (Optional)" name="contactPerson" value={formData.contactPerson} onChange={(val: string) => setFormData(prev => ({...prev, contactPerson: val}))} />
+        <FormInput label="Phone Number" name="phone" value={formData.phone} onChange={(val: string) => setFormData(prev => ({...prev, phone: val}))} required error={error && !formData.phone ? " " : ""} />
+        <FormInput label="Email (Optional)" name="email" type="email" value={formData.email} onChange={(val: string) => setFormData(prev => ({...prev, email: val}))} />
+        <FormInput label="Address (Optional)" name="address" value={formData.address} onChange={(val: string) => setFormData(prev => ({...prev, address: val}))} />
+        
+        <div className="flex justify-end gap-3 pt-4">
+          <button type="button" onClick={onClose} className="rounded-lg border bg-white px-4 py-2 text-sm font-medium hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-800 dark:hover:bg-gray-700">Cancel</button>
+          <button type="submit" disabled={isSaving} className="flex min-w-[80px] items-center justify-center rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50">
+            {isSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : "Save"}
+          </button>
+        </div>
+      </form>
+    </ModalBase>
+  );
+};
+
+
 const AddPurchaseModal = ({ onClose, onSuccess, defaultCurrency, formData, formIsLoading, formError }: {
   onClose: () => void,
   onSuccess: () => void,
@@ -677,14 +798,12 @@ const AddPurchaseModal = ({ onClose, onSuccess, defaultCurrency, formData, formI
   const [purchaseDate, setPurchaseDate] = useState(dayjs().format("YYYY-MM-DD"));
   const [dueDate, setDueDate] = useState("");
   const [notes, setNotes] = useState("");
-  const [errors, setErrors] = useState<any>({}); // <-- (FIX) For validation
+  const [errors, setErrors] = useState<any>({});
   
-  // --- State for adding items ---
   const [currentProduct, setCurrentProduct] = useState<any>(null);
   const [currentQty, setCurrentQty] = useState("1");
   const [currentCost, setCurrentCost] = useState("0");
 
-  // --- State for new supplier/warehouse forms ---
   const [isAddSupplierModalOpen, setIsAddSupplierModalOpen] = useState(false);
   const [isAddingWarehouse, setIsAddingWarehouse] = useState(false);
   const [newWarehouseName, setNewWarehouseName] = useState("");
@@ -692,7 +811,6 @@ const AddPurchaseModal = ({ onClose, onSuccess, defaultCurrency, formData, formI
   const [isSavingWarehouse, setIsSavingWarehouse] = useState(false);
   const [warehouseError, setWarehouseError] = useState("");
   
-  // --- State for new product form ---
   const [isAddingProduct, setIsAddingProduct] = useState(false);
   const [isSavingProduct, setIsSavingProduct] = useState(false);
   const [newProductName, setNewProductName] = useState("");
@@ -705,7 +823,6 @@ const AddPurchaseModal = ({ onClose, onSuccess, defaultCurrency, formData, formI
   const [isSavingInline, setIsSavingInline] = useState(false);
   const [productError, setProductError] = useState("");
   const [categoryError, setCategoryError] = useState("");
-  // --- End ---
 
   const totalAmount = useMemo(() => {
     return cart.reduce((acc, item) => acc + item.subtotal, 0);
@@ -727,7 +844,7 @@ const AddPurchaseModal = ({ onClose, onSuccess, defaultCurrency, formData, formI
   }, [currency, currentProduct]);
   
   const handleAddItemToCart = () => {
-    setErrors({}); // Clear main error
+    setErrors({});
     if (!currentProduct || Number(currentQty) <= 0 || Number(currentCost) < 0) {
       setErrors({ cart: "Please select a product, quantity, and valid cost." });
       return;
@@ -763,11 +880,11 @@ const AddPurchaseModal = ({ onClose, onSuccess, defaultCurrency, formData, formI
       if (!user) throw new Error("User not authenticated.");
       const token = await user.getIdToken();
       
-      const res = await fetch("/api/products", { // <-- Correct URL
+      const res = await fetch("/api/products", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({ 
-          type: "warehouse", // <-- Correct type
+          type: "warehouse",
           name: newWarehouseName, 
           address: newWarehouseAddress 
         }),
@@ -780,7 +897,6 @@ const AddPurchaseModal = ({ onClose, onSuccess, defaultCurrency, formData, formI
       
       const newWarehouse = await res.json(); 
       
-      // Manually update cache
       globalMutate(
         "/api/purchases?tab=form_data",
         (currentData: any) => ({
@@ -793,7 +909,7 @@ const AddPurchaseModal = ({ onClose, onSuccess, defaultCurrency, formData, formI
       setNewWarehouseName("");
       setNewWarehouseAddress("");
       setIsAddingWarehouse(false);
-      setWarehouse(newWarehouse); // Auto-select
+      setWarehouse(newWarehouse);
       
     } catch (err: any) {
       setWarehouseError((err as Error).message);
@@ -812,7 +928,7 @@ const AddPurchaseModal = ({ onClose, onSuccess, defaultCurrency, formData, formI
       false
     );
     setIsAddSupplierModalOpen(false);
-    setSupplier(newSupplier); // Auto-select
+    setSupplier(newSupplier);
   };
 
   const handlePriceChange = (id: number, key: "currency" | "sale" | "cost", value: string) => {
@@ -865,7 +981,7 @@ const AddPurchaseModal = ({ onClose, onSuccess, defaultCurrency, formData, formI
         false
       );
       
-      setNewProductCategory(newCategory.name); // Auto-select
+      setNewProductCategory(newCategory.name);
       setNewCategoryName("");
       setShowAddCategory(false);
       
@@ -947,7 +1063,7 @@ const AddPurchaseModal = ({ onClose, onSuccess, defaultCurrency, formData, formI
         false 
       );
 
-      handleSelectProduct(newProduct.id); // Auto-select
+      handleSelectProduct(newProduct.id);
       
       setIsAddingProduct(false);
       setNewProductName("");
@@ -963,9 +1079,8 @@ const AddPurchaseModal = ({ onClose, onSuccess, defaultCurrency, formData, formI
   
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setErrors({}); // Clear errors
+    setErrors({});
     
-    // --- (FIX) Modern Validation ---
     const newErrors: any = {};
     if (!supplier) newErrors.supplier = "Supplier is required.";
     if (!warehouse) newErrors.warehouse = "Warehouse is required.";
@@ -1017,7 +1132,7 @@ const AddPurchaseModal = ({ onClose, onSuccess, defaultCurrency, formData, formI
       }
       onSuccess();
     } catch (err: any) {
-      setErrors({ form: (err as Error).message }); // Show general form error
+      setErrors({ form: (err as Error).message });
     } finally {
       setIsSaving(false);
     }
@@ -1031,10 +1146,8 @@ const AddPurchaseModal = ({ onClose, onSuccess, defaultCurrency, formData, formI
         {formData && (
           <form onSubmit={handleSubmit} className="flex flex-col gap-4">
             
-            {/* --- (FIX) Main Form Error Display --- */}
             {errors.form && <ErrorDisplay error={errors.form} />}
 
-            {/* --- Supplier / Warehouse selectors --- */}
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
               <div className="flex-1">
                 <label htmlFor="supplier" className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
@@ -1073,7 +1186,6 @@ const AddPurchaseModal = ({ onClose, onSuccess, defaultCurrency, formData, formI
               </div>
             </div>
 
-            {/* --- Inline Warehouse Form --- */}
             {isAddingWarehouse && (
               <div className="space-y-3 rounded-lg border border-gray-300 p-4 dark:border-gray-600">
                 <h4 className="font-medium text-gray-900 dark:text-white">Add New Warehouse</h4>
@@ -1089,7 +1201,6 @@ const AddPurchaseModal = ({ onClose, onSuccess, defaultCurrency, formData, formI
               </div>
             )}
             
-            {/* --- Add Items Section --- */}
             <div className="rounded-lg border p-3 dark:border-gray-700">
               <h4 className="font-medium dark:text-white">Add Items</h4>
               {errors.cart && <p className="mt-1 text-xs text-red-600">{errors.cart}</p>}
@@ -1118,7 +1229,6 @@ const AddPurchaseModal = ({ onClose, onSuccess, defaultCurrency, formData, formI
                 <FormInput label="Cost Price" name="costPrice" type="number" value={currentCost} onChange={(val: string) => setCurrentCost(val)} />
               </div>
               
-              {/* --- Inline Product Form --- */}
               {isAddingProduct && (
                 <div className="mt-4 space-y-4 rounded-lg border border-gray-300 p-4 dark:border-gray-600">
                   <h4 className="font-medium text-gray-900 dark:text-white">Add New Product</h4>
@@ -1187,7 +1297,6 @@ const AddPurchaseModal = ({ onClose, onSuccess, defaultCurrency, formData, formI
               </button>
             </div>
             
-            {/* Cart */}
             <div className="max-h-40 overflow-y-auto space-y-2">
               {cart.map(item => (
                 <div key={item.productId} className="flex items-center justify-between rounded bg-gray-50 p-2 dark:bg-gray-700">
@@ -1205,7 +1314,6 @@ const AddPurchaseModal = ({ onClose, onSuccess, defaultCurrency, formData, formI
               ))}
             </div>
             
-            {/* --- Rest of the form --- */}
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
               <FormInput label="Purchase Date" name="purchaseDate" type="date" value={purchaseDate} onChange={(val: string) => setPurchaseDate(val)} required />
               <FormInput label="Payment Due Date (Optional)" name="dueDate" type="date" value={dueDate} onChange={(val: string) => setDueDate(val)} />
@@ -1241,70 +1349,7 @@ const AddPurchaseModal = ({ onClose, onSuccess, defaultCurrency, formData, formI
   );
 };
 
-// --- (FIXED) AddSupplierModal ---
-// This now passes the new supplier data back on success
-const AddSupplierModal = ({ onClose, onSuccess }: { onClose: () => void, onSuccess: (supplier: any) => void }) => {
-  const [formData, setFormData] = useState({ name: "", contactPerson: "", phone: "", email: "", address: "" });
-  const [isSaving, setIsSaving] = useState(false);
-  const [error, setError] = useState("");
-  
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError(""); // Clear old errors
-    if (!formData.name || !formData.phone) {
-      setError("Supplier Name and Phone are required.");
-      return;
-    }
-    setIsSaving(true);
-    
-    try {
-      const user = auth.currentUser;
-      if (!user) throw new Error("User not authenticated.");
-      const token = await user.getIdToken();
-      
-      const res = await fetch("/api/suppliers", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify(formData),
-      });
-      if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.error || "Failed to save supplier.");
-      }
-      
-      const newSupplier = await res.json(); // <-- (FIX 1) Get response
-      onSuccess(newSupplier); // <-- (FIX 2) Pass data back
-
-    } catch (err: any) {
-      setError((err as Error).message);
-    } finally {
-      setIsSaving(false);
-    }
-  };
-
-  return (
-    <ModalBase title="Add New Supplier" onClose={onClose}>
-      <form onSubmit={handleSubmit} className="space-y-4">
-        {error && <ErrorDisplay error={{name: "Save Error", message: error}} />}
-        <FormInput label="Supplier Name" name="name" value={formData.name} onChange={(val: string) => setFormData(prev => ({...prev, name: val}))} required error={error && !formData.name ? " " : ""} />
-        <FormInput label="Contact Person (Optional)" name="contactPerson" value={formData.contactPerson} onChange={(val: string) => setFormData(prev => ({...prev, contactPerson: val}))} />
-        <FormInput label="Phone Number" name="phone" value={formData.phone} onChange={(val: string) => setFormData(prev => ({...prev, phone: val}))} required error={error && !formData.phone ? " " : ""} />
-        <FormInput label="Email (Optional)" name="email" type="email" value={formData.email} onChange={(val: string) => setFormData(prev => ({...prev, email: val}))} />
-        <FormInput label="Address (Optional)" name="address" value={formData.address} onChange={(val: string) => setFormData(prev => ({...prev, address: val}))} />
-        
-        <div className="flex justify-end gap-3 pt-4">
-          <button type="button" onClick={onClose} className="rounded-lg border bg-white px-4 py-2 text-sm font-medium hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-800 dark:hover:bg-gray-700">Cancel</button>
-          <button type="submit" disabled={isSaving} className="flex min-w-[80px] items-center justify-center rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50">
-            {isSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : "Save"}
-          </button>
-        </div>
-      </form>
-    </ModalBase>
-  );
-};
-
-// --- (FIXED) PayPurchaseModal ---
-// This now has modern error handling
+// --- PayPurchaseModal ---
 const PayPurchaseModal = ({ purchase, onClose, onSuccess }: any) => {
   const [amountPaid, setAmountPaid] = useState("");
   const [isSaving, setIsSaving] = useState(false);
@@ -1314,7 +1359,7 @@ const PayPurchaseModal = ({ purchase, onClose, onSuccess }: any) => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setError(""); // Clear old errors
+    setError("");
     const paidAmountNum = parseFloat(amountPaid);
     if (isNaN(paidAmountNum) || paidAmountNum <= 0) {
       setError("Please enter a valid amount.");
@@ -1384,50 +1429,17 @@ const PayPurchaseModal = ({ purchase, onClose, onSuccess }: any) => {
 };
 
 
-// --- ViewPurchaseModal ---
-const ViewPurchaseModal = ({ purchase, onClose }: { purchase: any, onClose: () => void }) => {
+// --- (MODIFIED) ViewPurchaseModal ---
+const ViewPurchaseModal = ({ purchase, onClose, onPrint }: { 
+  purchase: any, 
+  onClose: () => void,
+  onPrint: (purchase: any) => void // <-- (NEW) Accept the new handler
+}) => {
   const currency = purchase.currency;
-  const handleDownloadSingleReport = () => {
-    const po = purchase;
-    const doc = new jsPDF();
-    doc.setFontSize(18);
-    doc.text(`Purchase Order: ${po.id.substring(0, 8)}`, 14, 22);
-    doc.setFontSize(11);
-    doc.setTextColor(100);
-    doc.text(`Supplier: ${po.supplierName}`, 14, 32);
-    doc.text(`Date: ${dayjs(po.purchaseDate).format("DD MMM YYYY")}`, 14, 38);
-    doc.text(`Warehouse: ${po.warehouseName}`, 14, 44);
-    const tableHead = [["Product", "Qty", "Cost", "Subtotal"]];
-    const tableBody = po.items.map((item: any) => [
-      item.productName,
-      item.quantity,
-      formatCurrency(item.costPrice, po.currency),
-      formatCurrency(item.subtotal, po.currency)
-    ]);
-    autoTable(doc, {
-      head: tableHead,
-      body: tableBody,
-      startY: 52,
-      headStyles: { fillColor: [11, 101, 221] },
-    });
-    doc.setFontSize(12);
-    doc.setTextColor(0);
-    doc.text("Financial Summary", 14, (doc as any).lastAutoTable.finalY + 12);
-    doc.setFontSize(10);
-    doc.text(`Total Amount: ${formatCurrency(po.totalAmount, po.currency)}`, 14, (doc as any).lastAutoTable.finalY + 18);
-    doc.text(`Amount Paid: ${formatCurrency(po.paidAmount, po.currency)}`, 14, (doc as any).lastAutoTable.finalY + 24);
-    doc.setFontSize(11);
-    doc.setFont("helvetica", "bold");
-    doc.text(`Remaining Due: ${formatCurrency(po.remainingAmount, po.currency)}`, 14, (doc as any).lastAutoTable.finalY + 30);
-    doc.setFont("helvetica", "normal");
-    if (po.notes) {
-      doc.setFontSize(12);
-      doc.text("Notes:", 14, (doc as any).lastAutoTable.finalY + 40);
-      doc.setFontSize(10);
-      doc.text(po.notes, 14, (doc as any).lastAutoTable.finalY + 46, { maxWidth: 180 });
-    }
-    doc.save(`PO_${po.supplierName.replace(' ','-')}_${po.id.substring(0, 6)}.pdf`);
-  };
+
+  // --- (REMOVED) Old jsPDF function ---
+  // const handleDownloadSingleReport = () => { ... };
+
   return (
     <ModalBase title={`Purchase Order: ${purchase.id.substring(0, 6)}...`} onClose={onClose} size="xl">
       <div className="space-y-6">
@@ -1492,9 +1504,11 @@ const ViewPurchaseModal = ({ purchase, onClose }: { purchase: any, onClose: () =
         )}
         <div className="flex justify-end gap-3 pt-4">
           <button type="button" onClick={onClose} className="rounded-lg border bg-white px-4 py-2 text-sm font-medium hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700">Close</button>
+          
+          {/* --- (MODIFIED) This button now calls the new handler --- */}
           <button 
             type="button" 
-            onClick={handleDownloadSingleReport}
+            onClick={() => onPrint(purchase)}
             className="flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-blue-700"
           >
             <Download className="h-4 w-4" />
@@ -1509,44 +1523,38 @@ const ViewPurchaseModal = ({ purchase, onClose }: { purchase: any, onClose: () =
 // -----------------------------------------------------------------------------
 // 🛠️ Reusable Helper Components
 // -----------------------------------------------------------------------------
-
+// ... (All helpers: Card, TotalRow, Loaders, Modals, Forms, Pickers, etc. are unchanged) ...
 const Card = ({ children, className = "" }: { children: React.ReactNode; className?: string }) => (
   <div className={`rounded-xl border border-gray-200 bg-white p-6 shadow-sm dark:border-gray-700 dark:bg-gray-800 ${className}`}>
     {children}
   </div>
 );
-
 const TotalRow = ({ label, value, isDebt = false, isBold = false }: { label: string, value: string, isDebt?: boolean, isBold?: boolean }) => (
   <div className={`flex justify-between text-sm ${isBold ? 'font-semibold' : ''} ${isDebt ? 'text-red-600 dark:text-red-500' : 'text-gray-900 dark:text-white'}`}>
     <span className="text-gray-600 dark:text-gray-300">{label}:</span>
     <span className={isBold ? 'text-lg' : ''}>{value}</span>
   </div>
 );
-
 const LoadingSpinner = () => (
   <div className="flex h-60 w-full items-center justify-center">
     <Loader2 className="h-12 w-12 animate-spin text-blue-600" />
   </div>
 );
-
 const ErrorDisplay = ({ error }: { error: Error }) => (
   <Card className="border-red-300 bg-red-50 dark:border-red-700 dark:bg-red-900/20">
     <h3 className="font-semibold text-red-700 dark:text-red-400">Error</h3>
     <p className="text-sm text-red-600 dark:text-red-500">{error.message}</p>
   </Card>
 );
-
 const ChartEmptyState = () => (
   <div className="flex h-full w-full flex-col items-center justify-center text-gray-400">
     <BarChart2 className="h-12 w-12 opacity-50" />
     <p className="mt-2 text-sm">No data for this period</p>
   </div>
 );
-
 const TableEmptyState = ({ message }: { message: string }) => (
   <div className="py-10 text-center text-sm text-gray-500 dark:text-gray-400">{message}</div>
 );
-
 const ModalBase = ({ title, onClose, children, size = 'lg' }: { 
   title: string, 
   onClose: () => void, 
@@ -1558,7 +1566,6 @@ const ModalBase = ({ title, onClose, children, size = 'lg' }: {
     lg: 'max-w-lg',
     xl: 'max-w-xl',
   };
-  
   return (
     <Transition appear show={true} as={Fragment}>
       <Dialog as="div" className="relative z-50" onClose={onClose}>
@@ -1573,7 +1580,6 @@ const ModalBase = ({ title, onClose, children, size = 'lg' }: {
         >
           <div className="fixed inset-0 bg-black/60 dark:bg-black/80" />
         </Transition.Child>
-
         <div className="fixed inset-0 overflow-y-auto">
           <div className="flex min-h-full items-center justify-center p-4 text-center">
             <Transition.Child
@@ -1603,8 +1609,6 @@ const ModalBase = ({ title, onClose, children, size = 'lg' }: {
     </Transition>
   );
 };
-
-// Helper for ViewPurchaseModal
 const InfoItem = ({ icon: Icon, label, value }: { icon: React.ElementType, label: string, value: string }) => (
   <div>
     <span className="flex items-center gap-1.5 text-sm font-medium text-gray-500">
@@ -1614,9 +1618,6 @@ const InfoItem = ({ icon: Icon, label, value }: { icon: React.ElementType, label
     <p className="mt-1 text-gray-900 dark:text-white">{value || 'N/A'}</p>
   </div>
 );
-
-
-// --- Modern Date Range Picker ---
 function NewDateRangePicker({
   date,
   onApply,
@@ -1655,7 +1656,7 @@ function NewDateRangePicker({
       if (isAfter(day, from)) {
         setSelectedDate({ from, to: day });
       } else {
-        setSelectedDate({ from: day, to: from }); // Swap
+        setSelectedDate({ from: day, to: from });
       }
     } else if (from && to) {
       setSelectedDate({ from: day, to: undefined });
@@ -1718,8 +1719,6 @@ function NewDateRangePicker({
     </div>
   );
 }
-
-// --- Date Presets Component ---
 function DatePresets({ onSelect }: { onSelect: (range: DateRange) => void }) {
   return (
     <div className="flex flex-col gap-1 p-3">
@@ -1737,8 +1736,6 @@ function DatePresets({ onSelect }: { onSelect: (range: DateRange) => void }) {
     </div>
   );
 }
-
-// --- CalendarGrid Component ---
 function CalendarGrid({
   month,
   selectedDate,
@@ -1827,8 +1824,6 @@ function CalendarGrid({
     </div>
   );
 }
-
-// --- Modern Select/Dropdown Component ---
 function ModernSelect({ label, value, onChange, options }: {
   label: string;
   value: any;
@@ -1900,12 +1895,6 @@ function ModernSelect({ label, value, onChange, options }: {
     </Listbox>
   );
 }
-
-
-// -----------------------------------------------------------------------------
-// 🛠️ (FIXED) Reusable Form Helper Components
-// -----------------------------------------------------------------------------
-
 const StyledInput = React.forwardRef<HTMLInputElement, React.InputHTMLAttributes<HTMLInputElement>>((props, ref) => (
   <input
     {...props}
@@ -1914,7 +1903,6 @@ const StyledInput = React.forwardRef<HTMLInputElement, React.InputHTMLAttributes
   />
 ));
 StyledInput.displayName = "StyledInput";
-
 const StyledSelect = React.forwardRef<HTMLSelectElement, React.SelectHTMLAttributes<HTMLSelectElement>>(({ children, ...props }, ref) => (
   <select
     {...props}
@@ -1925,7 +1913,6 @@ const StyledSelect = React.forwardRef<HTMLSelectElement, React.SelectHTMLAttribu
   </select>
 ));
 StyledSelect.displayName = "StyledSelect";
-
 const FormInput = ({ label, name, value, onChange, error, ...props }: {
   label: string,
   name: string,
@@ -1949,7 +1936,6 @@ const FormInput = ({ label, name, value, onChange, error, ...props }: {
     {error && <p className="mt-1 text-xs text-red-600">{error}</p>}
   </div>
 );
-
 const FormSelect = ({ label, name, value, onChange, children, error, ...props }: {
   label: string,
   name: string,

@@ -35,15 +35,17 @@ async function getSettingsRef(storeId: string) {
     if (!settingsSnap.empty) {
         return settingsSnap.docs[0].ref;
     } else {
+        // If settings doc doesn't exist, create it from the main store doc
         const storeDoc = await firestoreAdmin.collection('stores').doc(storeId).get();
         const storeData = storeDoc.data();
         
         const newSettingsRef = firestoreAdmin.collection('settings').doc();
         await newSettingsRef.set({
             storeId: storeId,
-            storeName: storeData?.name || "My Store",
-            storePhone: storeData?.phone || "",
-            storeAddress: storeData?.address || "",
+            // *** (FIX) Read from the correct fields in the stores doc ***
+            storeName: storeData?.storeName || storeData?.name || "My Store",
+            storePhone: storeData?.storePhone || "",
+            storeAddress: storeData?.storeAddress || "",
             currencies: storeData?.currencies || ["USD"], 
             invoiceTemplate: "default",
             createdAt: FieldValue.serverTimestamp(),
@@ -59,7 +61,7 @@ export async function GET(request: NextRequest) {
   try {
     const { storeId } = await getAuth(request);
 
-    // --- (FIX) Only fetch settings. Plans are static in the UI. ---
+    // This is correct, it just gets the settings doc
     const settingsRef = await getSettingsRef(storeId);
     const settingsDoc = await settingsRef.get();
     const settings = settingsDoc.data();
@@ -81,6 +83,7 @@ export async function PUT(request: NextRequest) {
     const body = await request.json();
 
     // --- Part 1: Handle Profile Update (name, phone) ---
+    // This part is correct and unchanged
     if (body.name !== undefined || body.phone !== undefined) {
       const { name, phone } = body;
       const userRef = firestoreAdmin.collection("users").doc(uid);
@@ -102,26 +105,34 @@ export async function PUT(request: NextRequest) {
       return NextResponse.json({ error: "Permission Denied: Admin role required to update settings." }, { status: 403 });
     }
 
-    // --- (MODIFIED) Added 'currencies' ---
     const { storeName, storePhone, storeAddress, currencies, invoiceTemplate } = body;
     const settingsRef = await getSettingsRef(storeId);
     
+    // Update the 'settings' collection
     const settingsUpdate: any = { updatedAt: FieldValue.serverTimestamp() };
     if (storeName !== undefined) settingsUpdate.storeName = storeName;
     if (storePhone !== undefined) settingsUpdate.storePhone = storePhone;
     if (storeAddress !== undefined) settingsUpdate.storeAddress = storeAddress;
-    // --- (MODIFIED) Save 'currencies' array ---
     if (currencies !== undefined) {
-       // (FIX) Ensure at least one currency, default to USD if array is empty
        settingsUpdate.currencies = Array.isArray(currencies) && currencies.length > 0 ? currencies : ["USD"];
     }
     if (invoiceTemplate !== undefined) settingsUpdate.invoiceTemplate = invoiceTemplate;
     
-    await settingsRef.update(settingsUpdate);
+    // Only update settings doc if there are changes for it
+    if (Object.keys(settingsUpdate).length > 1) { // > 1 because of updatedAt
+       await settingsRef.update(settingsUpdate);
+    }
     
-    // Also update the main 'stores' doc if name/currencies changed
+    // *** (FIX) Update the main 'stores' doc with the REAL fields ***
     const storeUpdate: any = {};
-    if (storeName !== undefined) storeUpdate.name = storeName;
+    if (storeName !== undefined) storeUpdate.storeName = storeName;     // Write to storeName
+    if (storePhone !== undefined) storeUpdate.storePhone = storePhone;   // Write to storePhone
+    if (storeAddress !== undefined) storeUpdate.storeAddress = storeAddress; // Write to storeAddress
+    
+    // Also update 'name' for compatibility with SAdmin
+    if (storeName !== undefined) storeUpdate.name = storeName; 
+    
+    // Also update currencies if it was part of this request
     if (settingsUpdate.currencies) storeUpdate.currencies = settingsUpdate.currencies;
     
     if (Object.keys(storeUpdate).length > 0) {
@@ -177,7 +188,8 @@ export async function DELETE(request: NextRequest) {
     response.cookies.set('session', '', { maxAge: -1 }); // Delete cookie
     return response;
 
-  } catch (error: any) {
+  } catch (error: any)
+    {
     console.error("[SETTINGS API DELETE] Error:", error.message);
     return NextResponse.json({ error: "Incorrect password or server error." }, { status: 500 });
   }

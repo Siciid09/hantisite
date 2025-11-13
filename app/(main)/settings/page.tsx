@@ -1,5 +1,5 @@
 // File: app/(main)/settings/page.tsx
-// Description: The main UI for all store and profile settings.
+// Description: The main UI for all store and profile settings. (CORRECTED)
 "use client";
 
 import React, { useState, useEffect, Fragment } from "react";
@@ -23,7 +23,7 @@ import 'react-date-range/dist/styles.css'; // main style file
 import 'react-date-range/dist/theme/default.css'; // theme css file
 
 // -----------------------------------------------------------------------------
-// 💰 API Fetcher
+// 腸 API Fetcher
 // -----------------------------------------------------------------------------
 const fetcher = async (url: string) => {
   const user = auth.currentUser;
@@ -38,7 +38,7 @@ const fetcher = async (url: string) => {
 };
 
 // -----------------------------------------------------------------------------
-// 🧩 Reusable Components
+// ｧｩ Reusable Components
 // (FIX: Moved all modals and helpers *before* the main page component)
 // -----------------------------------------------------------------------------
 
@@ -128,7 +128,6 @@ const FormButton = ({ isSaving, text }: { isSaving: boolean, text: string }) => 
   </button>
 );
 
-// --- (FIX) Added onClick prop ---
 const UpgradeNotice = ({ text, onClick }: { text: string, onClick: () => void }) => (
   <div className="mt-2 text-sm text-blue-600">
     {text} <button type="button" onClick={onClick} className="font-bold underline">Upgrade Now</button>
@@ -239,7 +238,21 @@ const SubscriptionModal = ({ onClose, userName, storeName }: {
   const { subscription: currentSubscription } = useAuth();
   const [isYearly, setIsYearly] = useState(false);
   
-  const planId = currentSubscription?.planId?.toLowerCase() || 'trial';
+  // *** (FIX #1) Changed planId to subscriptionType ***
+  const dbPlan = currentSubscription?.subscriptionType?.toLowerCase() || 'trial';
+  let planId;
+  switch (dbPlan) {
+    case 'pro':
+    case 'standard':
+      planId = 'standard';
+      break;
+    case 'plan3':
+    case 'business':
+      planId = 'business';
+      break;
+    default:
+      planId = 'trial';
+  }
 
   const plans = {
     standard: { name: "Standard", price: 5 },
@@ -370,7 +383,6 @@ const SubscriptionModal = ({ onClose, userName, storeName }: {
   );
 };
 
-// --- (FIX) BackupModal now takes props ---
 const BackupModal = ({ onClose, lastBackupDate, onBackupSuccess }: { 
   onClose: () => void, 
   lastBackupDate: string | null,
@@ -473,7 +485,6 @@ const BackupModal = ({ onClose, lastBackupDate, onBackupSuccess }: {
 const ActivityLogModal = ({ onClose }: { onClose: () => void }) => {
   const [filterUserId, setFilterUserId] = useState<string | null>(null);
   const [showDateFilter, setShowDateFilter] = useState(false);
-  // (FIX) Add explicit type to useState to fix 'never' error
   const [dateRange, setDateRange] = useState<Range[]>([
     {
       startDate: undefined,
@@ -484,7 +495,6 @@ const ActivityLogModal = ({ onClose }: { onClose: () => void }) => {
   
   const { data: teamData, error: teamError } = useSWR('/api/hr?view=employees', fetcher);
   
-  // (FIX) Safe handling of startDate and endDate before calling toISOString
   const startDate = dateRange[0].startDate;
   const endDate = dateRange[0].endDate;
   const dateQuery = (startDate && endDate)
@@ -566,7 +576,7 @@ const ActivityLogModal = ({ onClose }: { onClose: () => void }) => {
               <div>
                 <p className="font-medium dark:text-white">{log.description}</p>
                 <p className="text-sm text-gray-500 dark:text-gray-400">
-                  {log.userName} • {dayjs(log.timestamp).format('DD MMM YYYY, h:mm A')}
+                  {log.userName} 窶｢ {dayjs(log.timestamp).format('DD MMM YYYY, h:mm A')}
                 </p>
               </div>
             </div>
@@ -648,10 +658,10 @@ const DeleteStoreModal = ({ onClose }: { onClose: () => void }) => {
 };
 
 // -----------------------------------------------------------------------------
-// 📝 Main Settings Page Component
+// 統 Main Settings Page Component
 // -----------------------------------------------------------------------------
 export default function SettingsPage() {
-  const { user, subscription } = useAuth();
+  const { user, subscription } = useAuth(); // 'subscription' is the main STORES doc
   const { mutate } = useSWRConfig();
   const [isSaving, setIsSaving] = useState(false);
   
@@ -661,7 +671,7 @@ export default function SettingsPage() {
   const [isActivityLogModalOpen, setIsActivityLogModalOpen] = useState(false);
   const [isBackupModalOpen, setIsBackupModalOpen] = useState(false);
 
-  // (FIX) API now only returns settings
+  // 'settings' data is ONLY for currencies, template, and backup date
   const { 
     data: settings, 
     error, 
@@ -681,27 +691,55 @@ export default function SettingsPage() {
     if (user) {
       setProfile({ name: user.name || "", phone: (user as any).phone || "" });
     }
-    if (settings) {
+
+    // *** (FIX) Populate store info from 'subscription' (the stores doc) ***
+    // This is the "real" data
+    if (subscription) {
       setStore({
-        storeName: settings.storeName || "",
-        storePhone: settings.storePhone || "",
-        storeAddress: settings.storeAddress || "",
+        // Read from the fields you have, fallback to 'name'
+        storeName: subscription.storeName || subscription.name || "", 
+        storePhone: subscription.storePhone || "",
+        storeAddress: subscription.storeAddress || "",
       });
+    }
+
+    // Populate business settings ONLY from the 'settings' doc
+    if (settings) {
       setBusiness({
         currencies: settings.currencies || ["USD"],
         invoiceTemplate: settings.invoiceTemplate || "default",
       });
     }
-  }, [user, settings]);
+    // *** (FIX) Add 'subscription' to dependency array
+  }, [user, settings, subscription]);
 
   // Plan & Permission Logic
-  const planId = subscription?.planId?.toLowerCase() || 'trial';
-  const canUploadLogo = ['standard', 'business', 'pro', 'unlimited', 'lifetime'].includes(planId);
+  // *** (FIX #2) Changed planId to subscriptionType ***
+  const dbPlan = subscription?.subscriptionType?.toLowerCase() || 'trial';
+  let planId;
+  switch (dbPlan) {
+    case 'pro':
+    case 'standard':
+      planId = 'standard';
+      break;
+    case 'plan3':
+    case 'business':
+      planId = 'business';
+      break;
+    default:
+      planId = 'trial';
+  }
+  
+  const canUploadLogo = ['standard', 'business'].includes(planId);
+  
+  // *** START CORRECTION 1 ***
   const availableTemplates: { [key: string]: string[] } = {
     trial: ['default'],
-    standard: ['default', 'classic'], // Classic for Standard
-    business: ['default', 'classic', 'modern'], // Modern for Business
+    standard: ['default', 'modern'], // Modern for Standard
+    business: ['default', 'modern', 'premium'], // Premium for Business
   };
+  // *** END CORRECTION 1 ***
+
   const userAllowedTemplates = availableTemplates[planId] || ['default'];
   const isAdmin = user?.role === 'admin';
 
@@ -719,8 +757,14 @@ export default function SettingsPage() {
         body: JSON.stringify(payload),
       });
       
-      mutate('/api/settings'); 
-      if (payload.name) {
+      // Mutate settings to refetch currencies/template if they were saved
+      if (payload.currencies || payload.invoiceTemplate) {
+        mutate('/api/settings'); 
+      }
+
+      // If store info or profile name was changed, we must reload
+      // to update the 'subscription' or 'user' object from useAuth
+      if (payload.name || payload.storeName) {
          window.location.reload();
       }
     } catch (err: any) {
@@ -755,6 +799,7 @@ export default function SettingsPage() {
       </Card>
 
       {/* --- Card 2: Company Information --- */}
+      {/* This form now saves to the 'store' state, which is read from the 'subscription' doc */}
       {(isAdmin || user?.role === 'manager' || user?.role === 'hr') && (
         <Card title="Company Information" icon={Store}>
           <form onSubmit={(e) => { e.preventDefault(); handleSave(store); }} className="space-y-4">
@@ -786,6 +831,7 @@ export default function SettingsPage() {
       )}
 
       {/* --- Card 3: Business Settings --- */}
+      {/* This form saves to the 'business' state, which is read from the 'settings' doc */}
       {(isAdmin || user?.role === 'manager' || user?.role === 'hr') && (
         <Card title="Business Settings" icon={FileText}>
           <form onSubmit={(e) => { e.preventDefault(); handleSave(business); }} className="space-y-6">
@@ -808,7 +854,7 @@ export default function SettingsPage() {
               disabled={!isAdmin}
             />
             
-            {/* PDF Templates */}
+            {/* *** START CORRECTION 2 *** */}
             <FormSelect 
               label="PDF Invoice Template" 
               value={business.invoiceTemplate} 
@@ -816,9 +862,11 @@ export default function SettingsPage() {
               disabled={!isAdmin}
             >
               <option value="default">Default</option>
-              <option value="classic" disabled={!userAllowedTemplates.includes('classic')}>Classic (Standard+)</option>
-              <option value="modern" disabled={!userAllowedTemplates.includes('modern')}>Modern (Business)</option>
+              <option value="modern" disabled={!userAllowedTemplates.includes('modern')}>Modern (Standard+)</option>
+              <option value="premium" disabled={!userAllowedTemplates.includes('premium')}>Premium (Business)</option>
             </FormSelect>
+            {/* *** END CORRECTION 2 *** */}
+            
             {!userAllowedTemplates.includes(business.invoiceTemplate) && (
               <UpgradeNotice text="Your plan does not include this template. It will revert to Default." onClick={() => setIsSubscriptionModalOpen(true)} />
             )}

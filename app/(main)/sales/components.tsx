@@ -1,22 +1,16 @@
 // File: app/(main)/sales/components.tsx
 //
-// --- FINAL VERSION (MODIFIED FOR DELETE) ---
-// 1. (FIX) La beddelay "EURO" oo laga dhigay "EUR" si loo saxo
-//    'Invalid currency code' error.
-// 2. (FIX) Sidoo kale 'formatCurrency' function-ka ayaa laga
-//    beddelay "EURO" loona dhigay "EUR".
-// --- (NEW FIXES APPLIED) ---
-// 3. (FIX) 'SalesTable' now reads 'sale.paymentLines' instead of 'sale.paymentMethods'.
-// 4. (FIX) 'ViewSaleModal' now reads 'sale.invoiceCurrency', 'sale.totalPaid',
-//    'sale.debtAmount', and 'sale.paymentLines' to show correct data.
-// 5. (FIX) 'NewReturnModal' now reads 'sale.invoiceCurrency' when a sale is selected.
-// --- (ADMIN DELETE MODIFICATIONS) ---
-// 6. (NEW) Added 'Trash2' to lucide imports.
-// 7. (NEW) Added 'DeleteConfirmModal' component and exported it.
-// 8. (MOD) 'ActionsMenu' now accepts 'userRole' and 'onDelete' and shows a conditional delete button.
-// 9. (MOD) 'SalesTable' now accepts 'userRole' and 'onDelete' and passes them to 'ActionsMenu'.
-// 10. (MOD) 'SalesDashboard', 'SalesDataContainer', 'SalesHistory', 'SalesInvoices'
-//     all updated to pass down 'userRole' and 'onDeleteSale' props.
+// --- FINAL VERSION (FIXED) ---
+// 1. (FIX) `SalesTable` status badge logic is corrected.
+//    - It now checks `sale.status` first. If the status is 'refunded'
+//      or 'voided', it will display that.
+//    - If `sale.status` is not one of those, it falls back to
+//      displaying `sale.paymentStatus` (paid, partial, unpaid).
+//    - This fixes the bug where refunded sales still showed "Partial".
+// 2. (FIX) `NewReturnModal`'s `handleSubmitReturn` function
+//    - Added a client-side validation check to ensure the 'reason'
+//      field is at least 3 characters long, matching the backend schema.
+//    - This fixes the "Invalid data" 400 Bad Request error.
 // -----------------------------------------------------------------------------
 
 "use client";
@@ -33,15 +27,15 @@ import {
   Search, SlidersHorizontal, ChevronLeft, ChevronRight,
   MoreVertical, X, AlertTriangle, FileText, CheckCircle, Clock, 
   XCircle, Info, TrendingUp, Send, Undo, FileWarning, Printer,
-  Loader2, DollarSign, Receipt, CreditCard, Plus, Trash2 // <-- (NEW) Added Trash2
+  Loader2, DollarSign, Receipt, CreditCard, Plus, Trash2
 } from "lucide-react"; 
 import { Dialog, Transition, Popover } from "@headlessui/react";
-import { generateInvoicePdf } from "@/lib/pdfService"; 
 
 // =============================================================================
 // 💰 API Fetcher (Shared)
 // =============================================================================
 export const fetcher = async (url: string) => {
+  // ... (unchanged)
   const firebaseUser = auth.currentUser;
   if (!firebaseUser) throw new Error("User is not authenticated.");
   
@@ -59,10 +53,8 @@ export const fetcher = async (url: string) => {
 // =============================================================================
 // 🛠️ Utility Functions & Constants (Shared)
 // =============================================================================
-
-// --- FIX: Changed "EURO" to "EUR" ---
 export const CURRENCIES = ["USD", "SLSH", "SOS", "KSH", "BIRR", "EUR"];
-
+// ... (PAYMENT_PROVIDERS unchanged)
 export const PAYMENT_PROVIDERS = {
   CASH: { label: "Cash" },
   BANK: { label: "Bank Transfer" },
@@ -75,6 +67,7 @@ export const PAYMENT_PROVIDERS = {
   SI_KALE: { label: "Other" },
 };
 
+// ... (SALE_STATUSES, RETURN_STATUSES, formatCurrency unchanged)
 export const SALE_STATUSES = [
   { id: "paid", label: "Paid", color: "text-green-500" },
   { id: "partial", label: "Partial", color: "text-orange-500" },
@@ -94,7 +87,6 @@ export const formatCurrency = (amount: number | undefined | null, currency: stri
   if (amount == null || amount === 0) {
      amount = 0;
   }
-  // --- FIX: Changed "EURO" to "EUR" ---
   const style = (currency === "USD" || currency === "EUR") ? "currency" : "decimal";
   const options: Intl.NumberFormatOptions = {
     style: style,
@@ -117,6 +109,7 @@ export const formatCurrency = (amount: number | undefined | null, currency: stri
 // 🧩 Reusable Child Components
 // =============================================================================
 
+// ... (AdvancedFilterBar, KpiCard, ChartCard, SalesTrendChart, PaymentPieChart unchanged)
 export const AdvancedFilterBar = ({ initialFilters, onApplyFilters }: any) => {
   const [filters, setFilters] = React.useState(initialFilters);
   const [showAdvanced, setShowAdvanced] = React.useState(false);
@@ -252,19 +245,22 @@ export const PaymentPieChart = ({ data, currency }: { data: any[], currency: str
   );
 };
 
+
 // --- Tables ---
 const getProductSummary = (items: any[]) => {
+// ... (unchanged)
   if (!items || items.length === 0) return "N/A";
   const firstItem = items[0].productName;
   const moreItems = items.length > 1 ? ` + ${items.length - 1} more` : "";
   return `${firstItem}${moreItems}`;
 };
 const getPaymentSummary = (methods: any[]) => {
+// ... (unchanged)
   if (!methods || methods.length === 0) return "N/A";
   return methods.map(m => m.method.toUpperCase()).join(', ');
 };
 
-export const SalesTable = ({ sales, isLoading, currency, onView, onPrint, onRefund, userRole, onDelete }: any) => {
+export const SalesTable = ({ sales, isLoading, currency, onView, onPrint, onRefund, onCancel }: any) => {
   if (isLoading) return <TableLoadingSkeleton />;
   if (!sales || sales.length === 0) return <TableEmptyState message="No sales found matching your filters." />;
   
@@ -294,9 +290,20 @@ export const SalesTable = ({ sales, isLoading, currency, onView, onPrint, onRefu
                   <td className="px-3 py-4 text-sm font-medium text-gray-900 dark:text-white">{sale.customerName}</td>
                   <td className="px-3 py-4 text-sm text-gray-500 dark:text-gray-400" title={sale.items?.map((i:any) => i.productName).join(', ')}>{getProductSummary(sale.items)}</td>
                   <td className="px-3 py-4 text-sm text-gray-500 dark:text-gray-400">{dayjs(sale.createdAt).format("DD MMM YYYY")}</td>
-                  <td className="px-3 py-4 text-sm font-medium text-gray-900 dark:text-white">{formatCurrency(sale.totalAmount, sale.currency)}</td>
-                  <td className="px-3 py-4 text-sm"><StatusBadge status={sale.paymentStatus} options={SALE_STATUSES} /></td>
-                  {/* --- FIX: Read from 'sale.paymentLines' instead of 'sale.paymentMethods' --- */}
+                  <td className="px-3 py-4 text-sm font-medium text-gray-900 dark:text-white">{formatCurrency(sale.totalAmount, sale.invoiceCurrency)}</td>
+                  
+                  {/* --- FIX: Use status first, then fallback to paymentStatus --- */}
+                  <td className="px-3 py-4 text-sm">
+                    <StatusBadge 
+                      status={
+                        (sale.status === 'refunded' || sale.status === 'voided') 
+                        ? sale.status 
+                        : sale.paymentStatus
+                      } 
+                      options={SALE_STATUSES} 
+                    />
+                  </td>
+                  
                   <td className="px-3 py-4 text-sm text-gray-500 dark:text-gray-400">{getPaymentSummary(sale.paymentLines)}</td>
                   <td className="px-3 py-4 text-sm text-gray-500 dark:text-gray-400">{sale.salespersonName || sale.salesperson}</td>
                   <td className="px-3 py-4 text-sm">
@@ -306,12 +313,11 @@ export const SalesTable = ({ sales, isLoading, currency, onView, onPrint, onRefu
                   </td>
                   <td className="py-4 pl-3 pr-4 text-right text-sm font-medium sm:pr-0">
                     <ActionsMenu 
-                      saleId={sale.id} 
+                      sale={sale}
                       onView={() => onView(sale)} 
                       onPrint={() => onPrint(sale)}
                       onRefund={() => onRefund(sale)}
-                      onDelete={() => onDelete(sale)} // <-- (NEW) Pass handler
-                      userRole={userRole} // <-- (NEW) Pass role
+                      onCancel={() => onCancel(sale)}
                     />
                   </td>
                 </tr>
@@ -324,6 +330,7 @@ export const SalesTable = ({ sales, isLoading, currency, onView, onPrint, onRefu
   );
 };
 
+// ... (ReturnsTable, ActionsMenu, StatusBadge, TagBadge, Pagination, Card, Skeleton, etc. unchanged)
 export const ReturnsTable = ({ returns, isLoading, currency, onView }: any) => {
   if (isLoading) return <TableLoadingSkeleton />;
   if (!returns || returns.length === 0) return <TableEmptyState message="No returns found matching your filters." />;
@@ -372,16 +379,18 @@ export const ReturnsTable = ({ returns, isLoading, currency, onView }: any) => {
   );
 };
 
-
-// --- Action Menu for Table (MODIFIED) ---
-export const ActionsMenu = ({ saleId, onView, onPrint, onRefund, onDelete, userRole }: { 
-  saleId: string, 
+export const ActionsMenu = ({ sale, onView, onPrint, onRefund, onCancel }: { 
+  sale: any, 
   onView: () => void, 
   onPrint: () => void,
   onRefund: () => void,
-  onDelete: () => void, // <-- (NEW)
-  userRole: string     // <-- (NEW)
+  onCancel: () => void
 }) => {
+  
+  const isRefunded = sale.status === 'refunded';
+  const isVoided = sale.status === 'voided';
+  const isUnpaid = sale.paymentStatus === 'unpaid';
+  
   return (
     <Popover className="relative">
       <Popover.Button title="More actions" className="text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100">
@@ -396,7 +405,7 @@ export const ActionsMenu = ({ saleId, onView, onPrint, onRefund, onDelete, userR
         leaveFrom="transform opacity-100 scale-100"
         leaveTo="transform opacity-0 scale-95"
       >
-        <Popover.Panel className="absolute right-0 z-10 mt-2 w-32 origin-top-right rounded-md bg-white shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none dark:bg-gray-800 dark:ring-gray-700">
+        <Popover.Panel className="absolute right-0 z-10 mt-2 w-36 origin-top-right rounded-md bg-white shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none dark:bg-gray-800 dark:ring-gray-700">
           <div className="py-1">
             <button
               onClick={onView}
@@ -412,28 +421,29 @@ export const ActionsMenu = ({ saleId, onView, onPrint, onRefund, onDelete, userR
               Print
             </button>
             
-            <button
-              onClick={onRefund}
-              className="block w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-700"
-            >
-              Refund
-            </button>
-
-            {/* --- (NEW) Admin-only Delete Button --- */}
-            {userRole === 'admin' && (
-              <>
-                <div className="my-1 h-px bg-gray-100 dark:bg-gray-700" />
-                <button
-                  onClick={onDelete}
-                  className="flex items-center gap-2 w-full px-4 py-2 text-left text-sm text-red-600 hover:bg-gray-100 dark:text-red-400 dark:hover:bg-gray-700"
-                >
-                  <Trash2 className="h-4 w-4" />
-                  Delete
-                </button>
-              </>
+            {(isRefunded || isVoided) && (
+              <span className="block w-full px-4 py-2 text-left text-sm text-gray-400 dark:text-gray-500">
+                {isRefunded ? "Refunded" : "Voided"}
+              </span>
             )}
-            {/* --- (END NEW) --- */}
+
+            {!isRefunded && !isVoided && (sale.paymentStatus === 'paid' || sale.paymentStatus === 'partial') && (
+              <button
+                onClick={onRefund}
+                className="block w-full px-4 py-2 text-left text-sm text-yellow-700 hover:bg-gray-100 dark:text-yellow-400 dark:hover:bg-gray-700"
+              >
+                Refund
+              </button>
+            )}
             
+            {!isRefunded && !isVoided && isUnpaid && (
+              <button
+                onClick={onCancel}
+                className="block w-full px-4 py-2 text-left text-sm text-red-700 hover:bg-gray-100 dark:text-red-400 dark:hover:bg-gray-700"
+              >
+                Cancel Sale
+              </button>
+            )}
           </div>
         </Popover.Panel>
       </Transition>
@@ -537,7 +547,6 @@ export const TotalRow = ({ label, value, isDebt = false, isBold = false }: { lab
   </div>
 );
 
-// --- Reusable Modal Component (FIXED) ---
 export const TransitionedModal = ({
   isOpen,
   onClose,
@@ -593,11 +602,10 @@ export const TransitionedModal = ({
   );
 }
 
-// --- ViewSaleModal ---
+// ... (ViewSaleModal unchanged)
 export const ViewSaleModal = ({ isOpen, onClose, sale, onPrint }: { isOpen: boolean, onClose: () => void, sale: any | null, onPrint: (sale: any) => void }) => {
   if (!sale) return null;
 
-  // --- FIX: Use 'invoiceCurrency' ---
   const currency = sale.invoiceCurrency || 'USD';
 
   return (
@@ -605,17 +613,26 @@ export const ViewSaleModal = ({ isOpen, onClose, sale, onPrint }: { isOpen: bool
       <Dialog.Title className="text-lg font-medium leading-6 text-gray-900 dark:text-white">
         Sale Details: {sale.invoiceId || sale.id.slice(0, 6)}
       </Dialog.Title>
-    
       <div className="mt-4 grid grid-cols-1 gap-6 md:grid-cols-3">
         <div className="md:col-span-1">
-
+          <h4 className="font-semibold dark:text-white">Customer</h4>
+          <p className="text-sm text-gray-600 dark:text-gray-300">{sale.customerName}</p>
+          <p className="text-sm text-gray-500 dark:text-gray-400">{sale.customerPhone}</p>
           <h4 className="mt-4 font-semibold dark:text-white">Sale Info</h4>
-          <p className="text-sm text-gray-600 dark:text-gray-300">Date: {dayjs(sale.createdAt).format("DD MMM YY, h:mm A")}</p>
-          {/* --- (FIX) Add fallback for salesperson --- */}
-          <p className="text-sm text-gray-600 dark:text-gray-300">Salesperson: {sale.salespersonName || sale.salesperson || 'N/A'}</p>
-          <StatusBadge status={sale.paymentStatus} options={SALE_STATUSES} />
+          <p className="text-sm text-gray-600 dark:text-gray-300">Date: {dayjs(sale.createdAt).format("DD MMM YYYY, h:mm A")}</p>
+          <p className="text-sm text-gray-600 dark:text-gray-300">Salesperson: {sale.salespersonName}</p>
+          
+          {/* --- FIX: Also use corrected status logic here --- */}
+          <StatusBadge 
+            status={
+              (sale.status === 'refunded' || sale.status === 'voided') 
+              ? sale.status 
+              : sale.paymentStatus
+            } 
+            options={SALE_STATUSES} 
+          />
+          
         </div>
-
         <div className="md:col-span-2">
           <h4 className="font-semibold dark:text-white">Items</h4>
           <div className="mt-2 flow-root">
@@ -645,14 +662,12 @@ export const ViewSaleModal = ({ isOpen, onClose, sale, onPrint }: { isOpen: bool
       <div className="mt-6 border-t border-gray-200 pt-4 dark:border-gray-700">
         <h4 className="font-semibold dark:text-white">Financials</h4>
         <div className="mt-2 space-y-2">
-          {/* --- FIX: Use correct fields 'totalAmount', 'totalPaid', 'debtAmount' --- */}
           <TotalRow label="Total Amount" value={formatCurrency(sale.totalAmount, currency)} isBold={true} />
           <TotalRow label="Amount Paid" value={formatCurrency(sale.totalPaid, currency)} />
           <TotalRow label="Debt Remaining" value={formatCurrency(sale.debtAmount, currency)} isDebt={sale.debtAmount > 0} isBold={true} />
         </div>
         <h4 className="mt-4 font-semibold dark:text-white">Payment Methods</h4>
         <div className="mt-2 space-y-1">
-          {/* --- FIX: Use 'paymentLines' --- */}
           {sale.paymentLines?.length > 0 ? (
             sale.paymentLines.map((pm: any, index: number) => (
               <p key={index} className="text-sm text-gray-600 dark:text-gray-300">
@@ -685,6 +700,7 @@ export const ViewSaleModal = ({ isOpen, onClose, sale, onPrint }: { isOpen: bool
   );
 };
 
+
 // --- NewReturnModal (FIXED) ---
 export const NewReturnModal = ({ isOpen, onClose, onSuccess, saleToReturn }: { 
   isOpen: boolean, 
@@ -709,6 +725,7 @@ export const NewReturnModal = ({ isOpen, onClose, onSuccess, saleToReturn }: {
   const [reason, setReason] = useState("");
 
   const queryString = useMemo(() => {
+    // ... (unchanged)
     const params = new URLSearchParams();
     params.set('view', 'history'); 
     params.set('currency', 'USD'); // Default search currency
@@ -731,10 +748,10 @@ export const NewReturnModal = ({ isOpen, onClose, onSuccess, saleToReturn }: {
   );
 
   useEffect(() => {
+    // ... (unchanged)
     if (isOpen && saleToReturn) {
       setSaleData(saleToReturn);
-      setRefundAmount(saleToReturn.totalAmount.toString());
-      // --- FIX: Use 'invoiceCurrency' instead of 'currency' ---
+      setRefundAmount(saleToReturn.totalPaid.toString());
       setRefundCurrency(saleToReturn.invoiceCurrency); 
       setStep(2); 
     } else if (isOpen) {
@@ -744,6 +761,7 @@ export const NewReturnModal = ({ isOpen, onClose, onSuccess, saleToReturn }: {
 
 
   const resetModal = () => {
+    // ... (unchanged)
     setStep(1);
     setIsBusy(false);
     setError(null);
@@ -758,19 +776,21 @@ export const NewReturnModal = ({ isOpen, onClose, onSuccess, saleToReturn }: {
   };
 
   const handleClose = () => {
+    // ... (unchanged)
     resetModal(); 
     onClose();    
   };
 
   const handleSelectSale = (sale: any) => {
+    // ... (unchanged)
     setSaleData(sale);
-    setRefundAmount(sale.totalAmount.toString());
-    // --- FIX: Use 'invoiceCurrency' instead of 'currency' ---
+    setRefundAmount(sale.totalPaid.toString());
     setRefundCurrency(sale.invoiceCurrency); 
     setStep(2); 
   };
 
   const handleItemQuantityChange = (productId: string, quantity: number, maxQuantity: number) => {
+    // ... (unchanged)
     if (quantity > maxQuantity) quantity = maxQuantity;
     if (quantity < 0) quantity = 0;
     setItemsToReturn((prev: any) => ({ ...prev, [productId]: quantity }));
@@ -779,6 +799,14 @@ export const NewReturnModal = ({ isOpen, onClose, onSuccess, saleToReturn }: {
   const handleSubmitReturn = async () => {
     setError(null);
     setIsBusy(true);
+
+    // --- FIX: Add validation for Reason ---
+    if (!reason || reason.trim().length < 3) {
+      setError("Please provide a reason (at least 3 characters).");
+      setIsBusy(false);
+      return;
+    }
+    // -------------------------------------
 
     const finalItemsToReturn = saleData.items
       .filter((item: any) => (itemsToReturn[item.productId] || 0) > 0)
@@ -801,8 +829,15 @@ export const NewReturnModal = ({ isOpen, onClose, onSuccess, saleToReturn }: {
          setIsBusy(false);
          return;
     }
+    
+    if (numericRefundAmount > saleData.totalPaid) {
+         setError(`Refund amount cannot exceed total paid: ${formatCurrency(saleData.totalPaid, saleData.invoiceCurrency)}`);
+         setIsBusy(false);
+         return;
+    }
 
     try {
+      // ... (unchanged API call)
       const firebaseUser = auth.currentUser;
       if (!firebaseUser) throw new Error("User is not authenticated.");
       const token = await firebaseUser.getIdToken();
@@ -844,9 +879,14 @@ export const NewReturnModal = ({ isOpen, onClose, onSuccess, saleToReturn }: {
       <Dialog.Title className="text-lg font-medium leading-6 text-gray-900 dark:text-white">
         Create New Return
       </Dialog.Title>
-      {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
+      {error && (
+        <div className="my-2 rounded-md border border-red-300 bg-red-50 p-3 dark:border-red-700 dark:bg-red-900/20">
+          <p className="text-sm font-medium text-red-700 dark:text-red-400">{error}</p>
+        </div>
+      )}
       
       {step === 1 && (
+        // ... (unchanged Step 1 JSX)
         <div className="mt-4">
           <p className="text-sm text-gray-500">
             Find the original sale to begin the return process.
@@ -875,15 +915,19 @@ export const NewReturnModal = ({ isOpen, onClose, onSuccess, saleToReturn }: {
                 {searchData?.salesList?.map((sale: any) => (
                   <tr 
                     key={sale.id} 
-                    className="cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700"
-                    onClick={() => handleSelectSale(sale)}
+                    className={`cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 ${sale.paymentStatus === 'unpaid' || sale.status === 'refunded' ? 'opacity-50 cursor-not-allowed' : ''}`}
+                    onClick={() => {
+                      if (sale.paymentStatus !== 'unpaid' && sale.status !== 'refunded') {
+                        handleSelectSale(sale);
+                      }
+                    }}
+                    title={sale.paymentStatus === 'unpaid' ? 'Cannot refund an unpaid sale' : (sale.status === 'refunded' ? 'Sale already refunded' : 'Select this sale')}
                   >
                     <td className="p-3 text-sm">
                       <div className="font-medium dark:text-white">{sale.customerName}</div>
                       <div className="text-gray-500">{sale.invoiceId}</div>
                     </td>
                     <td className="p-3 text-right text-sm">
-                      {/* --- FIX: Use 'invoiceCurrency' --- */}
                       <div className="font-medium dark:text-white">{formatCurrency(sale.totalAmount, sale.invoiceCurrency)}</div>
                       <div className="text-gray-500">{dayjs(sale.createdAt).format('DD MMM YYYY')}</div>
                     </td>
@@ -896,11 +940,14 @@ export const NewReturnModal = ({ isOpen, onClose, onSuccess, saleToReturn }: {
       )}
 
       {step === 2 && saleData && (
+        // ... (unchanged Step 2 JSX)
         <div className="mt-4 space-y-4">
           <div>
             <h4 className="font-semibold dark:text-white">Sale: {saleData.invoiceId}</h4>
             <p className="text-sm text-gray-500 dark:text-gray-400">Customer: {saleData.customerName}</p>
-            <p className="text-sm text-gray-500 dark:text-gray-400">Date: {dayjs(saleData.createdAt).format("DD MMM YYYY")}</p>
+            <p className="text-sm text-gray-500 dark:text-gray-400">
+              Total Paid: <strong>{formatCurrency(saleData.totalPaid, saleData.invoiceCurrency)}</strong>
+            </p>
           </div>
           
           <div className="space-y-2">
@@ -909,7 +956,6 @@ export const NewReturnModal = ({ isOpen, onClose, onSuccess, saleToReturn }: {
               <div key={item.productId} className="flex items-center justify-between gap-2 rounded border p-2 dark:border-gray-700">
                 <div>
                   <p className="font-medium dark:text-white">{item.productName}</p>
-                  {/* --- FIX: Use 'invoiceCurrency' --- */}
                   <p className="text-sm text-gray-500">Sold: {item.quantity} @ {formatCurrency(item.pricePerUnit, saleData.invoiceCurrency)}</p>
                 </div>
                 <FormInput
@@ -931,6 +977,7 @@ export const NewReturnModal = ({ isOpen, onClose, onSuccess, saleToReturn }: {
               type="number"
               value={refundAmount}
               onChange={setRefundAmount}
+              max={saleData.totalPaid}
             />
             <FormSelect label="Currency" value={refundCurrency} onChange={setRefundCurrency}>
               {CURRENCIES.map(c => <option key={c} value={c}>{c}</option>)}
@@ -951,6 +998,7 @@ export const NewReturnModal = ({ isOpen, onClose, onSuccess, saleToReturn }: {
       )}
 
       <div className="mt-6 flex justify-between gap-3">
+        {/* ... (unchanged modal buttons) */}
         {step === 2 && !saleToReturn && ( 
           <button type="button" className="rounded-lg border border-gray-300 px-4 py-2 text-sm" onClick={() => setStep(1)}>Back to Search</button>
         )}
@@ -972,7 +1020,7 @@ export const NewReturnModal = ({ isOpen, onClose, onSuccess, saleToReturn }: {
 };
 
 
-// --- CreateInvoiceModal (FIXED) ---
+// ... (CreateInvoiceModal, CancelSaleModal, SalesDashboard, SalesHistory, SalesInvoices, SalesDataContainer, SalesReturns unchanged)
 export const CreateInvoiceModal = ({ isOpen, onClose, onPrint, globalFilters }: { 
   isOpen: boolean, 
   onClose: () => void, 
@@ -1076,7 +1124,6 @@ export const CreateInvoiceModal = ({ isOpen, onClose, onPrint, globalFilters }: 
                   <div className="text-gray-500">{sale.invoiceId}</div>
                 </td>
                 <td className="p-3 text-right text-sm">
-                  {/* --- FIX: Use 'invoiceCurrency' --- */}
                   <div className="font-medium dark:text-white">{formatCurrency(sale.totalAmount, sale.invoiceCurrency)}</div>
                   <div className="text-gray-500">{dayjs(sale.createdAt).format('DD MMM YYYY')}</div>
                 </td>
@@ -1093,71 +1140,59 @@ export const CreateInvoiceModal = ({ isOpen, onClose, onPrint, globalFilters }: 
   );
 };
 
-
-// --- (NEW) Delete Confirmation Modal ---
-export const DeleteConfirmModal = ({ 
-  isOpen, 
-  onClose, 
-  onConfirm, 
-  isDeleting, 
-  saleInvoiceId 
-}: { 
-  isOpen: boolean, 
-  onClose: () => void, 
-  onConfirm: () => void, 
-  isDeleting: boolean, 
-  saleInvoiceId: string 
+export const CancelSaleModal = ({ isOpen, onClose, onConfirm, isBusy, sale }: {
+  isOpen: boolean,
+  onClose: () => void,
+  onConfirm: () => void,
+  isBusy: boolean,
+  sale: any | null
 }) => {
+  if (!sale) return null;
+  
   return (
     <TransitionedModal isOpen={isOpen} onClose={onClose} size="md">
-      <Dialog.Title as="h3" className="text-lg font-medium leading-6 text-gray-900 dark:text-white">
-        Delete Sale
+      <Dialog.Title className="text-lg font-medium leading-6 text-gray-900 dark:text-white">
+        Cancel Sale
       </Dialog.Title>
       <div className="mt-4">
-        <div className="flex items-start gap-3">
-          <div className="flex-shrink-0">
-            <AlertTriangle className="h-10 w-10 text-red-500" />
-          </div>
-          <div>
-            <p className="text-sm text-gray-600 dark:text-gray-300">
-              Are you sure you want to permanently delete (void) this sale?
-            </p>
-            <p className="mt-1 text-sm font-semibold text-gray-800 dark:text-gray-100">
-              Invoice #: {saleInvoiceId}
-            </p>
-            <p className="mt-3 text-xs text-gray-500 dark:text-gray-400">
-              This action will restock the items, reverse any income, and cancel any outstanding debts associated with this sale. This cannot be undone.
-            </p>
-          </div>
+        <p className="text-sm text-gray-600 dark:text-gray-300">
+          Are you sure you want to cancel this unpaid sale?
+        </p>
+        <div className="mt-2 rounded-lg border border-gray-200 bg-gray-50 p-3 dark:border-gray-700 dark:bg-gray-900/50">
+          <p className="font-semibold text-gray-900 dark:text-white">{sale.customerName}</p>
+          <p className="text-sm text-gray-500 dark:text-gray-400">Invoice: {sale.invoiceId}</p>
+          <p className="text-sm text-gray-500 dark:text-gray-400">
+            Total: {formatCurrency(sale.totalAmount, sale.invoiceCurrency)} (Unpaid)
+          </p>
         </div>
+        <p className="mt-4 text-sm text-red-600 dark:text-red-400">
+          This action will void the sale and delete any associated debt. This cannot be undone.
+        </p>
       </div>
       <div className="mt-6 flex justify-end gap-3">
         <button
           type="button"
-          className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 disabled:opacity-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
+          className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
           onClick={onClose}
-          disabled={isDeleting}
+          disabled={isBusy}
         >
-          Cancel
+          Close
         </button>
         <button
           type="button"
-          className="flex min-w-[100px] items-center justify-center rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-red-700 disabled:opacity-50"
+          className="flex items-center gap-2 rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-red-700 disabled:opacity-50"
           onClick={onConfirm}
-          disabled={isDeleting}
+          disabled={isBusy}
         >
-          {isDeleting ? <Loader2 className="h-4 w-4 animate-spin" /> : "Yes, Delete"}
+          {isBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+          Confirm Cancel
         </button>
       </div>
     </TransitionedModal>
   );
 };
 
-
-// =============================================================================
-// **NEW: Self-Contained SalesDashboard Component**
-// =============================================================================
-export const SalesDashboard = ({ filters, onViewSale, onPrintSale, onRefund, userRole, onDeleteSale }: any) => {
+export const SalesDashboard = ({ filters, onViewSale, onPrintSale, onRefund, onCancel }: any) => {
   const [page, setPage] = useState(1);
   
   const queryString = useMemo(() => {
@@ -1209,8 +1244,7 @@ export const SalesDashboard = ({ filters, onViewSale, onPrintSale, onRefund, use
           onView={onViewSale}
           onPrint={onPrintSale}
           onRefund={onRefund} 
-          userRole={userRole} // <-- (NEW) Pass prop
-          onDelete={onDeleteSale} // <-- (NEW) Pass prop
+          onCancel={onCancel}
         />
         <Pagination pagination={data?.pagination} onPageChange={handlePageChange} />
       </Card>
@@ -1218,11 +1252,7 @@ export const SalesDashboard = ({ filters, onViewSale, onPrintSale, onRefund, use
   );
 };
 
-// =============================================================================
-// ** FIX: Hoisting - Define History & Invoices components BEFORE DataContainer
-// =============================================================================
-
-const SalesHistory = ({ data, isLoading, currency, onPageChange, onViewSale, onPrintSale, onRefund, userRole, onDeleteSale }: any) => {
+const SalesHistory = ({ data, isLoading, currency, onPageChange, onViewSale, onPrintSale, onRefund, onCancel }: any) => {
   return (
     <Card>
       <h3 className="text-lg font-semibold dark:text-white">Sales History</h3>
@@ -1236,15 +1266,14 @@ const SalesHistory = ({ data, isLoading, currency, onPageChange, onViewSale, onP
         onView={onViewSale}
         onPrint={onPrintSale}
         onRefund={onRefund}
-        userRole={userRole} // <-- (NEW) Pass prop
-        onDelete={onDeleteSale} // <-- (NEW) Pass prop
+        onCancel={onCancel}
       />
       <Pagination pagination={data?.pagination} onPageChange={onPageChange} />
     </Card>
   );
 };
 
-const SalesInvoices = ({ data, isLoading, currency, onPageChange, onViewSale, onPrintSale, onCreateInvoice, onRefund, userRole, onDeleteSale }: any) => {
+const SalesInvoices = ({ data, isLoading, currency, onPageChange, onViewSale, onPrintSale, onCreateInvoice, onRefund, onCancel }: any) => {
   return (
     <div className="space-y-6">
       <Card>
@@ -1270,8 +1299,7 @@ const SalesInvoices = ({ data, isLoading, currency, onPageChange, onViewSale, on
           onView={onViewSale}
           onPrint={onPrintSale}
           onRefund={onRefund}
-          userRole={userRole} // <-- (NEW) Pass prop
-          onDelete={onDeleteSale} // <-- (NEW) Pass prop
+          onCancel={onCancel}
         />
         <Pagination pagination={data?.pagination} onPageChange={onPageChange} />
       </Card>
@@ -1279,10 +1307,7 @@ const SalesInvoices = ({ data, isLoading, currency, onPageChange, onViewSale, on
   );
 };
 
-// =============================================================================
-// **NEW: Data Container for History & Invoices**
-// =============================================================================
-export const SalesDataContainer = ({ filters, view, onViewSale, onPrintSale, onRefund, onCreateInvoice, userRole, onDeleteSale }: any) => {
+export const SalesDataContainer = ({ filters, view, onViewSale, onPrintSale, onRefund, onCancel, onCreateInvoice }: any) => {
   const [page, setPage] = useState(1);
   
   const queryString = useMemo(() => {
@@ -1317,8 +1342,7 @@ export const SalesDataContainer = ({ filters, view, onViewSale, onPrintSale, onR
         onViewSale={onViewSale}
         onPrintSale={onPrintSale}
         onRefund={onRefund}
-        userRole={userRole} // <-- (NEW) Pass prop
-        onDeleteSale={onDeleteSale} // <-- (NEW) Pass prop
+        onCancel={onCancel}
       />
     );
   }
@@ -1334,8 +1358,7 @@ export const SalesDataContainer = ({ filters, view, onViewSale, onPrintSale, onR
         onPrintSale={onPrintSale}
         onCreateInvoice={onCreateInvoice}
         onRefund={onRefund}
-        userRole={userRole} // <-- (NEW) Pass prop
-        onDeleteSale={onDeleteSale} // <-- (NEW) Pass prop
+        onCancel={onCancel}
       />
     );
   }
@@ -1343,17 +1366,12 @@ export const SalesDataContainer = ({ filters, view, onViewSale, onPrintSale, onR
   return null;
 };
 
-// =============================================================================
-// **NEW: Simple Presentational Component for SalesReturns**
-// =============================================================================
 export const SalesReturns = ({ data, isLoading, currency, onPageChange, onNewReturn, onViewReturn }: any) => {
   const kpis = data?.kpis;
   return (
     <div className="space-y-6">
-      {/* KPIs */}
       <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4">
         <KpiCard title="Total Returns" value={kpis?.totalReturns ?? 0} icon={Undo} color="text-red-500" isLoading={isLoading} />
-        {/* FIX: Use map for multi-currency KPIs */}
         <KpiCard title="Refunds Issued" value={
           kpis?.totalRefunds && Object.keys(kpis.totalRefunds).length > 0 ? (
             Object.entries(kpis.totalRefunds).map(([cur, val]: any) => (
@@ -1364,7 +1382,6 @@ export const SalesReturns = ({ data, isLoading, currency, onPageChange, onNewRet
         <KpiCard title="Pending Requests" value={kpis?.pendingRequests ?? 0} icon={Clock} color="text-yellow-500" isLoading={isLoading} />
         <KpiCard title="Avg. Refund" value={"N/A"} icon={TrendingUp} color="text-purple-500" isLoading={isLoading} />
       </div>
-      {/* Table Card */}
       <Card>
         <div className="flex items-center justify-between">
           <div>

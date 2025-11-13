@@ -1,5 +1,26 @@
-problems new
-salary should deduct as expense 
+purchases
+form upload invoice image,,, 
+login:
+login needs refresh
+
+product
+alaab faaido khasare
+
+
+report unknown debit name
+
+
+dashboard 
+today,month,
+invoice should be changed total refunded amount
+week and  custom shows normal, yestrday also normal i think
+
+refund sales
+debt customer can be refunded 
+
+
+payment methods
+
 payment methods should be usd sos slsh euro ksh birr
 payment methods should be linked to dropdown currency
 usd > shows as method >cash, bank, zaad, edahab, somnet, evc pluse, sahal,other
@@ -9,49 +30,6 @@ birr> cash, bank, ebirr, other
 ksh>bank, cash, other, m-pessa
 euro> cash, bank, other
 
-1: products 
-here are some problmes produc pages have 
-adjsustments not adding if you try to adjust and save it deosnt make any changes like if i try to select
- warehouse product and ading quanty and the previews qunaty was 0 its still 0 no change o save button
-edit should  save also there should be also deduct and add dropdown - + icon i mean adjustments both take deduct and increase
-so in the feild to type numbers there should be buttons to select with tick modern button or radio which saves this as + pr - this is required
+dashboard not showing in summery
+finance not showing
 
-
-form: numbers auto change before save after inseting e,g you put 4 it becomes 3
-report doesnt completly work and dynamic 
-no product history
-
-new sales
-user can say it paid mor then total
-sales neeeeed to have delete button only for admins
-
-2:purchases 
-
-form shows auto number select change 3 to 2
-
-
-3:suppliers
-need to have delete button which also deletes their debt
-
-paymetnt methods not compelte listed
-
-
-income expenses 
-
-payment methods error
-expense show na for  xpense Breakdow
-
-
-report custom report remove 
-
-others
-
-allll payment methods should be checked and create method
-w
-alll rules for firebase should be checked
-all roles should be fixed
-all settings should be fixed
-app and web same
-main super admin
-comunitcatipon 
-feedback a=super admin page should see all info
