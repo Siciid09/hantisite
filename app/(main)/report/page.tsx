@@ -1,17 +1,18 @@
 // File: app/(main)/reports/page.tsx
+// Description: Main Reports & Analytics page.
 //
-// --- (FINAL, CORRECTED VERSION) ---
-// 1. (NEW) Added 'useAuth' to get subscription data for PDFs.
-// 2. (NEW) Added 'PDFDownloadLink', 'getTemplateComponent', and new icons.
-// 3. (FIX) 'ReportsDownloadModal' now accepts the 'subscription' prop.
-// 4. (FIX) 'handleGenerate' now prepares the PDF data and component in state.
-// 5. (FIX) Deleted the old 'handleDownloadPDF' function entirely.
-// 6. (FIX) The modal JSX now shows the <PDFDownloadLink /> button after data is generated.
-// 7. (FIX) The 'CalendarGrid' component's hover logic is now type-safe and fixed.
+// --- MODERN UI UPGRADE ---
+// 1. (NEW) KPI Cards are now colorful, modern, and include icons.
+// 2. (NEW) ReportTable is now responsive (horizontal scroll) and color-codes
+//    positive (green) and negative (red) financial numbers.
+// 3. (NEW) All Cards and Table Rows have modern hover:shadow and transition
+//    effects for a smoother feel.
+// 4. (NEW) Added a "Refresh" button to the header (like on your dashboard).
+// 5. (NEW) Added "title" tooltips to all buttons for better user guidance.
 // -----------------------------------------------------------------------------
 "use client";
 
-import React, { useState, Suspense, useEffect, useMemo, Fragment } from "react";
+import React, { useState, Suspense, useEffect, useMemo } from "react";
 import useSWR, { useSWRConfig } from "swr";
 import { auth } from "../../../lib/firebaseConfig";
 import dayjs from "dayjs";
@@ -23,30 +24,23 @@ import {
   TrendingUp, ShoppingCart, Package, DollarSign, Users, Briefcase,
   FileText, Loader2, X, ChevronLeft, Calendar as CalendarIconLucide, 
   Download, AlertTriangle, Banknote, CreditCard, UserCheck,
-  ChevronDown, ChevronRight, RefreshCw,
+  ChevronDown, ChevronRight, RefreshCw, // Added RefreshCw
   PackageX, AlertOctagon, List, BarChart2, CheckCircle, ArrowUpRight, ArrowDownRight,
 } from "lucide-react";
 
-// --- (NEW) IMPORTS FOR PDF ---
-import { useAuth } from "@/app/contexts/AuthContext"; // <-- (NEW)
-import { PDFDownloadLink } from '@react-pdf/renderer'; // <-- (NEW)
-import { getTemplateComponent, ReportType } from '@/lib/pdfService'; // <-- (NEW)
-// --- END NEW IMPORTS ---
-
 // --- Imports for New Date Picker ---
-import { Button } from "../../components/ui/Button";
-import { Popover, PopoverContent, PopoverTrigger } from "../../components/ui/popover";
-import { cn } from "../../../lib/utils";
+import { Button } from "../../components/ui/Button"; // Assuming path
+import { Popover, PopoverContent, PopoverTrigger } from "../../components/ui/popover"; // Assuming path
+import { cn } from "../../../lib/utils"; // Assuming path
 import { 
   add, addDays, format, startOfWeek, startOfMonth, endOfDay,
   eachDayOfInterval, endOfMonth, endOfWeek, isSameDay, isSameMonth,
   isToday, parse, sub,
   isAfter, isBefore
 } from "date-fns";
-import { type DateRange } from "react-day-picker";
+import { type DateRange } from "react-day-picker"; // We still use the *type*
 
 // --- Imports for New Download Modal ---
-// (jsPDF and autoTable are no longer needed for PDF, but kept for Excel)
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
 import * as XLSX from "xlsx";
@@ -80,17 +74,21 @@ const formatCurrency = (amount: number | null | undefined, currency: string): st
     options.maximumFractionDigits = 2;
   }
   
+  // Add negative sign manually for non-currency formats
   let prefix = amount < 0 ? "-" : "";
-  if (options.style === 'currency') prefix = '';
+  if (options.style === 'currency') prefix = ''; // Let Intl handle it
 
   try {
     return new Intl.NumberFormat("en-US", options).format(amount);
   } catch (e) {
+    // Fallback for non-ISO codes
     return `${prefix}${currency} ${new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(Math.abs(amount))}`;
   }
 };
 
 const AVAILABLE_CURRENCIES = ["USD", "SLSH", "SOS", "EUR", "KES", "ETB"];
+
+// Colors for charts
 const CHART_COLORS = ["#3b82f6", "#16a34a", "#f59e0b", "#9333ea", "#e11d48", "#14b8a6"];
 
 // -----------------------------------------------------------------------------
@@ -115,7 +113,7 @@ const reportNavLinks = [
   { id: "debts", label: "Debts & Credit", icon: CreditCard },
   { id: "customers", label: "Customers & Suppliers", icon: Briefcase },
   { id: "hr", label: "HR & Staff", icon: Users },
-
+  { id: "custom", label: "Custom Reports", icon: FileText },
 ];
 
 // -----------------------------------------------------------------------------
@@ -150,10 +148,6 @@ type DatePreset = "today" | "this_week" | "this_month" | "custom";
 
 function ReportsPage() {
   const { mutate: globalMutate } = useSWRConfig();
-  
-  // --- (NEW) Get subscription data from useAuth ---
-  const { user, subscription } = useAuth();
-  
   const [view, setView] = useState("sales");
   const [reportModalOpen, setReportModalOpen] = useState(false);
   
@@ -184,7 +178,6 @@ function ReportsPage() {
     }
   }, []);
 
-  // ... (All handlers: handleDateApply, handlePresetApply, etc. are unchanged) ...
   const handleDateApply = (newDate: DateRange | undefined) => {
     setDate(newDate);
     setActivePreset("custom");
@@ -193,6 +186,7 @@ function ReportsPage() {
     params.set("endDate", newDate?.to ? dayjs(newDate.to).format("YYYY-MM-DD") : "");
     updateURL(params);
   };
+  
   const handlePresetApply = (preset: DatePreset, newDate: DateRange | undefined) => {
     setActivePreset(preset);
     setDate(newDate);
@@ -201,18 +195,21 @@ function ReportsPage() {
     params.set("endDate", newDate?.to ? dayjs(newDate.to).format("YYYY-MM-DD") : "");
     updateURL(params);
   };
+
   const handleCurrencyChange = (newCurrency: string) => {
     setCurrency(newCurrency);
     const params = getURLParams();
     params.set("currency", newCurrency);
     updateURL(params);
   };
+
   const handleTabChange = (newView: string) => {
     setView(newView);
     const params = getURLParams();
     params.set("view", newView);
     updateURL(params);
   };
+  
   useEffect(() => {
     const handlePopState = () => {
       const params = getURLParams();
@@ -245,7 +242,7 @@ function ReportsPage() {
     data: apiData,
     error,
     isLoading,
-    mutate,
+    mutate, // <-- Get mutate function
   } = useSWR(apiUrl, fetcher, { revalidateOnFocus: false, keepPreviousData: true });
 
   // ---------------------------------
@@ -254,18 +251,16 @@ function ReportsPage() {
   return (
     <div className="mx-auto min-h-screen max-w-7xl p-4 pt-6 md:p-8">
     
-      {/* --- (MODIFIED) Pass subscription to the modal --- */}
       {reportModalOpen && (
         <ReportsDownloadModal 
           onClose={() => setReportModalOpen(false)}
           defaultView={view}
           defaultCurrency={currency}
           defaultDate={date}
-          subscription={subscription} // <-- (NEW)
         />
       )}
 
-      {/* --- Header (Unchanged) --- */}
+      {/* --- Header --- */}
       <header className="mb-6 flex flex-col items-start justify-between gap-4 md:flex-row md:items-center">
         <div>
           <h1 className="text-3xl font-bold">Reports & Analytics</h1>
@@ -282,7 +277,7 @@ function ReportsPage() {
           </button>
           <button 
             title="Refresh Data"
-            onClick={() => mutate()}
+            onClick={() => mutate()} // <-- NEW: Refresh button
             disabled={isLoading}
             className="flex items-center justify-center gap-2 rounded-lg border bg-white px-4 py-2 text-sm font-semibold text-gray-700 shadow-sm transition-all hover:bg-gray-100 disabled:opacity-50 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600"
           >
@@ -291,7 +286,7 @@ function ReportsPage() {
         </div>
       </header>
 
-      {/* --- Tab Navigation (Unchanged) --- */}
+      {/* --- 📑 Tab Navigation --- */}
       <div className="mb-6 flex items-center gap-2 overflow-x-auto border-b border-gray-200 pb-2 dark:border-gray-700">
         {reportNavLinks.map((link) => (
           <button
@@ -311,7 +306,7 @@ function ReportsPage() {
         ))}
       </div>
       
-      {/* --- Filters (Unchanged) --- */}
+      {/* --- Filters --- */}
       <Card className="mb-6">
         <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
           <div className="flex flex-col gap-3 md:flex-row md:items-end">
@@ -331,6 +326,7 @@ function ReportsPage() {
               />
             </div>
           </div>
+          
           <div className="w-full pt-4 md:w-auto md:pt-0">
             <label className="mb-1.5 block text-sm font-medium text-gray-600 dark:text-gray-300">
               Display Currency
@@ -348,7 +344,7 @@ function ReportsPage() {
         </div>
       </Card>
 
-      {/* --- Content Switcher (Unchanged) --- */}
+      {/* --- 🚦 Content Switcher --- */}
       <div className="mt-5">
         {isLoading && <LoadingSpinner />}
         {error && <ErrorDisplay error={error} />}
@@ -365,10 +361,9 @@ function ReportsPage() {
 }
 
 // -----------------------------------------------------------------------------
-// 🎨 RenderReportTab Component (Unchanged)
+// 🎨 RenderReportTab Component (The "Big Page" Switcher)
 // -----------------------------------------------------------------------------
 const RenderReportTab = ({ view, data, currency }: { view: string, data: any, currency: string }) => {
-  // ... (This component is unchanged) ...
   if (data.notImplemented) {
     const link = reportNavLinks.find(l => l.id === view);
     const title = link?.label || "Reports";
@@ -381,6 +376,7 @@ const RenderReportTab = ({ view, data, currency }: { view: string, data: any, cu
 
     return <PlaceholderComponent title={title} icon={icon} message={message} />;
   }
+
   switch (view) {
     case 'sales':
       return <SalesReportsTab data={data} currency={currency} />;
@@ -411,13 +407,13 @@ const RenderReportTab = ({ view, data, currency }: { view: string, data: any, cu
   }
 };
 
-// ... (All Tab Components: SalesReportsTab, FinanceReportsTab, etc. are unchanged) ...
 // -----------------------------------------------------------------------------
 // 1. Sales Reports "Big Page"
 // -----------------------------------------------------------------------------
 const SalesReportsTab = ({ data, currency }: { data: any, currency: string }) => {
   return (
     <div className="space-y-6">
+      {/* KPIs */}
       <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4">
         <KpiCard 
           title="Total Sales" 
@@ -444,6 +440,8 @@ const SalesReportsTab = ({ data, currency }: { data: any, currency: string }) =>
           color="text-sky-500"
         />
       </div>
+      
+      {/* Charts */}
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         <ChartCard title="Sales Trend">
           <ResponsiveContainer width="100%" height="90%">
@@ -467,6 +465,8 @@ const SalesReportsTab = ({ data, currency }: { data: any, currency: string }) =>
           </ResponsiveContainer>
         </ChartCard>
       </div>
+      
+      {/* Tables */}
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         <Card>
           <h3 className="mb-4 text-lg font-semibold">Top-Selling Products</h3>
@@ -491,6 +491,7 @@ const SalesReportsTab = ({ data, currency }: { data: any, currency: string }) =>
           />
         </Card>
       </div>
+      
       <Card>
         <h3 className="mb-4 text-lg font-semibold">Sales by Customer</h3>
         <ReportTable
@@ -505,6 +506,7 @@ const SalesReportsTab = ({ data, currency }: { data: any, currency: string }) =>
     </div>
   );
 };
+
 // -----------------------------------------------------------------------------
 // 2. Finance Reports "Big Page"
 // -----------------------------------------------------------------------------
@@ -512,6 +514,7 @@ const FinanceReportsTab = ({ data, currency }: { data: any, currency: string }) 
   const netProfit = data.kpis[2]?.value || 0;
   return (
     <div className="space-y-6">
+      {/* KPIs */}
       <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
         <KpiCard 
           title="Total Income" 
@@ -532,6 +535,7 @@ const FinanceReportsTab = ({ data, currency }: { data: any, currency: string }) 
           color={netProfit >= 0 ? "text-green-500" : "text-red-500"}
         />
       </div>
+
       <ChartCard title="Income vs. Expense Trend">
         <ResponsiveContainer width="100%" height="90%">
           <LineChart data={data.charts?.incomeExpenseTrend || []}>
@@ -545,6 +549,8 @@ const FinanceReportsTab = ({ data, currency }: { data: any, currency: string }) 
           </LineChart>
         </ResponsiveContainer>
       </ChartCard>
+      
+      {/* Tables */}
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         <Card>
           <h3 className="mb-4 text-lg font-semibold">Profit & Loss Statement</h3>
@@ -571,12 +577,14 @@ const FinanceReportsTab = ({ data, currency }: { data: any, currency: string }) 
     </div>
   );
 };
+
 // -----------------------------------------------------------------------------
 // 3. Inventory Reports "Big Page"
 // -----------------------------------------------------------------------------
 const InventoryReportsTab = ({ data, currency }: { data: any, currency: string }) => {
   return (
     <div className="space-y-6">
+      {/* KPIs */}
       <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4">
         <KpiCard 
           title="Total Products" 
@@ -603,6 +611,7 @@ const InventoryReportsTab = ({ data, currency }: { data: any, currency: string }
           color="text-red-500"
         />
       </div>
+      
       <ChartCard title="Stock Value by Category (USD)">
         <ResponsiveContainer width="100%" height="90%">
           <ReBarChart data={data.charts?.stockValueByCategory || []} layout="vertical" margin={{ left: 30 }}>
@@ -614,6 +623,7 @@ const InventoryReportsTab = ({ data, currency }: { data: any, currency: string }
           </ReBarChart>
         </ResponsiveContainer>
       </ChartCard>
+
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         <Card>
           <h3 className="mb-4 text-lg font-semibold">Top 10 Fast-Moving Products</h3>
@@ -630,6 +640,7 @@ const InventoryReportsTab = ({ data, currency }: { data: any, currency: string }
           />
         </Card>
       </div>
+
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         <Card>
           <h3 className="mb-4 text-lg font-semibold">Low Stock Items</h3>
@@ -645,7 +656,7 @@ const InventoryReportsTab = ({ data, currency }: { data: any, currency: string }
             rows={(data.tables?.stockValuation || []).map((row: any) => [
               row.name,
               row.qty,
-              formatCurrency(row.cost, "USD"),
+              formatCurrency(row.cost, "USD"), // Valuation is USD
               formatCurrency(row.value, "USD")
             ])}
           />
@@ -654,6 +665,7 @@ const InventoryReportsTab = ({ data, currency }: { data: any, currency: string }
     </div>
   );
 };
+
 // -----------------------------------------------------------------------------
 // 4. Purchases Reports "Big Page"
 // -----------------------------------------------------------------------------
@@ -680,6 +692,7 @@ const PurchasesReportsTab = ({ data, currency }: { data: any, currency: string }
           color="text-blue-500"
         />
       </div>
+      
       <ChartCard title="Purchase Trend">
         <ResponsiveContainer width="100%" height="90%">
           <LineChart data={data.charts?.purchaseTrend || []}>
@@ -691,6 +704,7 @@ const PurchasesReportsTab = ({ data, currency }: { data: any, currency: string }
           </LineChart>
         </ResponsiveContainer>
       </ChartCard>
+
       <Card>
         <h3 className="mb-4 text-lg font-semibold">Top Suppliers by Purchase Amount</h3>
         <ReportTable
@@ -705,6 +719,7 @@ const PurchasesReportsTab = ({ data, currency }: { data: any, currency: string }
     </div>
   );
 };
+
 // -----------------------------------------------------------------------------
 // 5. Debts & Credit Reports "Big Page"
 // -----------------------------------------------------------------------------
@@ -731,17 +746,19 @@ const DebtsReportsTab = ({ data, currency }: { data: any, currency: string }) =>
           color="text-orange-500"
         />
       </div>
+      
       <ChartCard title="Collected vs. Outstanding Debts">
         <ResponsiveContainer width="100%" height="90%">
           <PieChart>
             <Pie data={data.charts?.debtStatus || []} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={80} fill="#8884d8" label>
-              <Cell key="cell-0" fill="#16a34a" />
-              <Cell key="cell-1" fill="#e11d48" />
+              <Cell key="cell-0" fill="#16a34a" /> {/* Collected */}
+              <Cell key="cell-1" fill="#e11d48" /> {/* Outstanding */}
             </Pie>
             <Tooltip formatter={(val: number) => formatCurrency(val, currency)} /> <Legend />
           </PieChart>
         </ResponsiveContainer>
       </ChartCard>
+
       <Card>
         <h3 className="mb-4 text-lg font-semibold">Top Customers by Outstanding Debt</h3>
         <ReportTable
@@ -756,6 +773,7 @@ const DebtsReportsTab = ({ data, currency }: { data: any, currency: string }) =>
     </div>
   );
 };
+
 // -----------------------------------------------------------------------------
 // 6. Customers & Suppliers Reports "Big Page"
 // -----------------------------------------------------------------------------
@@ -776,6 +794,7 @@ const CustomersReportsTab = ({ data, currency }: { data: any, currency: string }
           color="text-purple-500"
         />
       </div>
+
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         <Card>
           <h3 className="mb-4 text-lg font-semibold">Top 10 Customers by Purchase Amount</h3>
@@ -790,6 +809,7 @@ const CustomersReportsTab = ({ data, currency }: { data: any, currency: string }
             ])}
           />
         </Card>
+        
         <Card>
           <h3 className="mb-4 text-lg font-semibold">Top 10 Suppliers by Purchase Amount</h3>
           <ReportTable
@@ -806,6 +826,7 @@ const CustomersReportsTab = ({ data, currency }: { data: any, currency: string }
     </div>
   );
 };
+
 // -----------------------------------------------------------------------------
 // 7. HR & Staff Reports "Big Page"
 // -----------------------------------------------------------------------------
@@ -826,6 +847,14 @@ const HrReportsTab = ({ data, currency }: { data: any, currency: string }) => {
           color="text-green-500"
         />
       </div>
+      
+      <Card className="border-yellow-300 bg-yellow-50 dark:border-yellow-700 dark:bg-yellow-900/20">
+        <h3 className="font-semibold text-yellow-700 dark:text-yellow-400">Note on Sales Analytics</h3>
+        <p className="text-sm text-yellow-600 dark:text-yellow-500">
+          To track **Sales by Staff**, please ensure the `sales` collection includes a `userId` field for each transaction. This report currently tracks Incomes and Expenses logged by staff.
+        </p>
+      </Card>
+
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         <Card>
           <h3 className="mb-4 text-lg font-semibold">Income Logged by Staff</h3>
@@ -838,6 +867,7 @@ const HrReportsTab = ({ data, currency }: { data: any, currency: string }) => {
             ])}
           />
         </Card>
+        
         <Card>
           <h3 className="mb-4 text-lg font-semibold">Expenses Logged by Staff</h3>
           <ReportTable
@@ -863,6 +893,7 @@ const Card = ({ children, className = "" }: { children: React.ReactNode; classNa
     {children}
   </div>
 );
+
 const KpiCard = ({ title, value, icon: Icon, color = "text-gray-500", className = "" }: { 
   title: string, 
   value: string | number, 
@@ -880,20 +911,24 @@ const KpiCard = ({ title, value, icon: Icon, color = "text-gray-500", className 
     </div>
   </Card>
 );
+
 const LoadingSpinner = () => (
   <div className="flex h-60 w-full items-center justify-center">
     <Loader2 className="h-12 w-12 animate-spin text-blue-600" />
   </div>
 );
+
 const ErrorDisplay = ({ error }: { error: Error }) => (
   <Card className="border-red-300 bg-red-50 dark:border-red-700 dark:bg-red-900/20">
     <h3 className="font-semibold text-red-700 dark:text-red-400">Error Loading Report</h3>
     <p className="text-sm text-red-600 dark:text-red-500">{error.message}</p>
   </Card>
 );
+
 const TableEmptyState = ({ message }: { message: string }) => (
   <div className="py-10 text-center text-sm text-gray-500 dark:text-gray-400">{message}</div>
 );
+
 const FormInput = ({ label, ...props }: any) => (
   <div className="flex-1">
     <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
@@ -905,6 +940,7 @@ const FormInput = ({ label, ...props }: any) => (
     />
   </div>
 );
+
 const FormSelect = ({ label, children, ...props }: any) => (
   <div className="flex-1">
     <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
@@ -918,6 +954,7 @@ const FormSelect = ({ label, children, ...props }: any) => (
     </select>
   </div>
 );
+
 const PlaceholderComponent = ({ title, icon: Icon, message }: { title: string, icon: React.ElementType, message: string }) => (
   <Card className="flex h-96 flex-col items-center justify-center">
     <Icon className="h-16 w-16 text-gray-400" />
@@ -925,29 +962,37 @@ const PlaceholderComponent = ({ title, icon: Icon, message }: { title: string, i
     <p className="mt-2 max-w-md text-center text-gray-500">{message}</p>
   </Card>
 );
+
 const ChartCard = ({ title, children }: { title: string, children: React.ReactNode }) => (
   <Card className="h-96">
     <h3 className="text-lg font-semibold">{title}</h3>
     <div className="mt-4 h-[300px] w-full">{children}</div>
   </Card>
 );
+
+// --- MODERNIZED Report Table ---
 const ReportTable = ({ headers, rows, boldRows }: { headers: string[], rows: (string | number)[][], boldRows?: boolean[] }) => {
   if (!rows || rows.length === 0) {
     return <TableEmptyState message="No data found for this report." />;
   }
+
+  // Helper to add color to financial numbers
   const getCellClass = (cell: string | number) => {
     if (typeof cell === 'string') {
+      // Check for negative currency
       if (cell.startsWith('(') || cell.startsWith('-')) {
         return "text-red-500 font-medium";
       }
+      // Check for positive currency
       if (cell.includes('$') || AVAILABLE_CURRENCIES.some(c => cell.startsWith(c))) {
         return "text-green-600 font-medium";
       }
     }
     return "";
   };
+
   return (
-    <div className="w-full overflow-x-auto">
+    <div className="w-full overflow-x-auto"> {/* Responsive wrapper */}
       <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
         <thead className="bg-gray-50 dark:bg-gray-700 sticky top-0">
           <tr>
@@ -1116,7 +1161,6 @@ function CalendarGrid({
   const nextMonth = () => onMonthChange(add(month, { months: 1 }));
   const prevMonth = () => onMonthChange(sub(month, { months: 1 }));
   
-  // --- (FIXED) This is the internal click handler ---
   const handleDateClick = (day: Date) => {
     const { from, to } = selectedDate || {};
     if (!from) {
@@ -1125,7 +1169,7 @@ function CalendarGrid({
       if (isAfter(day, from)) {
         setSelectedDate({ from, to: day });
       } else {
-        setSelectedDate({ from: day, to: from });
+        setSelectedDate({ from: day, to: from }); // Swap
       }
     } else if (from && to) {
       setSelectedDate({ from: day, to: undefined });
@@ -1158,42 +1202,28 @@ function CalendarGrid({
         ))}
       </div>
       
-      {/* --- (FIXED) This is the corrected hover logic --- */}
       <div 
         className="grid grid-cols-7 gap-1 mt-2"
         onMouseLeave={() => setHoveredDate(undefined)}
       >
         {days.map(day => {
           const isCurrentMonth = isSameMonth(day, month);
-          
           const isSelectedStart = !!selectedDate?.from && isSameDay(day, selectedDate.from);
           const isSelectedEnd = !!selectedDate?.to && isSameDay(day, selectedDate.to);
           const isInRange = !!(selectedDate?.from && selectedDate?.to) && 
                             isAfter(day, selectedDate.from) && 
                             isBefore(day, selectedDate.to);
-
-          const isHovering = !!(selectedDate?.from && !selectedDate.to && hoveredDate);
           
-          let hoverStart: Date | undefined;
-          let hoverEnd: Date | undefined;
-          let isInHoverRange = false;
-
-          if (isHovering && selectedDate.from && hoveredDate) {
-            if (isAfter(hoveredDate, selectedDate.from)) {
-              hoverStart = selectedDate.from;
-              hoverEnd = hoveredDate;
-            } else {
-              hoverStart = hoveredDate;
-              hoverEnd = selectedDate.from;
-            }
-            isInHoverRange = isAfter(day, hoverStart) && isBefore(day, hoverEnd);
-          }
+          const isHovering = !!(selectedDate?.from && !selectedDate.to && hoveredDate);
+         const isHoverStart = isHovering && hoveredDate && selectedDate.from && isBefore(hoveredDate, selectedDate.from) ? hoveredDate : selectedDate?.from;
+           const isHoverEnd = isHovering && hoveredDate && selectedDate.from && isAfter(hoveredDate, selectedDate.from) ? hoveredDate : selectedDate?.from;
+          const isInHoverRange = isHovering && isHoverStart && isHoverEnd && isAfter(day, isHoverStart) && isBefore(day, isHoverEnd);
           
           return (
             <button
               key={day.toString()}
               type="button"
-              onClick={() => handleDateClick(day)} // <-- Use the internal handler
+              onClick={() => handleDateClick(day)}
               onMouseEnter={() => setHoveredDate(day)}
               className={cn(
                 "h-9 w-9 flex items-center justify-center rounded-lg text-sm transition-colors duration-150",
@@ -1206,7 +1236,7 @@ function CalendarGrid({
                 isSelectedStart && "rounded-l-lg",
                 isSelectedEnd && "rounded-r-lg",
                 
-                isHovering && hoverStart && hoverEnd && (isSameDay(day, hoverStart) || isSameDay(day, hoverEnd)) && "bg-blue-600/50 text-white",
+                isHovering && (isSameDay(day, isHoverStart!) || isSameDay(day, isHoverEnd!)) && "bg-blue-600/50 text-white",
                 isInHoverRange && "bg-blue-100/50 dark:bg-blue-900/20",
                 
                 !isSelectedStart && !isSelectedEnd && !isInRange && isCurrentMonth && "hover:bg-gray-100 dark:hover:bg-gray-700"
@@ -1217,7 +1247,6 @@ function CalendarGrid({
           );
         })}
       </div>
-      {/* --- (END) Fixed hover logic --- */}
     </div>
   );
 }
@@ -1294,41 +1323,31 @@ const ModalBase = ({ title, onClose, children }: { title: string, onClose: () =>
 );
 
 // -----------------------------------------------------------------------------
-// (E) (MODIFIED) Report Download Modal
+// (E) (NEW) Report Download Modal
 // -----------------------------------------------------------------------------
 function ReportsDownloadModal({ 
   onClose,
   defaultView,
   defaultCurrency,
-  defaultDate,
-  subscription // <-- (NEW) Accept subscription
+  defaultDate
 }: { 
   onClose: () => void,
   defaultView: string,
   defaultCurrency: string,
-  defaultDate: DateRange | undefined,
-  subscription: any // <-- (NEW)
+  defaultDate: DateRange | undefined
 }) {
   const [reportType, setReportType] = useState(defaultView === 'custom' ? 'sales' : defaultView);
   const [reportCurrency, setReportCurrency] = useState(defaultCurrency);
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  
-  // --- (NEW) State for PDF ---
-  const [pdfData, setPdfData] = useState<any | null>(null);
-  const [PdfComponent, setPdfComponent] = useState<React.ElementType | null>(null);
-  // --- (EXISTING) State for Excel ---
   const [generatedData, setGeneratedData] = useState<any | null>(null);
-  
+
   const [date, setDate] = React.useState<DateRange | undefined>(defaultDate);
   const [activePreset, setActivePreset] = useState<DatePreset>("custom");
   
-  // --- (MODIFIED) This function now generates data for BOTH PDF and Excel ---
   const handleGenerate = async () => {
     setIsLoading(true);
     setGeneratedData(null);
-    setPdfData(null); // <-- (NEW)
-    setPdfComponent(null); // <-- (NEW)
     setErrorMessage(null);
     
     try {
@@ -1342,23 +1361,7 @@ function ReportsDownloadModal({
       const data = await fetcher(`/api/reports?${params.toString()}`);
       
       if (data && !data.notImplemented) {
-        // --- (NEW) PDF PREPARATION LOGIC ---
-        const storeInfo = {
-          name: subscription?.storeName || "My Store",
-          address: subscription?.storeAddress || "123 Main St",
-          phone: subscription?.storePhone || "555-1234",
-          logoUrl: subscription?.logoUrl,
-          planId: subscription?.planId,
-        };
-        
-        // Get the correct template from the "brain"
-        const Template = getTemplateComponent(reportType as ReportType, subscription);
-        
-        setPdfData({ data, store: storeInfo });
-        setPdfComponent(() => Template);
-        // --- END NEW LOGIC ---
-        
-        setGeneratedData(data); // For Excel
+        setGeneratedData(data);
         setErrorMessage(null);
       } else {
         setGeneratedData(null);
@@ -1371,10 +1374,11 @@ function ReportsDownloadModal({
     }
   };
 
-  // --- (Unchanged) This function is ONLY for Excel ---
   const handleDownloadExcel = () => {
     if (!generatedData) return;
+
     const wb = XLSX.utils.book_new();
+    const reportName = reportNavLinks.find(r => r.id === reportType)?.label || "Report";
     
     if (generatedData.kpis && generatedData.kpis.length > 0) {
       const kpiData = generatedData.kpis.map((kpi: any) => ({
@@ -1390,26 +1394,22 @@ function ReportsDownloadModal({
       Object.keys(generatedData.tables).forEach(key => {
         const tableArray = generatedData.tables[key];
         if (Array.isArray(tableArray) && tableArray.length > 0) {
-          // Check if the first row has data before trying to map it
-          if(tableArray[0]) {
-            const formattedArray = tableArray.map((row: any) => {
-              const newRow: any = {};
-              for (const cellKey in row) {
-                const val = row[cellKey];
-                // Check if the value is a number and the key suggests it's currency
-                if (typeof val === 'number' && (cellKey.toLowerCase().includes('amount') || cellKey.toLowerCase().includes('total') || cellKey.toLowerCase().includes('revenue') || cellKey.toLowerCase().includes('value') || cellKey.toLowerCase().includes('price') || cellKey.toLowerCase().includes('cost') || cellKey.toLowerCase().includes('avg') || cellKey.toLowerCase().includes('owed'))) {
-                  newRow[cellKey] = formatCurrency(val, reportCurrency);
-                } else {
-                  newRow[cellKey] = val;
-                }
+          const formattedArray = tableArray.map((row: any) => {
+            const newRow: any = {};
+            for (const cellKey in row) {
+              const val = row[cellKey];
+              if (typeof val === 'number' && (cellKey.includes('Amount') || cellKey.includes('total') || cellKey.includes('revenue') || cellKey.includes('value'))) {
+                newRow[cellKey] = formatCurrency(val, reportCurrency);
+              } else {
+                 newRow[cellKey] = val;
               }
-              return newRow;
-            });
-            const ws = XLSX.utils.json_to_sheet(formattedArray);
-            const cols = Object.keys(formattedArray[0] || {}).map(k => ({ wch: k.length > 20 ? 30 : 20 }));
-            ws['!cols'] = cols;
-            XLSX.utils.book_append_sheet(wb, ws, key.slice(0, 30));
-          }
+            }
+            return newRow;
+          });
+          const ws = XLSX.utils.json_to_sheet(formattedArray);
+          const cols = Object.keys(formattedArray[0] || {}).map(k => ({ wch: k.length > 20 ? 30 : 20 }));
+          ws['!cols'] = cols;
+          XLSX.utils.book_append_sheet(wb, ws, key.slice(0, 30));
         }
       });
     }
@@ -1417,19 +1417,121 @@ function ReportsDownloadModal({
     XLSX.writeFile(wb, `${reportType}_report_${reportCurrency}_${dayjs().format("YYYYMMDD")}.xlsx`);
   };
 
-  // --- (DELETED) The old handleDownloadPDF function is GONE ---
+  const handleDownloadPDF = () => {
+    if (!generatedData) return;
+    
+    const doc = new jsPDF();
+    const reportName = reportNavLinks.find(r => r.id === reportType)?.label || "Report";
+    const dateString = date?.from ? `${format(date.from, "LLL dd, y")} - ${date.to ? format(date.to, "LLL dd, y") : ""}` : "All Time";
+    let yPos = 22; 
+
+    doc.setFontSize(22);
+    doc.setFont("helvetica", "bold");
+    doc.text(reportName, 14, yPos);
+    
+    yPos += 8;
+    doc.setFontSize(10);
+    doc.setFont("helvetica", "normal");
+    doc.text(`Generated: ${dayjs().format("MMM D, YYYY")}`, 14, yPos);
+    
+    yPos += 6;
+    doc.setFontSize(12);
+    doc.setFont("helvetica", "bold");
+    doc.text("Filters Applied", 14, yPos);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(10);
+    
+    yPos += 6;
+    const filterText = [
+      `Date Range: ${dateString}`,
+      `Currency: ${reportCurrency}`
+    ];
+    doc.text(filterText, 14, yPos);
+    yPos += 10;
+    
+    if (generatedData.kpis && generatedData.kpis.length > 0) {
+      doc.setFontSize(14);
+      doc.setFont("helvetica", "bold");
+      doc.text("Key Metrics", 14, yPos);
+      yPos += 7;
+      
+      const kpiBody = generatedData.kpis.map((kpi: any) => [
+        kpi.title,
+        kpi.format === 'currency' ? formatCurrency(kpi.value, reportCurrency) : kpi.value
+      ]);
+      
+      autoTable(doc, {
+        body: kpiBody,
+        startY: yPos,
+        theme: 'plain',
+        styles: { fontSize: 10 },
+      });
+      yPos = (doc as any).lastAutoTable.finalY + 10;
+    }
+    
+    if (generatedData.tables) {
+      Object.keys(generatedData.tables).forEach(key => {
+        const tableArray = generatedData.tables[key];
+        if (Array.isArray(tableArray) && tableArray.length > 0) {
+          
+          if (yPos > 250) { 
+             doc.addPage();
+             yPos = 20;
+          }
+          
+          doc.setFontSize(14);
+          doc.setFont("helvetica", "bold");
+          doc.text(key, 14, yPos);
+          yPos += 7;
+
+          const headers = Object.keys(tableArray[0]);
+          const body = tableArray.map((row: any) => 
+            headers.map(header => {
+              const val = row[header];
+              if (typeof val === 'number' && (header.includes('Amount') || header.includes('total') || header.includes('revenue') || header.includes('value'))) {
+                return formatCurrency(val, reportCurrency);
+              }
+              if (val instanceof Date) {
+                return dayjs(val).format("YYYY-MM-DD");
+              }
+              return val;
+            })
+          );
+          
+          autoTable(doc, {
+            head: [headers],
+            body: body,
+            startY: yPos,
+            theme: 'grid',
+            headStyles: {
+              fillColor: [41, 128, 185],
+              textColor: 255,
+              fontStyle: 'bold',
+            },
+            didDrawPage: (data) => {
+              doc.setFontSize(10);
+              doc.text(`Page ${(doc as any).internal.getNumberOfPages()}`, data.settings.margin.left, doc.internal.pageSize.height - 10);
+            }
+          });
+          yPos = (doc as any).lastAutoTable.finalY + 15;
+        }
+      });
+    }
+    
+    doc.save(`${reportType}_report_${reportCurrency}_${dayjs().format("YYYYMMDD")}.pdf`);
+  };
 
   return (
     <ModalBase title="Download Report" onClose={onClose}>
       <div className="mt-4 space-y-4">
         
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <FormSelect label="Report Type" value={reportType} onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setReportType(e.target.value)}>
+          <FormSelect label="Report Type" value={reportType} onChange={(val: string) => setReportType(val)}>
             {reportNavLinks.filter(r => r.id !== 'custom').map((r) => (
               <option key={r.id} value={r.id}>{r.label}</option>
             ))}
           </FormSelect>
-          <FormSelect label="Currency for Report" value={reportCurrency} onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setReportCurrency(e.target.value)}>
+          <FormSelect label="Currency for Report" value={reportCurrency} onChange={(val: string) => setReportCurrency(val)}>
             {AVAILABLE_CURRENCIES.map(c => (
               <option key={c} value={c}>{c}</option>
             ))}
@@ -1457,7 +1559,7 @@ function ReportsDownloadModal({
         </div>
         
         <div className="pt-4">
-          {errorMessage && (
+          {errorMessage && !generatedData && (
             <div className="w-full text-center rounded-lg bg-red-100 p-3 text-sm font-medium text-red-700 dark:bg-red-900/30 dark:text-red-300 mb-3">
               {errorMessage}
             </div>
@@ -1465,14 +1567,11 @@ function ReportsDownloadModal({
           
           {generatedData && (
             <div className="w-full text-center rounded-lg bg-green-100 p-3 text-sm font-medium text-green-700 dark:bg-green-900/30 dark:text-green-300 mb-3">
-              Report data is ready! You can now download.
+              Report generated! You can now download.
             </div>
           )}
           
-          {/* --- (MODIFIED) Button Display Logic --- */}
-          
-          {/* 1. Show Generate button if data is not ready */}
-          {!generatedData && !pdfData && (
+          {!generatedData && (
             <button 
               onClick={handleGenerate} 
               disabled={isLoading} 
@@ -1493,7 +1592,6 @@ function ReportsDownloadModal({
             </button>
           )}
           
-          {/* 2. Show Download buttons AFTER data is generated */}
           {generatedData && (
             <div className="flex flex-col sm:flex-row gap-4">
               <button 
@@ -1504,26 +1602,14 @@ function ReportsDownloadModal({
                 <Download className="h-4 w-4" />
                 Download Excel
               </button>
-              
-              {/* --- (NEW) PDF Download Link --- */}
-              {PdfComponent && pdfData && (
-                <PDFDownloadLink
-                  document={<PdfComponent data={pdfData.data} store={pdfData.store} />}
-                  fileName={`${reportType}_report_${reportCurrency}.pdf`}
-                  className="w-full flex justify-center items-center gap-2 rounded-lg bg-red-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-red-800"
-                >
-                  {({ loading }) => 
-                    loading ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <>
-                        <FileText className="h-4 w-4" />
-                        Download PDF
-                      </>
-                    )
-                  }
-                </PDFDownloadLink>
-              )}
+              <button 
+                onClick={handleDownloadPDF} 
+                title="Download as .pdf file"
+                className="w-full flex justify-center items-center gap-2 rounded-lg bg-red-700 px-4 py-2.5 text-sm font-semibold text-white transition-all hover:bg-red-800"
+              >
+                <Download className="h-4 w-4" />
+                Download PDF
+              </button>
             </div>
           )}
         </div>
