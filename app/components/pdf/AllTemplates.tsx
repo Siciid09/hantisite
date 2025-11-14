@@ -1218,4 +1218,223 @@ export const CustomerSupplierPremium = ({ data, store }: DocProps) => (
       <PremiumFooter />
     </Page>
   </Document>
+  
+);
+// File: AllTemplates.tsx
+
+// ... (at the end of the file, before the final '}')
+
+// ===================================================================
+// 11. SALES SUMMARY REPORT (NEW)
+// ===================================================================
+export const SalesSummaryReportDefault = ({ data, store }: DocProps) => (
+  <Document>
+    <Page size="A4" style={styles.page}>
+      <PdfReportHeader store={store} title="Sales Report" />
+
+      {/* --- (NEW) KPIs Section --- */}
+      <Text style={styles.h2}>Key Metrics</Text>
+      <View style={{ flexDirection: 'row', gap: 10, marginBottom: 20, flexWrap: 'wrap' }}>
+        {data.kpis.map((kpi: any, i: number) => (
+          <View key={i} style={{ width: '48%', borderWidth: 1, borderColor: '#E5E7EB', padding: 10, borderRadius: 4, marginBottom: 10 }}>
+            <Text style={styles.recipientTitle}>{kpi.title}</Text>
+            <Text style={styles.h3}>{kpi.value}</Text>
+          </View>
+        ))}
+      </View>
+
+      {/* --- (NEW) Top Products Table --- */}
+      <Text style={styles.h2}>Top-Selling Products</Text>
+      <View style={styles.table}>
+        <View style={styles.tableHeader}>
+          <Text style={{...styles.tableColHeader, flex: 3}}>Product Name</Text>
+          <Text style={{...styles.tableColHeader, flex: 1, ...styles.textCenter}}>Units Sold</Text>
+          <Text style={{...styles.tableColHeader, flex: 1, ...styles.textRight, borderRightWidth: 0}}>Total Revenue</Text>
+        </View>
+        {data.tables.topProducts.map((row: any, i: number) => (
+          <View key={i} style={styles.tableRow}>
+            <Text style={{...styles.tableCell, flex: 3}}>{row.name}</Text>
+            <Text style={{...styles.tableCell, flex: 1, ...styles.textCenter}}>{row.units}</Text>
+            <Text style={{...styles.tableCell, flex: 1, ...styles.textRight, borderRightWidth: 0}}>{row.revenue}</Text>
+          </View>
+        ))}
+      </View>
+
+      {/* --- (NEW) Sales by Category Table --- */}
+      <Text style={{...styles.h2, marginTop: 20}}>Sales by Category</Text>
+      <View style={styles.table}>
+        <View style={styles.tableHeader}>
+          <Text style={{...styles.tableColHeader, flex: 3}}>Category</Text>
+          <Text style={{...styles.tableColHeader, flex: 1, ...styles.textCenter}}>Units Sold</Text>
+          <Text style={{...styles.tableColHeader, flex: 1, ...styles.textRight, borderRightWidth: 0}}>Total Revenue</Text>
+        </View>
+        {data.tables.salesByCategory.map((row: any, i: number) => (
+          <View key={i} style={styles.tableRow}>
+            <Text style={{...styles.tableCell, flex: 3}}>{row.name}</Text>
+            <Text style={{...styles.tableCell, flex: 1, ...styles.textCenter}}>{row.units}</Text>
+            <Text style={{...styles.tableCell, flex: 1, ...styles.textRight, borderRightWidth: 0}}>{row.revenue}</Text>
+          </View>
+        ))}
+      </View>
+      
+      <PdfFooter />
+    </Page>
+  </Document>
+);
+// ===================================================================
+// 11. PURCHASE REPORT (LIST) TEMPLATES
+// ===================================================================
+
+export const PurchaseReportDefault = ({ data, store }: DocProps) => (
+  <Document>
+    <Page size="A4" style={styles.page}>
+      <PdfReportHeader store={store} title="Purchase Report" />
+      <View style={styles.table}>
+        <View style={styles.tableHeader}>
+          <Text style={{...styles.tableColHeader, flex: 3}}>Supplier</Text>
+          <Text style={{...styles.tableColHeader, flex: 2}}>Date</Text>
+          <Text style={{...styles.tableColHeader, flex: 1, ...styles.textRight}}>Total</Text>
+          <Text style={{...styles.tableColHeader, flex: 1, ...styles.textRight}}>Remaining</Text>
+          <Text style={{...styles.tableColHeader, flex: 1, ...styles.textCenter, borderRightWidth: 0}}>Status</Text>
+        </View>
+        {data.purchases.map((po: any, i: number) => (
+          <View key={i} style={styles.tableRow}>
+            <Text style={{...styles.tableCell, flex: 3}}>{po.supplierName}</Text>
+            <Text style={{...styles.tableCell, flex: 2}}>{dayjs(po.purchaseDate).format("DD MMM YYYY")}</Text>
+            <Text style={{...styles.tableCell, flex: 1, ...styles.textRight}}>{formatCurrency(po.totalAmount, po.currency)}</Text>
+            <Text style={{...styles.tableCell, flex: 1, ...styles.textRight, ...styles.textRed}}>{formatCurrency(po.remainingAmount, po.currency)}</Text>
+            <Text style={{...styles.tableCell, flex: 1, ...styles.textCenter, borderRightWidth: 0}}>{po.status}</Text>
+          </View>
+        ))}
+      </View>
+      <PdfFooter />
+    </Page>
+  </Document>
+);
+
+export const PurchaseReportModern = ({ data, store }: DocProps) => (
+  <Document>
+    <Page size="A4" style={styles.pageModern}>
+      <View style={styles.headerModern}>
+        <Text style={styles.storeName}>{store.name}</Text>
+        <Text style={styles.headerModernTitle}>Purchase Report</Text>
+      </View>
+      <View style={styles.headerModernStripe} />
+      <View style={{ padding: 40 }}>
+        <View style={styles.tableModern}>
+          <View style={styles.tableModernHeader}>
+            <Text style={{...styles.tableModernColHeader, flex: 3}}>Supplier</Text>
+            <Text style={{...styles.tableModernColHeader, flex: 2}}>Date</Text>
+            <Text style={{...styles.tableModernColHeader, flex: 1, ...styles.textRight}}>Total</Text>
+            <Text style={{...styles.tableModernColHeader, flex: 1, ...styles.textRight}}>Remaining</Text>
+            <Text style={{...styles.tableModernColHeader, flex: 1, ...styles.textCenter}}>Status</Text>
+          </View>
+          {data.purchases.map((po: any, i: number) => (
+            <View key={i} style={styles.tableModernRow}>
+              <Text style={{...styles.tableModernCell, flex: 3}}>{po.supplierName}</Text>
+              <Text style={{...styles.tableModernCell, flex: 2}}>{dayjs(po.purchaseDate).format("DD MMM YYYY")}</Text>
+              <Text style={{...styles.tableModernCell, flex: 1, ...styles.textRight}}>{formatCurrency(po.totalAmount, po.currency)}</Text>
+              <Text style={{...styles.tableModernCell, flex: 1, ...styles.textRight, ...styles.textRed}}>{formatCurrency(po.remainingAmount, po.currency)}</Text>
+              <Text style={{...styles.tableModernCell, flex: 1, ...styles.textCenter}}>{po.status}</Text>
+            </View>
+          ))}
+        </View>
+      </View>
+      <ModernFooter storeName={store.name} />
+    </Page>
+  </Document>
+);
+
+export const PurchaseReportPremium = ({ data, store }: DocProps) => (
+  <Document>
+    <Page size="A4" style={styles.pagePremium}>
+      <View style={styles.headerPremium}>
+        <Text style={[styles.storeName, styles.fontSerif, {color: '#FFFFFF'}]}>{store.name}</Text>
+        <Text style={[styles.headerPremiumTitle, styles.fontSerif]}>Purchases Ledger</Text>
+      </View>
+      <View style={styles.headerPremiumStripe} />
+      <View style={{ padding: 40, flexGrow: 1 }}>
+        <View style={styles.tablePremium}>
+          <View style={styles.tablePremiumHeader}>
+            <Text style={{...styles.tablePremiumColHeader, flex: 3}}>Supplier</Text>
+            <Text style={{...styles.tablePremiumColHeader, flex: 2}}>Date</Text>
+            <Text style={{...styles.tablePremiumColHeader, flex: 1, ...styles.textRight}}>Total</Text>
+            <Text style={{...styles.tablePremiumColHeader, flex: 1, ...styles.textRight}}>Remaining</Text>
+            <Text style={{...styles.tablePremiumColHeader, flex: 1, ...styles.textCenter}}>Status</Text>
+          </View>
+          {data.purchases.map((po: any, i: number) => (
+            <View key={i} style={styles.tablePremiumRow}>
+              <Text style={{...styles.tablePremiumCell, flex: 3}}>{po.supplierName}</Text>
+              <Text style={{...styles.tablePremiumCell, flex: 2}}>{dayjs(po.purchaseDate).format("DD MMM YYYY")}</Text>
+              <Text style={{...styles.tablePremiumCell, flex: 1, ...styles.textRight}}>{formatCurrency(po.totalAmount, po.currency)}</Text>
+              <Text style={{...styles.tablePremiumCell, flex: 1, ...styles.textRight, ...styles.textRed}}>{formatCurrency(po.remainingAmount, po.currency)}</Text>
+              <Text style={{...styles.tablePremiumCell, flex: 1, ...styles.textCenter}}>{po.status}</Text>
+            </View>
+          ))}
+        </View>
+      </View>
+      <PremiumFooter />
+    </Page>
+  </Document>
+);
+// File: app/components/pdf/AllTemplates.tsx
+
+// ... (at the very end of the file, after SalesSummaryReportDefault)
+
+// ===================================================================
+// 12. INVENTORY SUMMARY REPORT (NEW)
+// ===================================================================
+export const InventorySummaryReportDefault = ({ data, store }: DocProps) => (
+  <Document>
+    <Page size="A4" style={styles.page}>
+      <PdfReportHeader store={store} title="Inventory Report" />
+
+      {/* --- KPIs Section --- */}
+      <Text style={styles.h2}>Key Metrics</Text>
+      <View style={{ flexDirection: 'row', gap: 10, marginBottom: 20, flexWrap: 'wrap' }}>
+        {data.kpis.map((kpi: any, i: number) => (
+          <View key={i} style={{ width: '48%', borderWidth: 1, borderColor: '#E5E7EB', padding: 10, borderRadius: 4, marginBottom: 10 }}>
+            <Text style={styles.recipientTitle}>{kpi.title}</Text>
+            <Text style={styles.h3}>{kpi.value}</Text>
+          </View>
+        ))}
+      </View>
+
+      {/* --- Low Stock Table --- */}
+      <Text style={styles.h2}>Low Stock Items</Text>
+      <View style={styles.table}>
+        <View style={styles.tableHeader}>
+          <Text style={{...styles.tableColHeader, flex: 3}}>Product Name</Text>
+          <Text style={{...styles.tableColHeader, flex: 1, ...styles.textCenter}}>Current Qty</Text>
+          <Text style={{...styles.tableColHeader, flex: 1, ...styles.textCenter, borderRightWidth: 0}}>Threshold</Text>
+        </View>
+        {data.tables.lowStock.map((row: any, i: number) => (
+          <View key={i} style={styles.tableRow}>
+            <Text style={{...styles.tableCell, flex: 3}}>{row.name}</Text>
+            <Text style={{...styles.tableCell, flex: 1, ...styles.textCenter}}>{row.qty}</Text>
+            <Text style={{...styles.tableCell, flex: 1, ...styles.textCenter, borderRightWidth: 0}}>{row.threshold}</Text>
+          </View>
+        ))}
+      </View>
+
+      {/* --- Fast Moving Table --- */}
+      <Text style={{...styles.h2, marginTop: 20}}>Fast-Moving Products</Text>
+      <View style={styles.table}>
+        <View style={styles.tableHeader}>
+          <Text style={{...styles.tableColHeader, flex: 3}}>Product Name</Text>
+          <Text style={{...styles.tableColHeader, flex: 1, ...styles.textCenter}}>Units Sold</Text>
+          <Text style={{...styles.tableColHeader, flex: 1, ...styles.textCenter, borderRightWidth: 0}}>Current Qty</Text>
+        </View>
+        {data.tables.fastMoving.map((row: any, i: number) => (
+          <View key={i} style={styles.tableRow}>
+            <Text style={{...styles.tableCell, flex: 3}}>{row.name}</Text>
+            <Text style={{...styles.tableCell, flex: 1, ...styles.textCenter}}>{row.unitsSold}</Text>
+            <Text style={{...styles.tableCell, flex: 1, ...styles.textCenter, borderRightWidth: 0}}>{row.qty}</Text>
+          </View>
+        ))}
+      </View>
+      
+      <PdfFooter />
+    </Page>
+  </Document>
 );

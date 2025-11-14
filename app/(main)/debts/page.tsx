@@ -7,10 +7,17 @@
 // 4. Fixed AddDebtModal (removed payment method).
 // 5. Fixed ViewDebtModal (history now loads correctly).
 // 6. Fixed PayDebtModal (payment method dropdown is now included).
+// --- (USER REQUESTS ADDED & FIXED) ---
+// 7. (FIX) "Download Report" modal now has an "Filter by Amount" toggle.
+// 8. (NEW) Added "Print" icon to each debt row for single-item reports.
+// 9. (NEW) Imports for PDF, Date Pickers, Popovers, and Switch.
+// 10. (NEW) useAuth now gets 'subscription' for PDF store info.
+// 11. (NEW) Added <DebtReportModal> component for list reports.
+// 12. (NEW) Added state and handler for single-debt PDF modal.
 // -----------------------------------------------------------------------------
 "use client";
 
-import React, { useState, Suspense, useMemo, useEffect } from "react";
+import React, { useState, Suspense, useMemo, useEffect, Fragment } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import useSWR, { useSWRConfig } from "swr";
 import { useAuth } from "@/app/contexts/AuthContext";
@@ -26,7 +33,31 @@ import {
   Phone, MessageSquare, Trash2, Calendar, CreditCard,
   Tag, ChevronsUpDown, ArrowDown, ArrowUp, Eye,UserPlus,UserCheck,
   FileDown, HandCoins, SlidersHorizontal, AlertCircle, Check,
+  Download, 
+  Printer, // <-- (NEW) IMPORT
+  Calendar as CalendarIconLucide, // <-- (NEW) IMPORT
+  ChevronDown, // <-- (NEW) IMPORT
 } from "lucide-react";
+
+// --- (NEW) PDF IMPORTS ---
+import { PDFDownloadLink } from '@react-pdf/renderer';
+import { getTemplateComponent, ReportType } from '@/lib/pdfService';
+// --- END NEW IMPORTS ---
+
+// --- (NEW) IMPORTS FOR DATE PICKER & MODAL ---
+import { type DateRange } from "react-day-picker";
+import { type ClassValue, clsx } from "clsx"
+import { twMerge } from "tailwind-merge"
+import { Popover, PopoverContent, PopoverTrigger } from "@/app/components/ui/popover";
+import { Button } from "@/app/components/ui/Button";
+import { 
+  add, addDays, format, startOfWeek, startOfMonth, endOfDay,
+  eachDayOfInterval, endOfMonth, endOfWeek, isSameDay, isSameMonth,
+  isToday, parse, sub, isAfter, isBefore, startOfDay, subDays,
+} from "date-fns";
+import { Switch } from "@headlessui/react"; // <-- (NEW) IMPORT FOR TOGGLE
+// --- END NEW IMPORTS ---
+
 
 // -----------------------------------------------------------------------------
 // 💰 API Fetcher & Utilities
@@ -60,6 +91,14 @@ const formatCurrency = (amount: number | undefined | null, currency: string): st
   }).format(amount);
 };
 
+// --- (NEW) Helper function for modal ---
+export function cn(...inputs: ClassValue[]) {
+  return twMerge(clsx(inputs))
+}
+
+// --- (NEW) Date preset type ---
+type DatePreset = "today" | "this_week" | "this_month" | "custom";
+
 
 // -----------------------------------------------------------------------------
 // 🎁 Main Page & Suspense Wrapper
@@ -78,7 +117,8 @@ export default function DebtsPageWrapper() {
 // -----------------------------------------------------------------------------
 
 function DebtsPage() {
-  const { user, loading: authLoading } = useAuth();
+  // --- (MODIFIED) Get subscription from useAuth ---
+  const { user, loading: authLoading, subscription } = useAuth();
   const router = useRouter();
   const searchParams = useSearchParams();
   const { mutate: globalMutate } = useSWRConfig();
@@ -93,6 +133,14 @@ function DebtsPage() {
   const [globalError, setGlobalError] = useState<string | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [deleteModalDebt, setDeleteModalDebt] = useState<any | null>(null);
+  
+  // --- (NEW) PDF Modal State (for list report) ---
+  const [isReportModalOpen, setIsReportModalOpen] = useState(false);
+  
+  // --- (NEW) PDF Modal State (for SINGLE item print) ---
+  const [isSinglePdfModalOpen, setIsSinglePdfModalOpen] = useState(false);
+  const [singlePdfData, setSinglePdfData] = useState<any | null>(null);
+  const [SinglePdfComponent, setSinglePdfComponent] = useState<React.ElementType | null>(null);
 
 
   // --- Filters ---
@@ -164,11 +212,45 @@ function DebtsPage() {
     setToastMessage(message); // Show success toast!
   };
 
+  // --- (NEW) SINGLE DEBT PDF MODAL HANDLER ---
+  const handlePrintSingleDebt = (debt: any) => {
+    // 1. Get store info
+    const storeInfo = {
+      name: subscription?.storeName || "My Store",
+      address: subscription?.storeAddress || "123 Main St",
+      phone: subscription?.storePhone || "555-1234",
+      logoUrl: subscription?.logoUrl,
+      planId: subscription?.planId,
+    };
+
+    // 2. Format the single debt to match the 'debts_credits' template
+    const formattedData = {
+      tables: {
+        topDebtors: [{
+          name: debt.clientName,
+          total: formatCurrency(debt.amountDue, debt.currency),
+          count: debt.isPaid ? 'Paid' : (debt.status === 'partial' ? 'Partial' : 'Unpaid'),
+        }]
+      },
+      kpis: { // Add some relevant KPIs
+        totalUnpaid: debt.amountDue,
+        totalPaid: 0,
+        totalDebtors: 1,
+      }
+    };
+
+    // 3. Get the template component
+    const Template = getTemplateComponent('debts_credits' as ReportType, subscription);
+
+    // 4. Set state to open the modal
+    setSinglePdfData({ data: formattedData, store: storeInfo });
+    setSinglePdfComponent(() => Template);
+    setIsSinglePdfModalOpen(true);
+  };
+
   // --- Bulk Action Handlers ---
   const handleBulkDelete = async () => {
     if (selectedDebts.length === 0) return;
-    // (FIX) Replaced window.confirm with a simple prompt for now.
-    // A proper bulk delete modal would be the next step.
     const confirmed = prompt(`Type DELETE to confirm deleting ${selectedDebts.length} records.`);
     if (confirmed !== "DELETE") {
       return;
@@ -203,13 +285,23 @@ function DebtsPage() {
       {/* --- Header --- */}
       <header className="mb-6 flex flex-col items-center justify-between gap-4 md:flex-row">
         <h1 className="text-3xl font-bold text-gray-900 dark:text-white">Debts Management</h1>
-        <button
-          onClick={() => setIsAddModalOpen(true)}
-          className="flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-blue-700"
-        >
-          <Plus className="h-4 w-4" />
-          Add New Debt
-        </button>
+        <div className="flex w-full flex-col items-stretch gap-2 sm:w-auto sm:flex-row">
+          {/* --- (MODIFIED) PDF Download Button --- */}
+          <button
+            onClick={() => setIsReportModalOpen(true)} // <-- (NEW) Opens filter modal
+            className="flex items-center justify-center gap-2 rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
+          >
+            <Download className="h-4 w-4" />
+            Download Report
+          </button>
+          <button
+            onClick={() => setIsAddModalOpen(true)}
+            className="flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-blue-700"
+          >
+            <Plus className="h-4 w-4" />
+            Add New Debt
+          </button>
+        </div>
       </header>
 
       {/* --- 🔍 Filters / Search Bar --- */}
@@ -281,8 +373,9 @@ function DebtsPage() {
               filters={filters}
               onSort={handleSort}
               onPay={setIsPayModalOpen}
-              onDelete={setDeleteModalDebt} // (FIX) Pass the setter
+              onDelete={setDeleteModalDebt}
               onView={setIsViewModalOpen}
+              onPrint={handlePrintSingleDebt} // <-- (NEW) Pass handler
               selectedDebts={selectedDebts}
               setSelectedDebts={setSelectedDebts}
             />
@@ -322,7 +415,6 @@ function DebtsPage() {
           onPay={setIsPayModalOpen}
         />
       )}
-      {/* (NEW) Delete Confirmation Modal */}
       {deleteModalDebt && (
         <ConfirmDeleteModal
           debt={deleteModalDebt}
@@ -330,6 +422,51 @@ function DebtsPage() {
           onSuccess={handleActionSuccess}
           setGlobalError={setGlobalError}
         />
+      )}
+      
+      {/* --- (NEW) Report Filter Modal --- */}
+      {isReportModalOpen && (
+        <DebtReportModal
+          onClose={() => setIsReportModalOpen(false)}
+          subscription={subscription} // Pass subscription
+          currentFilters={filters} // Pass main filters as default
+        />
+      )}
+      
+      {/* --- (NEW) Single PDF Download Modal --- */}
+      {isSinglePdfModalOpen && singlePdfData && SinglePdfComponent && (
+        <ModalBase title="PDF Ready for Download" onClose={() => setIsSinglePdfModalOpen(false)}>
+          <div className="mt-4 space-y-4">
+            <p className="text-sm text-gray-500 dark:text-gray-400">
+              Your PDF report for this debt is ready.
+            </p>
+            <PDFDownloadLink
+              document={<SinglePdfComponent data={singlePdfData.data} store={singlePdfData.store} />}
+              fileName={`debt_report_${singlePdfData.data.tables.topDebtors[0].name.replace(' ','_')}.pdf`}
+              className="w-full flex justify-center items-center gap-2 rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
+            >
+              {({ loading }) => 
+                loading ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <>
+                    <Download className="h-4 w-4" />
+                    Download PDF Now
+                  </>
+                )
+              }
+            </PDFDownloadLink>
+          </div>
+          <div className="mt-6 flex justify-end">
+            <button
+              type="button"
+              className="rounded-lg border bg-white px-4 py-2 text-sm font-medium hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-800 dark:hover:bg-gray-700"
+              onClick={() => setIsSinglePdfModalOpen(false)}
+            >
+              Close
+            </button>
+          </div>
+        </ModalBase>
       )}
     </div>
   );
@@ -339,6 +476,8 @@ function DebtsPage() {
 // 🧩 Sub-Components
 // -----------------------------------------------------------------------------
 
+// ... (GlobalErrorPopup, GlobalSuccessToast, FilterBar, KpiCard, SmartAlerts, All Charts) ...
+// (These components are unchanged)
 // --- (NEW) Global Error & Success Components ---
 const GlobalErrorPopup = ({ error, onClose }: { error: string | null, onClose: () => void }) => {
   if (!error) return null;
@@ -354,7 +493,6 @@ const GlobalErrorPopup = ({ error, onClose }: { error: string | null, onClose: (
     </div>
   );
 };
-
 const GlobalSuccessToast = ({ message, onClose }: { message: string | null, onClose: () => void }) => {
   useEffect(() => {
     if (message) {
@@ -373,7 +511,6 @@ const GlobalSuccessToast = ({ message, onClose }: { message: string | null, onCl
     </div>
   );
 };
-
 // --- ENHANCED FILTER BAR ---
 const FilterBar = ({ filters, onFilterChange }: { filters: any, onFilterChange: (k: string, v: string | number) => void }) => (
   <div className="flex flex-col gap-3 rounded-lg bg-white p-4 shadow-sm dark:bg-gray-800">
@@ -478,7 +615,6 @@ const FilterBar = ({ filters, onFilterChange }: { filters: any, onFilterChange: 
     </div>
   </div>
 );
-
 const KpiCard = ({ title, value, icon: Icon, color }: any) => (
   <Card className="flex items-center gap-4">
     <div className={`flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-full ${color.replace('text-', 'bg-')} bg-opacity-10`}>
@@ -490,7 +626,6 @@ const KpiCard = ({ title, value, icon: Icon, color }: any) => (
     </div>
   </Card>
 );
-
 const SmartAlerts = ({ alerts }: { alerts: { message: string, type: string }[] }) => {
   if (!alerts || alerts.length === 0) return null;
   return (
@@ -508,14 +643,12 @@ const SmartAlerts = ({ alerts }: { alerts: { message: string, type: string }[] }
     </div>
   );
 };
-
 const ChartCard = ({ title, children }: { title: string, children: React.ReactNode }) => (
   <Card className="h-80">
     <h3 className="text-lg font-semibold text-gray-900 dark:text-white">{title}</h3>
     <div className="mt-4 h-[280px] w-full">{children}</div>
   </Card>
 );
-
 const PaidVsUnpaidPie = ({ data }: { data: { name: string, value: number }[] }) => {
   const COLORS = { "Unpaid": "#f97316", "Paid (Collected)": "#22c55e", "Partial": "#eab308" };
   if (!data || data.every(d => d.value === 0)) return <ChartEmptyState />;
@@ -533,7 +666,6 @@ const PaidVsUnpaidPie = ({ data }: { data: { name: string, value: number }[] }) 
     </ResponsiveContainer>
   );
 };
-
 const TopCreditorsChart = ({ data }: { data: { name: string, totalDebt: number }[] }) => {
   if (!data || data.length === 0) return <ChartEmptyState />;
   return (
@@ -548,7 +680,6 @@ const TopCreditorsChart = ({ data }: { data: { name: string, totalDebt: number }
     </ResponsiveContainer>
   );
 };
-
 const MonthlyDebtTrend = ({ data }: { data: { name: string, outstanding: number, collected: number }[] }) => {
   if (!data || data.length === 0) return <ChartEmptyState />;
   return (
@@ -565,7 +696,6 @@ const MonthlyDebtTrend = ({ data }: { data: { name: string, outstanding: number,
     </ResponsiveContainer>
   );
 };
-
 const TotalByCurrencyChart = ({ data }: { data: { name: string, total: number }[] }) => {
   if (!data || data.length === 0) return <ChartEmptyState />;
   return (
@@ -581,7 +711,7 @@ const TotalByCurrencyChart = ({ data }: { data: { name: string, total: number }[
   );
 };
 
-// --- ENHANCED DEBT LIST ---
+// --- (MODIFIED) DebtListHeader ---
 const DebtListHeader = ({ filters, onSort, selectedDebts, onSelectAll }: any) => {
   const SortIcon = ({ name }: { name: string }) => {
     if (filters.sortBy !== name) return <ChevronsUpDown className="h-4 w-4" />;
@@ -625,7 +755,8 @@ const DebtListHeader = ({ filters, onSort, selectedDebts, onSelectAll }: any) =>
   );
 };
 
-const DebtList = ({ debts, currency, filters, onSort, onPay, onDelete, onView, selectedDebts, setSelectedDebts }: any) => {
+// --- (MODIFIED) DebtList ---
+const DebtList = ({ debts, currency, filters, onSort, onPay, onDelete, onView, onPrint, selectedDebts, setSelectedDebts }: any) => {
   
   const handleSelect = (id: string) => {
     if (selectedDebts.includes(id)) {
@@ -669,6 +800,7 @@ const DebtList = ({ debts, currency, filters, onSort, onPay, onDelete, onView, s
                   onPay={onPay}
                   onDelete={onDelete}
                   onView={onView}
+                  onPrint={onPrint} // <-- (NEW) Pass prop
                   isSelected={selectedDebts.includes(debt.id)}
                   onSelect={handleSelect}
                 />
@@ -681,23 +813,15 @@ const DebtList = ({ debts, currency, filters, onSort, onPay, onDelete, onView, s
   );
 };
 
-// Inside app/(main)/debts/page.tsx
-
-const DebtCard = ({ debt, currency, onPay, onDelete, onView, isSelected, onSelect }: any) => {
+// --- (MODIFIED) DebtCard ---
+const DebtCard = ({ debt, currency, onPay, onDelete, onView, onPrint, isSelected, onSelect }: any) => {
   
-  // (FIX) Replaced inline delete with modal confirmation
   const startDelete = () => {
-    onDelete(debt); // This now opens the ConfirmDeleteModal
+    onDelete(debt); 
   };
-
-  // -----------------------------------------------------------------
-  // --- ADD THIS LINE FOR DEBUGGING ---
-  console.log("DEBT OBJECT IN DEBTCARD:", debt);
-  // -----------------------------------------------------------------
   
   const status = debt.isPaid ? 'paid' : (debt.status === 'partial' ? 'partial' : 'unpaid');
   
-  // ... rest of the component
   const statusColors: { [key: string]: string } = {
     paid: 'bg-green-100 text-green-700 dark:bg-green-900/50 dark:text-green-400',
     partial: 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/50 dark:text-yellow-400',
@@ -747,6 +871,15 @@ const DebtCard = ({ debt, currency, onPay, onDelete, onView, isSelected, onSelec
       </td>
       <td className="px-6 py-4 text-right">
         <div className="flex justify-end gap-1">
+          {/* --- (NEW) Print Button --- */}
+          <button
+            onClick={() => onPrint(debt)}
+            className="rounded-lg p-2 text-blue-600 hover:bg-blue-100 dark:hover:bg-gray-700"
+            title="Print Debt Report"
+          >
+            <Printer className="h-4 w-4" />
+          </button>
+          
           <button
             onClick={() => onView(debt)}
             className="rounded-lg p-2 text-gray-500 hover:bg-gray-100 hover:text-gray-700 dark:text-gray-400 dark:hover:bg-gray-700"
@@ -754,10 +887,12 @@ const DebtCard = ({ debt, currency, onPay, onDelete, onView, isSelected, onSelec
           >
             <Eye className="h-4 w-4" />
           </button>
-      {!debt.isPaid && (
+          
+          {!debt.isPaid && (
             <button
-              onClick={() => onPay(debt)} // <--- CORRECT
-              className="rounded-lg p-2 text-green-600..."
+              onClick={() => onPay(debt)}
+              className="rounded-lg p-2 text-green-600 hover:bg-green-100 dark:hover:bg-gray-700"
+              title="Record Payment"
             >
               <CreditCard className="h-4 w-4" />
             </button>
@@ -779,7 +914,7 @@ const DebtCard = ({ debt, currency, onPay, onDelete, onView, isSelected, onSelec
             <Phone className="h-4 w-4" />
           </a>
           <button
-            onClick={startDelete} // (FIX) Use new handler
+            onClick={startDelete}
             className="rounded-lg p-2 text-red-600 hover:bg-red-100 dark:hover:bg-gray-700"
             title="Delete Debt"
           >
@@ -791,27 +926,21 @@ const DebtCard = ({ debt, currency, onPay, onDelete, onView, isSelected, onSelec
   );
 };
 
+
 // --- Modals ---
 
-// (FIX) AddDebtModal: Removed Payment Method, uses setGlobalError
-// --- (FIX) REPLACE YOUR ENTIRE AddDebtModal WITH THIS ---
-
+// ... (AddDebtModal, ViewDebtModal, PayDebtModal, ConfirmDeleteModal) ...
+// (These components are unchanged)
 const AddDebtModal = ({ onClose, onSuccess, defaultCurrency, debtToEdit, setGlobalError }: any) => {
   const isEditMode = !!debtToEdit;
-
-  // --- (NEW) Customer Selection State ---
   const [customerMode, setCustomerMode] = useState<'select' | 'new'>('select');
-  
-  // --- (NEW) Fetch Customers List ---
-  // This uses your app/api/customers/route.ts
   const { 
     data: customersData, 
     error: customersError 
   } = useSWR('/api/customers?tab=list', fetcher);
   const customers = customersData || [];
-
   const [formData, setFormData] = useState({
-    customerId: debtToEdit?.customerId || "", // <-- (NEW)
+    customerId: debtToEdit?.customerId || "",
     clientName: debtToEdit?.clientName || "",
     clientPhone: debtToEdit?.clientPhone || "",
     clientWhatsapp: debtToEdit?.clientWhatsapp || "",
@@ -821,98 +950,73 @@ const AddDebtModal = ({ onClose, onSuccess, defaultCurrency, debtToEdit, setGlob
     tags: debtToEdit?.tags?.join(', ') || "",
   });
   const [isSaving, setIsSaving] = useState(false);
-  const [error, setError] = useState(""); // Local form validation error
-
+  const [error, setError] = useState(""); 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
     setFormData({ ...formData, [e.target.name]: e.target.value });
   };
-  
-  // --- (NEW) Handle Customer Selection ---
   const handleCustomerSelect = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const customerId = e.target.value;
     if (!customerId) {
-      setFormData({
-        ...formData,
-        customerId: "",
-        clientName: "",
-        clientPhone: "",
-        clientWhatsapp: "",
-      });
+      setFormData({ ...formData, customerId: "", clientName: "", clientPhone: "", clientWhatsapp: "", });
       return;
     }
-    
     const selectedCustomer = customers.find((c: any) => c.id === customerId);
     if (selectedCustomer) {
       setFormData({
         ...formData,
-        customerId: selectedCustomer.id, // <-- (NEW)
+        customerId: selectedCustomer.id,
         clientName: selectedCustomer.name,
         clientPhone: selectedCustomer.phone,
         clientWhatsapp: selectedCustomer.whatsapp || selectedCustomer.phone,
       });
     }
   };
-  
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formData.clientName || !formData.clientPhone || !formData.amountDue || !formData.reason) {
       setError("Please fill in all required fields: Customer, Phone, Amount, and Reason.");
       return;
     }
-    
     setIsSaving(true);
     setError("");
-    
     try {
       const user = auth.currentUser;
       if (!user) throw new Error("User not authenticated.");
       const token = await user.getIdToken();
-      
       const payload = {
         ...formData,
-        // (NEW) Send customerId if a new customer isn't being made
         customerId: customerMode === 'select' ? formData.customerId : null,
         tags: formData.tags.split(',').map((t: string) => t.trim()).filter(Boolean),
       };
-      
-      // We POST to /api/debts, which we will fix in Part 2
       const res = await fetch("/api/debts", {
-        method: "POST", // This only supports creating new debts
+        method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify(payload),
       });
-      
       if (!res.ok) {
         const err = await res.json();
         throw new Error(err.error || "Failed to save debt.");
       }
-      
       onSuccess("Debt added successfully!");
-      
     } catch (err: any) {
       setGlobalError(err.message);
     } finally {
       setIsSaving(false);
     }
   };
-
-  // Helper to get current owed amount for the dropdown
   const getOwedAmount = (customer: any) => {
     if (!customer.totalOwed || !customer.totalOwed[formData.currency]) {
       return formatCurrency(0, formData.currency);
     }
     return formatCurrency(customer.totalOwed[formData.currency], formData.currency);
   };
-
   return (
     <ModalBase title={isEditMode ? "Edit Debt" : "Add New Debt"} onClose={onClose}>
       <form onSubmit={handleSubmit} className="space-y-4">
-        
-        {/* --- (NEW) Customer Selection UI --- */}
         <div className="rounded-lg border p-4 dark:border-gray-700">
           <div className="flex justify-between items-center mb-4">
             <h3 className="font-medium text-gray-900 dark:text-white">Customer Details</h3>
-            {!isEditMode && ( // Only show toggle when creating
+            {!isEditMode && (
               <button
                 type="button"
                 onClick={() => setCustomerMode(customerMode === 'select' ? 'new' : 'select')}
@@ -926,7 +1030,6 @@ const AddDebtModal = ({ onClose, onSuccess, defaultCurrency, debtToEdit, setGlob
               </button>
             )}
           </div>
-          
           {customerMode === 'select' && !isEditMode ? (
             <FormSelect
               label="Select Existing Customer"
@@ -948,28 +1051,24 @@ const AddDebtModal = ({ onClose, onSuccess, defaultCurrency, debtToEdit, setGlob
               {isEditMode ? "Editing customer details:" : "Enter new customer details:"}
              </p>
           )}
-
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2 mt-4">
             <FormInput
               label="Customer Name"
               name="clientName"
               value={formData.clientName}
               onChange={handleChange}
-              disabled={customerMode === 'select' && !isEditMode} // Lock if selected
+              disabled={customerMode === 'select' && !isEditMode}
               required
             />
           <FormInput
-  label="Customer Phone"
-  name="clientPhone"
-  value={formData.clientPhone}
-  onChange={handleChange}
-  // disabled prop removed <--- FIX
-  required
+              label="Customer Phone"
+              name="clientPhone"
+              value={formData.clientPhone}
+              onChange={handleChange}
+              required
             />
           </div>
         </div>
-        {/* --- End Customer Selection UI --- */}
-
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
           <FormInput label="Customer WhatsApp (Optional)" name="clientWhatsapp" value={formData.clientWhatsapp} onChange={handleChange} />
           <FormInput label="Reason for Debt" name="reason" value={formData.reason} onChange={handleChange} required />
@@ -985,13 +1084,10 @@ const AddDebtModal = ({ onClose, onSuccess, defaultCurrency, debtToEdit, setGlob
             <option value="Euro">Euro</option>
           </FormSelect>
         </div>
-                
         <div className="grid grid-cols-1">
            <FormInput label="Tags (comma-separated)" name="tags" value={formData.tags} onChange={handleChange} placeholder="Urgent, Wholesale..." />
         </div>
-        
         {error && <p className="text-sm text-red-600">{error}</p>}
-        
         <div className="flex justify-end gap-3 pt-4">
           <button type="button" onClick={onClose} className="rounded-lg border bg-white px-4 py-2 text-sm font-medium hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-800 dark:hover:bg-gray-700">Cancel</button>
           <button type="submit" disabled={isSaving} className="flex min-w-[80px] items-center justify-center rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50">
@@ -1002,26 +1098,19 @@ const AddDebtModal = ({ onClose, onSuccess, defaultCurrency, debtToEdit, setGlob
     </ModalBase>
   );
 };
-
-// --- (FIX) ViewDebtModal: Removed SWR, uses debt.paymentHistory ---
 const ViewDebtModal = ({ debt, onClose, onPay }: any) => {
-  // (FIX) Remove SWR. Use the data from the prop.
   const history = debt.paymentHistory || [];
   const isLoading = false;
   const error = null;
-
   return (
     <ModalBase title="Debt Details" onClose={onClose}>
       <div className="space-y-4">
-        {/* Customer Info */}
         <div>
           <h4 className="text-sm font-semibold uppercase text-gray-500 dark:text-gray-400">Customer</h4>
           <p className="text-lg font-medium text-gray-900 dark:text-white">{debt.clientName}</p>
           <p className="text-gray-600 dark:text-gray-400">{debt.clientPhone}</p>
           <p className="text-gray-600 dark:text-gray-400">{debt.clientWhatsapp}</p>
         </div>
-        
-        {/* Debt Info */}
         <div>
           <h4 className="text-sm font-semibold uppercase text-gray-500 dark:text-gray-400">Debt Info</h4>
           <p className={`text-3xl font-bold ${debt.isPaid ? 'text-green-600' : 'text-red-600'}`}>
@@ -1031,18 +1120,14 @@ const ViewDebtModal = ({ debt, onClose, onPay }: any) => {
           <p className="text-gray-600 dark:text-gray-400">Date: {dayjs(debt.createdAt).format("DD MMM YYYY")}</p>
           <p className="text-gray-600 dark:text-gray-400">Sale ID: {debt.relatedSaleId || 'N/A'}</p>
         </div>
-
-        {/* (FIX) Payment History Section */}
         <div>
           <h4 className="text-sm font-semibold uppercase text-gray-500 dark:text-gray-400">Payment History</h4>
           <div className="mt-2 max-h-40 space-y-2 overflow-y-auto rounded-lg border p-3 dark:border-gray-700">
             {isLoading && <Loader2 className="h-4 w-4 animate-spin" />}
             {error && <p className="text-sm text-red-500">Could not load history.</p>}
-            
             {!isLoading && !error && history.length === 0 && (
               <p className="text-sm text-gray-500">No payment history found.</p>
             )}
-
             {!isLoading && !error && history.length > 0 && (
               <table className="min-w-full text-sm">
                 <tbody>
@@ -1053,7 +1138,6 @@ const ViewDebtModal = ({ debt, onClose, onPay }: any) => {
                         <p className="text-xs text-gray-500">{payment.method || 'N/A'}</p>
                       </td>
                       <td className="py-2 text-right text-gray-500">
-                        {/* Handle Firebase Timestamp */}
                         {dayjs(payment.date.toDate ? payment.date.toDate() : payment.date).format("DD MMM YYYY")}
                       </td>
                     </tr>
@@ -1063,15 +1147,13 @@ const ViewDebtModal = ({ debt, onClose, onPay }: any) => {
             )}
           </div>
         </div>
-
-        {/* Actions */}
         <div className="flex justify-end gap-3 pt-4">
           <button type="button" onClick={onClose} className="rounded-lg border bg-white px-4 py-2 text-sm font-medium hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-800 dark:hover:bg-gray-700">Close</button>
           {!debt.isPaid && (
             <button
               onClick={() => {
-                onClose(); // Close this modal
-                onPay(debt); // Open the pay modal
+                onClose(); 
+                onPay(debt); 
               }}
               className="flex min-w-[80px] items-center justify-center rounded-lg bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-700"
             >
@@ -1083,69 +1165,52 @@ const ViewDebtModal = ({ debt, onClose, onPay }: any) => {
     </ModalBase>
   );
 };
-
-// --- (FIX) PayDebtModal: Added Payment Method, uses setGlobalError ---
 const PayDebtModal = ({ debt, onClose, onSuccess, setGlobalError }: any) => {
-  // (FIX) Use formData state
   const [formData, setFormData] = useState({
     amountPaid: "",
     paymentMethod: "Cash",
   });
   const [isSaving, setIsSaving] = useState(false);
-  const [error, setError] = useState(""); // Local form validation error
-  
-  // (FIX) Add universal handler
+  const [error, setError] = useState(""); 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     setFormData({ ...formData, [e.target.name]: e.target.value });
   };
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
-    // (FIX) UI Form Validation
     const paidAmount = parseFloat(formData.amountPaid);
     if (!paidAmount || paidAmount <= 0) {
       setError("Please enter a valid amount.");
       return;
     }
-    if (paidAmount > debt.amountDue + 0.01) { // 0.01 tolerance
+    if (paidAmount > debt.amountDue + 0.01) { 
       setError("Payment cannot be more than the remaining amount due.");
       return;
     }
-    
     setIsSaving(true);
-    setError(""); // Clear local error
-    
+    setError(""); 
     try {
       const user = auth.currentUser;
       if (!user) throw new Error("User not authenticated.");
       const token = await user.getIdToken();
-      
       const res = await fetch(`/api/debts/${debt.id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        // (FIX) Send the full form data
         body: JSON.stringify({ 
           amountPaid: paidAmount,
           paymentMethod: formData.paymentMethod 
         }),
       });
-      
       if (!res.ok) {
         const err = await res.json();
         throw new Error(err.error || "Failed to record payment.");
       }
-      
       onSuccess("Payment recorded successfully!");
-      
     } catch (err: any) {
-      // (FIX) Use Global Error for API errors
       setGlobalError(err.message);
     } finally {
       setIsSaving(false);
     }
   };
-
   return (
     <ModalBase title={`Pay Debt for ${debt.clientName}`} onClose={onClose}>
       <form onSubmit={handleSubmit} className="space-y-4">
@@ -1155,7 +1220,6 @@ const PayDebtModal = ({ debt, onClose, onSuccess, setGlobalError }: any) => {
             {formatCurrency(debt.amountDue, debt.currency)}
           </p>
         </div>
-        
         <FormInput
           label="Amount to Pay"
           name="amountPaid"
@@ -1163,8 +1227,6 @@ const PayDebtModal = ({ debt, onClose, onSuccess, setGlobalError }: any) => {
           value={formData.amountPaid}
           onChange={handleChange}
         />
-        
-        {/* --- (FIX) ADDED PAYMENT METHOD DROPDOWN --- */}
         <FormSelect 
           label="Payment Method" 
           name="paymentMethod" 
@@ -1176,11 +1238,7 @@ const PayDebtModal = ({ debt, onClose, onSuccess, setGlobalError }: any) => {
           <option value="Bank">Bank</option>
           <option value="Other">Other</option>
         </FormSelect>
-        {/* --- END FIX --- */}
-        
-        {/* (FIX) This is for local form validation errors */}
         {error && <p className="text-sm text-red-600">{error}</p>}
-        
         <div className="flex justify-end gap-3 pt-4">
           <button type="button" onClick={onClose} className="rounded-lg border bg-white px-4 py-2 text-sm font-medium hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-800 dark:hover:bg-gray-700">Cancel</button>
           <button type="submit" disabled={isSaving} className="flex min-w-[80px] items-center justify-center rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50">
@@ -1191,38 +1249,30 @@ const PayDebtModal = ({ debt, onClose, onSuccess, setGlobalError }: any) => {
     </ModalBase>
   );
 };
-
-// --- (NEW) Delete Confirmation Modal ---
 const ConfirmDeleteModal = ({ debt, onClose, onSuccess, setGlobalError }: any) => {
   const [isDeleting, setIsDeleting] = useState(false);
-
   const handleDelete = async () => {
     setIsDeleting(true);
     try {
       const user = auth.currentUser;
       if (!user) throw new Error("User not authenticated.");
       const token = await user.getIdToken();
-      
       const res = await fetch(`/api/debts/${debt.id}`, {
         method: "DELETE",
         headers: { Authorization: `Bearer ${token}` }
       });
-
       if (!res.ok) {
         const err = await res.json();
         throw new Error(err.error || "Failed to delete debt.");
       }
-      
       onSuccess("Debt record deleted successfully!");
-      
     } catch (err: any) {
       setGlobalError(err.message);
-      onClose(); // Close this modal even on error
+      onClose(); 
     } finally {
       setIsDeleting(false);
     }
   };
-
   return (
     <ModalBase title="Confirm Deletion" onClose={onClose}>
       <div className="space-y-4">
@@ -1238,7 +1288,6 @@ const ConfirmDeleteModal = ({ debt, onClose, onSuccess, setGlobalError }: any) =
           <p className="text-sm text-red-800 dark:text-red-300">Reason: {debt.reason}</p>
         </div>
         <p className="text-sm text-gray-500">This action cannot be undone.</p>
-        
         <div className="flex justify-end gap-3 pt-4">
           <button type="button" onClick={onClose} className="rounded-lg border bg-white px-4 py-2 text-sm font-medium hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-800 dark:hover:bg-gray-700">
             Cancel
@@ -1251,6 +1300,222 @@ const ConfirmDeleteModal = ({ debt, onClose, onSuccess, setGlobalError }: any) =
           >
             {isDeleting ? <Loader2 className="h-4 w-4 animate-spin" /> : "Delete"}
           </button>
+        </div>
+      </div>
+    </ModalBase>
+  );
+};
+
+
+// --- (NEW) DEBT REPORT MODAL ---
+// This is the new modal for the "Download Report" button
+const DebtReportModal = ({ onClose, subscription, currentFilters }: {
+  onClose: () => void;
+  subscription: any;
+  currentFilters: any;
+}) => {
+  
+  // --- Filter State ---
+  const [date, setDate] = React.useState<DateRange | undefined>({
+    from: dayjs(currentFilters.startDate).toDate(),
+    to: dayjs(currentFilters.endDate).toDate(),
+  });
+  const [activePreset, setActivePreset] = useState<DatePreset>("custom");
+  const [statusFilter, setStatusFilter] = useState(currentFilters.statusFilter);
+  // --- (FIX) Add state for the new toggle ---
+  const [useAmountFilter, setUseAmountFilter] = useState(false);
+  const [minAmount, setMinAmount] = useState("");
+  const [maxAmount, setMaxAmount] = useState("");
+  
+  // --- PDF State ---
+  const [isLoading, setIsLoading] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [pdfData, setPdfData] = useState<any | null>(null);
+  const [PdfComponent, setPdfComponent] = useState<React.ElementType | null>(null);
+
+  const handlePrepareDownload = async () => {
+    setIsLoading(true);
+    setErrorMessage(null);
+    setPdfData(null);
+    setPdfComponent(null);
+    
+    try {
+      const user = auth.currentUser;
+      if (!user) throw new Error("Not authenticated.");
+      const token = await user.getIdToken();
+
+      // 1. Build query params for the API
+      const params = new URLSearchParams({
+        currency: currentFilters.currency, // Use the page's main currency
+        noLimit: "true", // Get ALL debts for the report
+        statusFilter: statusFilter,
+        sortBy: "createdAt",
+        sortDir: "desc",
+      });
+      if (date?.from) params.set("startDate", format(date.from, "yyyy-MM-dd"));
+      if (date?.to) params.set("endDate", format(date.to, "yyyy-MM-dd"));
+      
+      // --- (FIX) Only add amount filters if the toggle is on ---
+      if (useAmountFilter && minAmount) params.set("minAmount", minAmount);
+      if (useAmountFilter && maxAmount) params.set("maxAmount", maxAmount);
+      
+      // 2. Fetch the REAL data
+      const apiData = await fetcher(`/api/debts?${params.toString()}`);
+      if (!apiData.debtRecords || apiData.debtRecords.length === 0) {
+        throw new Error("No debts found for these filters.");
+      }
+
+      // 3. Format data for the PDF
+      const formattedData = {
+        tables: {
+          topDebtors: apiData.debtRecords.map((debt: any) => ({
+            name: debt.clientName,
+            total: formatCurrency(debt.amountDue, debt.currency),
+            count: debt.isPaid ? 'Paid' : (debt.status === 'partial' ? 'Partial' : 'Unpaid'),
+          }))
+        },
+        kpis: {
+          totalUnpaid: apiData.kpis.totalUnpaid,
+          totalPaid: apiData.kpis.totalPaid,
+          totalDebtors: apiData.pagination.totalRecords,
+        }
+      };
+      
+      // 4. Get Store Info
+      const storeInfo = {
+        name: subscription?.storeName || "My Store",
+        address: subscription?.storeAddress || "123 Main St",
+        phone: subscription?.storePhone || "555-1234",
+        logoUrl: subscription?.logoUrl,
+        planId: subscription?.planId,
+      };
+
+      // 5. Get the template component
+      const TemplateComponent = getTemplateComponent('debts_credits' as ReportType, subscription);
+      
+      // 6. Set state to render the download button
+      setPdfData({ data: formattedData, store: storeInfo });
+      setPdfComponent(() => TemplateComponent);
+      
+    } catch (err: any) {
+      setErrorMessage(err.message);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  return (
+    <ModalBase title="Download Debt Report" onClose={onClose}>
+      <div className="mt-4 space-y-4">
+        
+        {/* --- Filter Inputs --- */}
+        <fieldset disabled={!!pdfData || isLoading} className="space-y-4 disabled:opacity-50">
+          <div className="space-y-3">
+            <label className="mb-1.5 block text-sm font-medium text-gray-600 dark:text-gray-300">
+              Date Range
+            </label>
+            <DatePresetButtons
+              activePreset={activePreset}
+              onPresetSelect={(preset, newDate) => {
+                setActivePreset(preset);
+                setDate(newDate);
+              }}
+            />
+            <NewDateRangePicker
+              date={date}
+              onApply={(newDate) => {
+                setDate(newDate);
+                setActivePreset("custom");
+              }}
+            />
+          </div>
+          
+          <FormSelect 
+            label="Status" 
+            name="statusFilter" 
+            value={statusFilter} 
+            onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setStatusFilter(e.target.value)}
+          >
+            <option value="unpaid">Unpaid</option>
+            <option value="paid">Paid</option>
+            <option value="partial">Partial</option>
+            <option value="all">All Statuses</option>
+          </FormSelect>
+          
+          {/* --- (NEW) Amount Toggle --- */}
+          <div className="flex items-center justify-between rounded-lg border p-3 dark:border-gray-600">
+            <span className="font-medium text-gray-700 dark:text-gray-300">Filter by Amount</span>
+            <Switch
+              checked={useAmountFilter}
+              onChange={setUseAmountFilter}
+              className={`${useAmountFilter ? 'bg-blue-600' : 'bg-gray-200 dark:bg-gray-600'}
+                relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none`}
+            >
+              <span className="sr-only">Filter by Amount</span>
+              <span
+                aria-hidden="true"
+                className={`${useAmountFilter ? 'translate-x-5' : 'translate-x-0'}
+                  pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out`}
+              />
+            </Switch>
+          </div>
+          
+          {/* --- (NEW) Disabled Fieldset for Amount --- */}
+          <fieldset disabled={!useAmountFilter} className="grid grid-cols-2 gap-4 disabled:opacity-50">
+            <FormInput
+              label="Min Amount (Optional)"
+              name="minAmount"
+              type="number"
+              value={minAmount}
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) => setMinAmount(e.target.value)}
+            />
+            <FormInput
+              label="Max Amount (Optional)"
+              name="maxAmount"
+              type="number"
+              value={maxAmount}
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) => setMaxAmount(e.target.value)}
+            />
+          </fieldset>
+        </fieldset>
+        
+        {/* --- Buttons --- */}
+        <div className="pt-4">
+          {errorMessage && (
+            <div className="w-full text-center rounded-lg bg-red-100 p-3 text-sm font-medium text-red-700 dark:bg-red-900/30 dark:text-red-300 mb-3">
+              {errorMessage}
+            </div>
+          )}
+          
+          {!pdfData && (
+            <button 
+              onClick={handlePrepareDownload} 
+              disabled={isLoading}
+              className="w-full flex justify-center items-center gap-2 rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
+            >
+              {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+              {isLoading ? "Generating..." : "Generate Report"}
+            </button>
+          )}
+          
+          {pdfData && PdfComponent && (
+            <PDFDownloadLink
+              document={<PdfComponent data={pdfData.data} store={pdfData.store} />}
+              fileName={`debts_report_${statusFilter}_${dayjs().format("YYYYMMDD")}.pdf`}
+              className="w-full flex justify-center items-center gap-2 rounded-lg bg-green-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-green-800 disabled:opacity-50"
+            >
+              {({ loading }) => 
+                loading ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <>
+                    <Download className="h-4 w-4" />
+                    Download PDF Now
+                  </>
+                )
+              }
+            </PDFDownloadLink>
+          )}
         </div>
       </div>
     </ModalBase>
@@ -1359,8 +1624,293 @@ const FormSelect = ({ label, name, children, ...props }: any) => (
       {...props}
       className="w-full rounded-lg border border-gray-300 p-2.5 shadow-sm dark:border-gray-600 dark:bg-gray-700 dark:text-white"
     >
-      <option value="" disabled>-- Select --</option>
+      {/* (NEW) Allow "no selection" for status */}
+      {name === 'statusFilter' ? null : <option value="" disabled>-- Select --</option>}
       {children}
     </select>
   </div>
 );
+
+
+// --- (NEW) Date Picker Components (Copied from products/page.tsx) ---
+
+const PRESETS = [
+  { label: "Today", range: { from: startOfDay(new Date()), to: endOfDay(new Date()) } },
+  { label: "Last 7 Days", range: { from: startOfDay(subDays(new Date(), 6)), to: endOfDay(new Date()) } },
+  { label: "This Month", range: { from: startOfMonth(new Date()), to: endOfDay(new Date()) } },
+];
+
+function NewDateRangePicker({
+  date,
+  onApply,
+  className,
+}: {
+  date: DateRange | undefined;
+  onApply: (date: DateRange | undefined) => void;
+  className?: string;
+}) {
+  const [isOpen, setIsOpen] = useState(false);
+  const [currentMonth, setCurrentMonth] = useState(date?.from || new Date());
+  const [selectedDate, setSelectedDate] = useState<DateRange | undefined>(date);
+  const [hoveredDate, setHoveredDate] = useState<Date | undefined>(undefined);
+  
+  const [isSmallScreen, setIsSmallScreen] = useState(false);
+  useEffect(() => {
+    const checkScreenSize = () => {
+      if (typeof window !== "undefined") {
+        setIsSmallScreen(window.innerWidth < 768);
+      }
+    };
+    checkScreenSize();
+    window.addEventListener("resize", checkScreenSize);
+    return () => window.removeEventListener("resize", checkScreenSize);
+  }, []);
+  const numberOfMonths = isSmallScreen ? 1 : 2;
+  
+  useEffect(() => {
+    setSelectedDate(date);
+    setCurrentMonth(date?.from || new Date());
+  }, [date]);
+
+  const handleApply = () => {
+    onApply(selectedDate);
+    setIsOpen(false);
+  };
+
+  const handleCancel = () => {
+    setSelectedDate(date); 
+    setCurrentMonth(date?.from || new Date());
+    setIsOpen(false);
+  };
+  
+  const handleOpenChange = (open: boolean) => {
+    if (!open) {
+      handleCancel();
+    }
+    setIsOpen(open);
+  };
+  
+  const displayedDate = date; 
+
+  return (
+    <div className={cn("grid gap-2", className)}>
+      <Popover open={isOpen} onOpenChange={handleOpenChange}>
+        <PopoverTrigger asChild>
+          <Button
+            id="date"
+            variant="outline"
+            title="Select a date range"
+            className={cn(
+              "w-full justify-start text-left font-normal shadow-sm bg-white dark:bg-gray-700",
+              !displayedDate && "text-muted-foreground"
+            )}
+          >
+            <CalendarIconLucide className="mr-2 h-4 w-4" />
+            {displayedDate?.from ? (
+              displayedDate.to ? (
+                <>
+                  {format(displayedDate.from, "LLL dd, y")} -{" "}
+                  {format(displayedDate.to, "LLL dd, y")}
+                </>
+              ) : (
+                format(displayedDate.from, "LLL dd, y")
+              )
+            ) : (
+              <span>Pick a date</span>
+            )}
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent className="w-auto p-0 bg-white dark:bg-gray-800 border dark:border-gray-700" align="start">
+          <div className="flex">
+            {Array.from({ length: numberOfMonths }).map((_, i) => (
+              <CalendarGrid
+                key={i}
+                month={add(currentMonth, { months: i })}
+                selectedDate={selectedDate}
+                setSelectedDate={setSelectedDate}
+                hoveredDate={hoveredDate}
+                setHoveredDate={setHoveredDate}
+                onMonthChange={setCurrentMonth}
+                showMonthNav={i === 0} 
+                showMonthName={numberOfMonths === 1}
+              />
+            ))}
+          </div>
+          <div className="flex justify-end gap-2 p-4 border-t dark:border-gray-600">
+            <Button variant="ghost" size="sm" onClick={handleCancel}>
+              Cancel
+            </Button>
+            <Button size="sm" onClick={handleApply}>
+              Apply
+            </Button>
+          </div>
+        </PopoverContent>
+      </Popover>
+    </div>
+  );
+}
+
+function CalendarGrid({
+  month,
+  selectedDate,
+  setSelectedDate,
+  hoveredDate,
+  setHoveredDate,
+  onMonthChange,
+  showMonthNav,
+  showMonthName,
+}: {
+  month: Date;
+  selectedDate: DateRange | undefined;
+  setSelectedDate: (date: DateRange | undefined) => void;
+  hoveredDate: Date | undefined;
+  setHoveredDate: (date: Date | undefined) => void;
+  onMonthChange: (date: Date) => void;
+  showMonthNav: boolean;
+  showMonthName: boolean;
+}) {
+  const firstDay = startOfMonth(month);
+  const lastDay = endOfMonth(month);
+  const startDate = startOfWeek(firstDay);
+  const endDate = endOfWeek(lastDay);
+  const days = eachDayOfInterval({ start: startDate, end: endDate });
+  
+  const weekDays = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"];
+  
+  const nextMonth = () => onMonthChange(add(month, { months: 1 }));
+  const prevMonth = () => onMonthChange(sub(month, { months: 1 }));
+  
+  const handleDateClick = (day: Date) => {
+    const { from, to } = selectedDate || {};
+    if (!from) {
+      setSelectedDate({ from: day, to: undefined });
+    } else if (from && !to) {
+      if (isAfter(day, from)) {
+        setSelectedDate({ from, to: day });
+      } else {
+        setSelectedDate({ from: day, to: from }); // Swap
+      }
+    } else if (from && to) {
+      setSelectedDate({ from: day, to: undefined });
+    }
+  };
+
+  return (
+    <div className="p-4">
+      <div className="flex justify-between items-center mb-2">
+        <span className="text-lg font-semibold dark:text-white">
+          {format(month, "MMMM yyyy")}
+        </span>
+        {showMonthNav && (
+          <div className="flex gap-1">
+            <Button variant="ghost" size="icon" className="h-7 w-7" title="Previous month" onClick={prevMonth}>
+              <ChevronLeft className="h-4 w-4" />
+            </Button>
+            <Button variant="ghost" size="icon" className="h-7 w-7" title="Next month" onClick={nextMonth}>
+              <ChevronRight className="h-4 w-4" />
+            </Button>
+          </div>
+        )}
+      </div>
+
+      <div className="grid grid-cols-7 gap-1">
+        {weekDays.map(day => (
+          <div key={day} className="text-center text-xs font-medium text-gray-500 dark:text-gray-400">
+            {day}
+          </div>
+        ))}
+      </div>
+      
+      <div 
+        className="grid grid-cols-7 gap-1 mt-2"
+        onMouseLeave={() => setHoveredDate(undefined)}
+      >
+        {days.map(day => {
+          const isCurrentMonth = isSameMonth(day, month);
+          const isSelectedStart = !!selectedDate?.from && isSameDay(day, selectedDate.from);
+          const isSelectedEnd = !!selectedDate?.to && isSameDay(day, selectedDate.to);
+          const isInRange = !!(selectedDate?.from && selectedDate?.to) && 
+                            isAfter(day, selectedDate.from) && 
+                            isBefore(day, selectedDate.to);
+          
+          const isHovering = !!(selectedDate?.from && !selectedDate.to && hoveredDate);
+          const isHoverStart = isHovering && hoveredDate && selectedDate.from && isBefore(hoveredDate, selectedDate.from) ? hoveredDate : selectedDate?.from;
+           const isHoverEnd = isHovering && hoveredDate && selectedDate.from && isAfter(hoveredDate, selectedDate.from) ? hoveredDate : selectedDate?.from;
+          const isInHoverRange = isHovering && isHoverStart && isHoverEnd && isAfter(day, isHoverStart) && isBefore(day, isHoverEnd);
+          
+          return (
+            <button
+              key={day.toString()}
+              type="button"
+              onClick={() => handleDateClick(day)}
+              onMouseEnter={() => setHoveredDate(day)}
+              className={cn(
+                "h-9 w-9 flex items-center justify-center rounded-lg text-sm transition-colors duration-150",
+                !isCurrentMonth && "text-gray-400 dark:text-gray-600",
+                isCurrentMonth && "text-gray-800 dark:text-gray-200",
+                isToday(day) && "font-bold text-blue-600",
+                
+                (isSelectedStart || isSelectedEnd) && "bg-blue-600 text-white hover:bg-blue-700",
+                isInRange && "bg-blue-100 dark:bg-blue-900/50 rounded-none",
+                isSelectedStart && "rounded-l-lg",
+                isSelectedEnd && "rounded-r-lg",
+                
+                isHovering && (isSameDay(day, isHoverStart!) || isSameDay(day, isHoverEnd!)) && "bg-blue-600/50 text-white",
+                isInHoverRange && "bg-blue-100/50 dark:bg-blue-900/20",
+                
+                !isSelectedStart && !isSelectedEnd && !isInRange && isCurrentMonth && "hover:bg-gray-100 dark:hover:bg-gray-700"
+              )}
+            >
+              {format(day, "d")}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function DatePresetButtons({
+  activePreset,
+  onPresetSelect,
+}: {
+  activePreset: DatePreset;
+  onPresetSelect: (preset: DatePreset, date: DateRange | undefined) => void;
+}) {
+  const setDatePreset = (preset: DatePreset) => {
+    const today = new Date();
+    let newDate: DateRange | undefined;
+    if (preset === "today") {
+      newDate = { from: startOfDay(today), to: endOfDay(today) };
+    } else if (preset === "this_week") {
+      newDate = { from: startOfWeek(today), to: endOfDay(today) };
+    } else if (preset === "this_month") {
+      newDate = { from: startOfMonth(today), to: endOfDay(today) };
+    }
+    onPresetSelect(preset, newDate);
+  };
+
+  const PresetButton = ({ preset, label }: { preset: DatePreset, label: string }) => (
+    <button
+      type="button"
+      title={`Set range to ${label}`}
+      onClick={() => setDatePreset(preset)}
+      className={cn(
+        "rounded-md px-3 py-1.5 text-sm font-medium transition-all duration-200",
+        activePreset === preset
+          ? "bg-blue-600 text-white shadow-sm"
+          : "bg-white text-gray-700 hover:bg-gray-50 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600"
+      )}
+    >
+      {label}
+    </button>
+  );
+
+  return (
+    <div className="flex flex-wrap items-center gap-2 rounded-lg bg-gray-100 p-1 dark:bg-gray-800">
+      <PresetButton preset="today" label="Today" />
+      <PresetButton preset="this_week" label="This Week" />
+      <PresetButton preset="this_month" label="This Month" />
+    </div>
+  );
+}

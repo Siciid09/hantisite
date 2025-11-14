@@ -1,7 +1,7 @@
 // File: app/(main)/reports/page.tsx
 // Description: Main Reports & Analytics page.
 //
-// --- MODERN UI UPGRADE ---
+// --- MODERN UI UPGRADE (with NEW PDF SYSTEM) ---
 // 1. (NEW) KPI Cards are now colorful, modern, and include icons.
 // 2. (NEW) ReportTable is now responsive (horizontal scroll) and color-codes
 //    positive (green) and negative (red) financial numbers.
@@ -9,6 +9,10 @@
 //    effects for a smoother feel.
 // 4. (NEW) Added a "Refresh" button to the header (like on your dashboard).
 // 5. (NEW) Added "title" tooltips to all buttons for better user guidance.
+// 6. (PDF) Removed old jsPDF/autoTable imports.
+// 7. (PDF) Added imports for useAuth, react-pdf/renderer, and pdfService.
+// 8. (PDF) ReportsDownloadModal now fetches data, prepares a template
+//    component, and renders a <PDFDownloadLink />.
 // -----------------------------------------------------------------------------
 "use client";
 
@@ -40,9 +44,14 @@ import {
 } from "date-fns";
 import { type DateRange } from "react-day-picker"; // We still use the *type*
 
-// --- Imports for New Download Modal ---
-import { jsPDF } from "jspdf";
-import autoTable from "jspdf-autotable";
+// --- (NEW) Imports for PDF System ---
+import { useAuth } from "../../contexts/AuthContext"; // Use your path
+import { PDFDownloadLink } from "@react-pdf/renderer";
+import { getTemplateComponent, ReportType } from "../../../lib/pdfService"; // Use your path
+
+// --- (REMOVED) Old PDF imports ---
+// import { jsPDF } from "jspdf";
+// import autoTable from "jspdf-autotable";
 import * as XLSX from "xlsx";
 
 // -----------------------------------------------------------------------------
@@ -148,6 +157,10 @@ type DatePreset = "today" | "this_week" | "this_month" | "custom";
 
 function ReportsPage() {
   const { mutate: globalMutate } = useSWRConfig();
+  
+  // --- (NEW) Get subscription info ---
+  const { subscription } = useAuth();
+  
   const [view, setView] = useState("sales");
   const [reportModalOpen, setReportModalOpen] = useState(false);
   
@@ -257,6 +270,7 @@ function ReportsPage() {
           defaultView={view}
           defaultCurrency={currency}
           defaultDate={date}
+          subscription={subscription} // <-- (NEW) Pass subscription
         />
       )}
 
@@ -1318,18 +1332,20 @@ const ModalBase = ({ title, onClose, children }: { title: string, onClose: () =>
 );
 
 // -----------------------------------------------------------------------------
-// (E) (NEW) Report Download Modal
+// (E) (UPGRADED) Report Download Modal
 // -----------------------------------------------------------------------------
 function ReportsDownloadModal({ 
   onClose,
   defaultView,
   defaultCurrency,
-  defaultDate
+  defaultDate,
+  subscription // <-- (NEW) Accept subscription
 }: { 
   onClose: () => void,
   defaultView: string,
   defaultCurrency: string,
-  defaultDate: DateRange | undefined
+  defaultDate: DateRange | undefined,
+  subscription: any // <-- (NEW) Accept subscription
 }) {
   const [reportType, setReportType] = useState(defaultView === 'custom' ? 'sales' : defaultView);
   const [reportCurrency, setReportCurrency] = useState(defaultCurrency);
@@ -1337,13 +1353,23 @@ function ReportsDownloadModal({
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [generatedData, setGeneratedData] = useState<any | null>(null);
 
+  // --- (NEW) State for the PDF link ---
+  const [pdfData, setPdfData] = useState<any | null>(null);
+  const [PdfComponent, setPdfComponent] = useState<React.ElementType | null>(null);
+
   const [date, setDate] = React.useState<DateRange | undefined>(defaultDate);
   const [activePreset, setActivePreset] = useState<DatePreset>("custom");
+  
+  // File: app/(main)/reports/page.tsx
+
+  // ...
   
   const handleGenerate = async () => {
     setIsLoading(true);
     setGeneratedData(null);
     setErrorMessage(null);
+    setPdfData(null); 
+    setPdfComponent(null); 
     
     try {
       const params = new URLSearchParams({
@@ -1356,18 +1382,59 @@ function ReportsDownloadModal({
       const data = await fetcher(`/api/reports?${params.toString()}`);
       
       if (data && !data.notImplemented) {
-        setGeneratedData(data);
+        setGeneratedData(data); // Set data for Excel
         setErrorMessage(null);
+
+        // --- Prepare data for PDF Link ---
+        const storeInfo = {
+          name: subscription?.storeName || "My Store",
+          address: subscription?.storeAddress || "123 Main St",
+          phone: subscription?.storePhone || "555-1234",
+          logoUrl: subscription?.logoUrl,
+          planId: subscription?.planId,
+        };
+
+        // --- (FIXED) This map now translates dropdown values to template keys ---
+        const reportTypeMap: { [key: string]: ReportType } = {
+          sales: 'sales_summary',
+          finance: 'financial',
+          purchases: 'purchase',
+          inventory: 'inventory_summary', // <-- (FIX) Was 'product_report'
+          debts: 'debts_credits',
+          customers: 'customer_supplier',
+          hr: 'hr',
+        };
+
+        // Translate the dropdown value (reportType) to the template key
+        const templateKey = reportTypeMap[reportType];
+        
+        // Check if a template key was found
+        if (!templateKey) {
+          throw new Error(`No PDF template mapping found for report type: "${reportType}"`);
+        }
+        
+        // Get the correct template from your "brain"
+        const Template = getTemplateComponent(templateKey, subscription);
+        
+        // Set state to enable the PDF download button
+        setPdfData({ data: data, store: storeInfo });
+        setPdfComponent(() => Template); // Store the component itself
+        // --- End fix ---
+
       } else {
         setGeneratedData(null);
         setErrorMessage(`No report data found for "${reportType}" or it's in development.`);
       }
     } catch (error: any) {
       setErrorMessage(error.message || "An unknown error occurred.");
+      setPdfData(null); 
+      setPdfComponent(null);
     } finally {
       setIsLoading(false);
     }
   };
+  
+// ... (rest of the file)
 
   const handleDownloadExcel = () => {
     if (!generatedData) return;
@@ -1412,146 +1479,47 @@ function ReportsDownloadModal({
     XLSX.writeFile(wb, `${reportType}_report_${reportCurrency}_${dayjs().format("YYYYMMDD")}.xlsx`);
   };
 
-  const handleDownloadPDF = () => {
-    if (!generatedData) return;
-    
-    const doc = new jsPDF();
-    const reportName = reportNavLinks.find(r => r.id === reportType)?.label || "Report";
-    const dateString = date?.from ? `${format(date.from, "LLL dd, y")} - ${date.to ? format(date.to, "LLL dd, y") : ""}` : "All Time";
-    let yPos = 22; 
-
-    doc.setFontSize(22);
-    doc.setFont("helvetica", "bold");
-    doc.text(reportName, 14, yPos);
-    
-    yPos += 8;
-    doc.setFontSize(10);
-    doc.setFont("helvetica", "normal");
-    doc.text(`Generated: ${dayjs().format("MMM D, YYYY")}`, 14, yPos);
-    
-    yPos += 6;
-    doc.setFontSize(12);
-    doc.setFont("helvetica", "bold");
-    doc.text("Filters Applied", 14, yPos);
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(10);
-    
-    yPos += 6;
-    const filterText = [
-      `Date Range: ${dateString}`,
-      `Currency: ${reportCurrency}`
-    ];
-    doc.text(filterText, 14, yPos);
-    yPos += 10;
-    
-    if (generatedData.kpis && generatedData.kpis.length > 0) {
-      doc.setFontSize(14);
-      doc.setFont("helvetica", "bold");
-      doc.text("Key Metrics", 14, yPos);
-      yPos += 7;
-      
-      const kpiBody = generatedData.kpis.map((kpi: any) => [
-        kpi.title,
-        kpi.format === 'currency' ? formatCurrency(kpi.value, reportCurrency) : kpi.value
-      ]);
-      
-      autoTable(doc, {
-        body: kpiBody,
-        startY: yPos,
-        theme: 'plain',
-        styles: { fontSize: 10 },
-      });
-      yPos = (doc as any).lastAutoTable.finalY + 10;
-    }
-    
-    if (generatedData.tables) {
-      Object.keys(generatedData.tables).forEach(key => {
-        const tableArray = generatedData.tables[key];
-        if (Array.isArray(tableArray) && tableArray.length > 0) {
-          
-          if (yPos > 250) { 
-             doc.addPage();
-             yPos = 20;
-          }
-          
-          doc.setFontSize(14);
-          doc.setFont("helvetica", "bold");
-          doc.text(key, 14, yPos);
-          yPos += 7;
-
-          const headers = Object.keys(tableArray[0]);
-          const body = tableArray.map((row: any) => 
-            headers.map(header => {
-              const val = row[header];
-              if (typeof val === 'number' && (header.includes('Amount') || header.includes('total') || header.includes('revenue') || header.includes('value'))) {
-                return formatCurrency(val, reportCurrency);
-              }
-              if (val instanceof Date) {
-                return dayjs(val).format("YYYY-MM-DD");
-              }
-              return val;
-            })
-          );
-          
-          autoTable(doc, {
-            head: [headers],
-            body: body,
-            startY: yPos,
-            theme: 'grid',
-            headStyles: {
-              fillColor: [41, 128, 185],
-              textColor: 255,
-              fontStyle: 'bold',
-            },
-            didDrawPage: (data) => {
-              doc.setFontSize(10);
-              doc.text(`Page ${(doc as any).internal.getNumberOfPages()}`, data.settings.margin.left, doc.internal.pageSize.height - 10);
-            }
-          });
-          yPos = (doc as any).lastAutoTable.finalY + 15;
-        }
-      });
-    }
-    
-    doc.save(`${reportType}_report_${reportCurrency}_${dayjs().format("YYYYMMDD")}.pdf`);
-  };
+  // --- (DELETED) The old handleDownloadPDF function is gone ---
 
   return (
     <ModalBase title="Download Report" onClose={onClose}>
       <div className="mt-4 space-y-4">
         
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <FormSelect label="Report Type" value={reportType} onChange={(val: string) => setReportType(val)}>
-            {reportNavLinks.filter(r => r.id !== 'custom').map((r) => (
-              <option key={r.id} value={r.id}>{r.label}</option>
-            ))}
-          </FormSelect>
-          <FormSelect label="Currency for Report" value={reportCurrency} onChange={(val: string) => setReportCurrency(val)}>
-            {AVAILABLE_CURRENCIES.map(c => (
-              <option key={c} value={c}>{c}</option>
-            ))}
-          </FormSelect>
-        </div>
+        {/* --- (MODIFIED) Filters are disabled after generating --- */}
+        <fieldset disabled={!!generatedData}>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <FormSelect label="Report Type" value={reportType} onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setReportType(e.target.value)}>
+              {reportNavLinks.filter(r => r.id !== 'custom').map((r) => (
+                <option key={r.id} value={r.id}>{r.label}</option>
+              ))}
+            </FormSelect>
+            <FormSelect label="Currency for Report" value={reportCurrency} onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setReportCurrency(e.target.value)}>
+              {AVAILABLE_CURRENCIES.map(c => (
+                <option key={c} value={c}>{c}</option>
+              ))}
+            </FormSelect>
+          </div>
 
-        <div className="space-y-3">
-          <label className="mb-1.5 block text-sm font-medium text-gray-600 dark:text-gray-300">
-            Date Range
-          </label>
-          <DatePresetButtons
-            activePreset={activePreset}
-            onPresetSelect={(preset, newDate) => {
-              setActivePreset(preset);
-              setDate(newDate);
-            }}
-          />
-          <NewDateRangePicker
-            date={date}
-            onApply={(newDate) => {
-              setDate(newDate);
-              setActivePreset("custom");
-            }}
-          />
-        </div>
+          <div className="space-y-3">
+            <label className="mb-1.5 block text-sm font-medium text-gray-600 dark:text-gray-300">
+              Date Range
+            </label>
+            <DatePresetButtons
+              activePreset={activePreset}
+              onPresetSelect={(preset, newDate) => {
+                setActivePreset(preset);
+                setDate(newDate);
+              }}
+            />
+            <NewDateRangePicker
+              date={date}
+              onApply={(newDate) => {
+                setDate(newDate);
+                setActivePreset("custom");
+              }}
+            />
+          </div>
+        </fieldset>
         
         <div className="pt-4">
           {errorMessage && !generatedData && (
@@ -1562,10 +1530,11 @@ function ReportsDownloadModal({
           
           {generatedData && (
             <div className="w-full text-center rounded-lg bg-green-100 p-3 text-sm font-medium text-green-700 dark:bg-green-900/30 dark:text-green-300 mb-3">
-              Report generated! You can now download.
+              Report data generated! You can now download.
             </div>
           )}
           
+          {/* --- (NEW) Step 1 Button --- */}
           {!generatedData && (
             <button 
               onClick={handleGenerate} 
@@ -1581,12 +1550,13 @@ function ReportsDownloadModal({
               ) : (
                 <>
                   <Download className="h-4 w-4" />
-                  Generate Report
+                  1. Generate Report Data
                 </>
               )}
             </button>
           )}
           
+          {/* --- (NEW) Step 2 Buttons (Excel + PDF) --- */}
           {generatedData && (
             <div className="flex flex-col sm:flex-row gap-4">
               <button 
@@ -1595,16 +1565,28 @@ function ReportsDownloadModal({
                 className="w-full flex justify-center items-center gap-2 rounded-lg bg-green-700 px-4 py-2.5 text-sm font-semibold text-white transition-all hover:bg-green-800"
               >
                 <Download className="h-4 w-4" />
-                Download Excel
+                2. Download Excel
               </button>
-              <button 
-                onClick={handleDownloadPDF} 
-                title="Download as .pdf file"
-                className="w-full flex justify-center items-center gap-2 rounded-lg bg-red-700 px-4 py-2.5 text-sm font-semibold text-white transition-all hover:bg-red-800"
-              >
-                <Download className="h-4 w-4" />
-                Download PDF
-              </button>
+              
+              {/* --- (NEW) This is the new PDF link --- */}
+              {pdfData && PdfComponent && (
+                <PDFDownloadLink
+                  document={React.createElement(PdfComponent, { data: pdfData.data, store: pdfData.store })}
+                  fileName={`${reportType}_report_${reportCurrency}_${dayjs().format("YYYYMMDD")}.pdf`}
+                  className="w-full flex justify-center items-center gap-2 rounded-lg bg-red-700 px-4 py-2.5 text-sm font-semibold text-white transition-all hover:bg-red-800"
+                >
+                  {({ loading }) => 
+                    loading ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <>
+                        <FileText className="h-4 w-4" />
+                        2. Download PDF
+                      </>
+                    )
+                  }
+                </PDFDownloadLink>
+              )}
             </div>
           )}
         </div>

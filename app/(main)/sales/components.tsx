@@ -1,20 +1,19 @@
 // File: app/(main)/sales/components.tsx
 //
-// --- FINAL VERSION (FIXED) ---
+// --- FINAL VERSION (FIXED + REFUND PDF + AUTO-FILTER + PRINT ICON) ---
 // 1. (FIX) `SalesTable` status badge logic is corrected.
-//    - It now checks `sale.status` first. If the status is 'refunded'
-//      or 'voided', it will display that.
-//    - If `sale.status` is not one of those, it falls back to
-//      displaying `sale.paymentStatus` (paid, partial, unpaid).
-//    - This fixes the bug where refunded sales still showed "Partial".
-// 2. (FIX) `NewReturnModal`'s `handleSubmitReturn` function
-//    - Added a client-side validation check to ensure the 'reason'
-//      field is at least 3 characters long, matching the backend schema.
-//    - This fixes the "Invalid data" 400 Bad Request error.
+// 2. (FIX) `NewReturnModal` validation for 'reason' is added.
+// 3. (PDF) `NewReturnModal` now shows a PDF download link after
+//    a refund is successfully processed.
+// 4. (AUTO-FILTER) `AdvancedFilterBar` now auto-applies filters.
+// 5. (NEW) Added an `onPrint` handler to `ReturnsTable`.
+// 6. (NEW) Added a "Print" icon button to each row in `ReturnsTable`.
+//    (NOTE: This currently calls `onView` as a placeholder).
 // -----------------------------------------------------------------------------
 
 "use client";
 
+// --- (NEW) Added useEffect and useState for useDebounce ---
 import React, { Fragment, useState, useMemo, useEffect } from "react";
 import { auth } from "@/lib/firebaseConfig";
 import dayjs from "dayjs";
@@ -27,9 +26,17 @@ import {
   Search, SlidersHorizontal, ChevronLeft, ChevronRight,
   MoreVertical, X, AlertTriangle, FileText, CheckCircle, Clock, 
   XCircle, Info, TrendingUp, Send, Undo, FileWarning, Printer,
-  Loader2, DollarSign, Receipt, CreditCard, Plus, Trash2
+  Loader2, DollarSign, Receipt, CreditCard, Plus, Trash2,
+  Download // <-- (NEW) IMPORT
 } from "lucide-react"; 
 import { Dialog, Transition, Popover } from "@headlessui/react";
+
+// --- (NEW) IMPORTS FOR PDF ---
+import { useAuth } from "@/app/contexts/AuthContext";
+import { PDFDownloadLink } from "@react-pdf/renderer";
+import { getTemplateComponent, ReportType } from "@/lib/pdfService";
+// --- END NEW IMPORTS ---
+
 
 // =============================================================================
 // 💰 API Fetcher (Shared)
@@ -53,6 +60,22 @@ export const fetcher = async (url: string) => {
 // =============================================================================
 // 🛠️ Utility Functions & Constants (Shared)
 // =============================================================================
+
+// --- (NEW) useDebounce Hook ---
+function useDebounce(value: any, delay: number) {
+  const [debouncedValue, setDebouncedValue] = useState(value);
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      setDebouncedValue(value);
+    }, delay);
+    return () => {
+      clearTimeout(handler);
+    };
+  }, [value, delay]);
+  return debouncedValue;
+}
+// --- END NEW HOOK ---
+
 export const CURRENCIES = ["USD", "SLSH", "SOS", "KSH", "BIRR", "EUR"];
 // ... (PAYMENT_PROVIDERS unchanged)
 export const PAYMENT_PROVIDERS = {
@@ -62,9 +85,10 @@ export const PAYMENT_PROVIDERS = {
   EDAHAB: { label: "E-Dahab" },
   EVC_PLUS: { label: "EVC Plus" },
   SAHAL: { label: "Sahal (Golis)" },
+  SOMNET: { label: "Somnet" },
   E_BIRR: { label: "E-Birr" },
   M_PESA: { label: "M-Pesa" },
-  SI_KALE: { label: "Other" },
+  OTHER: { label: "Other" },
 };
 
 // ... (SALE_STATUSES, RETURN_STATUSES, formatCurrency unchanged)
@@ -109,16 +133,25 @@ export const formatCurrency = (amount: number | undefined | null, currency: stri
 // 🧩 Reusable Child Components
 // =============================================================================
 
-// ... (AdvancedFilterBar, KpiCard, ChartCard, SalesTrendChart, PaymentPieChart unchanged)
+// --- (MODIFIED) AdvancedFilterBar with Auto-Apply ---
 export const AdvancedFilterBar = ({ initialFilters, onApplyFilters }: any) => {
   const [filters, setFilters] = React.useState(initialFilters);
   const [showAdvanced, setShowAdvanced] = React.useState(false);
+  
+  // --- (NEW) Debounce filters and apply automatically ---
+  const debouncedFilters = useDebounce(filters, 500); // 500ms delay
+  
+  useEffect(() => {
+    onApplyFilters(debouncedFilters);
+  }, [debouncedFilters, onApplyFilters]);
+  // --- END NEW ---
   
   const handleFilterChange = (field: string, value: string) => {
     setFilters((prev: any) => ({ ...prev, [field]: value }));
   };
   
-  const handleApply = () => { onApplyFilters(filters); setShowAdvanced(false); };
+  // --- (REMOVED) handleApply function is no longer needed ---
+  // const handleApply = () => { onApplyFilters(filters); setShowAdvanced(false); };
   
   const handleClear = () => {
     const clearedFilters = {
@@ -129,7 +162,7 @@ export const AdvancedFilterBar = ({ initialFilters, onApplyFilters }: any) => {
       tag: "", amountMin: "", amountMax: "", customerId: "", productId: "", branch: "",
     };
     setFilters(clearedFilters);
-    onApplyFilters(clearedFilters);
+    // onApplyFilters(clearedFilters); // (MODIFIED) This will be triggered by the useEffect
     setShowAdvanced(false);
   };
   
@@ -141,7 +174,8 @@ export const AdvancedFilterBar = ({ initialFilters, onApplyFilters }: any) => {
             type="search" name="search" placeholder="Search by invoice or customer name..."
             value={filters.searchQuery}
             onChange={(e) => handleFilterChange('searchQuery', e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && handleApply()}
+            // --- (REMOVED) onKeyDown is no longer needed ---
+            // onKeyDown={(e) => e.key === 'Enter' && handleApply()}
             className="w-full rounded-lg border border-gray-300 bg-white p-2.5 pl-10 text-gray-900 shadow-sm focus:border-blue-500 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700 dark:text-white"
           />
           <Search className="absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-gray-400" />
@@ -154,9 +188,11 @@ export const AdvancedFilterBar = ({ initialFilters, onApplyFilters }: any) => {
         <button title="Show advanced filters" onClick={() => setShowAdvanced(!showAdvanced)} className="rounded-lg bg-white p-2.5 text-gray-600 shadow-sm hover:bg-gray-100 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700">
           <SlidersHorizontal className="h-5 w-5" />
         </button>
+        {/* --- (REMOVED) The manual apply button ---
         <button title="Apply filters" onClick={handleApply} className="rounded-lg bg-blue-600 p-2.5 text-white shadow-sm hover:bg-blue-700">
           <Search className="h-5 w-5" />
         </button>
+        */}
       </div>
       
       {showAdvanced && (
@@ -179,15 +215,18 @@ export const AdvancedFilterBar = ({ initialFilters, onApplyFilters }: any) => {
             <button onClick={handleClear} className="rounded-lg bg-gray-200 px-4 py-2 text-sm font-medium text-gray-800 hover:bg-gray-300 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600">
               Clear Filters
             </button>
+            {/* --- (REMOVED) The advanced apply button ---
             <button onClick={handleApply} className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700">
               Apply Filters
             </button>
+            */}
           </div>
         </div>
       )}
     </Card>
   );
 };
+
 
 export const KpiCard = ({ title, value, icon: Icon, color, isLoading }: any) => (
   <Card>
@@ -330,8 +369,15 @@ export const SalesTable = ({ sales, isLoading, currency, onView, onPrint, onRefu
   );
 };
 
-// ... (ReturnsTable, ActionsMenu, StatusBadge, TagBadge, Pagination, Card, Skeleton, etc. unchanged)
-export const ReturnsTable = ({ returns, isLoading, currency, onView }: any) => {
+// --- (MODIFIED) ReturnsTable ---
+// Added onPrint prop
+export const ReturnsTable = ({ returns, isLoading, currency, onView, onPrint }: { 
+  returns: any[], 
+  isLoading: boolean, 
+  currency: string, 
+  onView: (ret: any) => void,
+  onPrint: (ret: any) => void // <-- (NEW) Add onPrint prop
+}) => {
   if (isLoading) return <TableLoadingSkeleton />;
   if (!returns || returns.length === 0) return <TableEmptyState message="No returns found matching your filters." />;
   
@@ -365,8 +411,21 @@ export const ReturnsTable = ({ returns, isLoading, currency, onView }: any) => {
                   <td className="px-3 py-4 text-sm"><StatusBadge status={ret.status} options={RETURN_STATUSES} /></td>
                   <td className="px-3 py-4 text-sm text-gray-500 dark:text-gray-400">{ret.processedByUserName}</td>
                   <td className="py-4 pl-3 pr-4 text-right text-sm font-medium sm:pr-0">
-                    <button onClick={() => onView(ret)} className="text-blue-600 hover:text-blue-900 dark:text-blue-400 dark:hover:text-blue-200">
-                      View
+                    {/* --- (NEW) Add Print button --- */}
+                    <button 
+                      onClick={() => onPrint(ret)} 
+                      title="Print Credit Note"
+                      className="p-2 text-gray-500 hover:text-blue-600 dark:text-gray-400 dark:hover:text-blue-400"
+                    >
+                      <Printer className="h-4 w-4" />
+                    </button>
+                    {/* --- End New Button --- */}
+                    <button 
+                      onClick={() => onView(ret)} 
+                      title="View Details"
+                      className="p-2 text-gray-500 hover:text-blue-600 dark:text-gray-400 dark:hover:text-blue-400"
+                    >
+                      <Info className="h-4 w-4" />
                     </button>
                   </td>
                 </tr>
@@ -378,6 +437,7 @@ export const ReturnsTable = ({ returns, isLoading, currency, onView }: any) => {
     </div>
   );
 };
+
 
 export const ActionsMenu = ({ sale, onView, onPrint, onRefund, onCancel }: { 
   sale: any, 
@@ -527,7 +587,7 @@ FormInput.displayName = "FormInput";
 export const FormTextarea = ({ label, value, onChange, placeholder = "", className = "" }: any) => (
   <div className={className}>
     <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">{label}</label>
-    <textarea value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} rows={3} className="w-full rounded-lg border border-gray-300 bg-white p-2.5 text-gray-900 shadow-sm focus:border-blue-500 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700 dark:text-white" />
+    <textarea value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} rows={3} className="w-full rounded-lg border border-gray-300 bg-white p-2.5 text-gray-900 shadow-sm focus:border-blue-5g-blue-500 dark:border-gray-600 dark:bg-gray-700 dark:text-white" />
   </div>
 );
 
@@ -701,16 +761,23 @@ export const ViewSaleModal = ({ isOpen, onClose, sale, onPrint }: { isOpen: bool
 };
 
 
-// --- NewReturnModal (FIXED) ---
+// --- (MODIFIED) NewReturnModal (with PDF) ---
 export const NewReturnModal = ({ isOpen, onClose, onSuccess, saleToReturn }: { 
   isOpen: boolean, 
   onClose: () => void, 
   onSuccess: () => void,
   saleToReturn: any | null 
 }) => {
+  // --- (NEW) Get subscription info ---
+  const { subscription } = useAuth(); 
+  
   const [step, setStep] = useState(1); // 1: Search, 2: Details
   const [isBusy, setIsBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  
+  // --- (NEW) PDF State ---
+  const [pdfData, setPdfData] = useState<any | null>(null);
+  const [PdfComponent, setPdfComponent] = useState<React.ElementType | null>(null);
   
   // --- Step 1: Search State ---
   const [filter, setFilter] = useState('today');
@@ -773,10 +840,13 @@ export const NewReturnModal = ({ isOpen, onClose, onSuccess, saleToReturn }: {
     setRefundCurrency("USD");
     setRefundMethod("CASH");
     setReason("");
+    // --- (NEW) Reset PDF state ---
+    setPdfData(null);
+    setPdfComponent(null);
   };
 
   const handleClose = () => {
-    // ... (unchanged)
+    // (MODIFIED)
     resetModal(); 
     onClose();    
   };
@@ -837,7 +907,7 @@ export const NewReturnModal = ({ isOpen, onClose, onSuccess, saleToReturn }: {
     }
 
     try {
-      // ... (unchanged API call)
+      // ... (API call)
       const firebaseUser = auth.currentUser;
       if (!firebaseUser) throw new Error("User is not authenticated.");
       const token = await firebaseUser.getIdToken();
@@ -855,7 +925,7 @@ export const NewReturnModal = ({ isOpen, onClose, onSuccess, saleToReturn }: {
           refundAmount: numericRefundAmount,
           refundCurrency,
           refundMethod,
-          status: 'processed'
+          status: 'processed' // Auto-process
         }),
       });
 
@@ -864,8 +934,26 @@ export const NewReturnModal = ({ isOpen, onClose, onSuccess, saleToReturn }: {
         throw new Error(err.error || "Failed to submit return.");
       }
 
-      onSuccess(); 
-      handleClose();
+      // --- (NEW) PDF Generation on Success ---
+      const savedReturn = await res.json();
+      
+      // 1. Get store info
+      const storeInfo = {
+        name: subscription?.storeName || "My Store",
+        address: subscription?.storeAddress || "123 Main St",
+        phone: subscription?.storePhone || "555-1234",
+        logoUrl: subscription?.logoUrl,
+        planId: subscription?.planId,
+      };
+
+      // 2. Get the 'refund' template
+      const Template = getTemplateComponent('refund' as ReportType, subscription);
+
+      // 3. Set PDF state to show the download view
+      setPdfData({ data: savedReturn.data, store: storeInfo });
+      setPdfComponent(() => Template);
+      
+      onSuccess(); // Mutate background data
 
     } catch (err: any) {
       setError(err.message || "An unknown error occurred.");
@@ -876,145 +964,190 @@ export const NewReturnModal = ({ isOpen, onClose, onSuccess, saleToReturn }: {
 
   return (
     <TransitionedModal isOpen={isOpen} onClose={handleClose} size="lg">
-      <Dialog.Title className="text-lg font-medium leading-6 text-gray-900 dark:text-white">
-        Create New Return
-      </Dialog.Title>
-      {error && (
-        <div className="my-2 rounded-md border border-red-300 bg-red-50 p-3 dark:border-red-700 dark:bg-red-900/20">
-          <p className="text-sm font-medium text-red-700 dark:text-red-400">{error}</p>
-        </div>
-      )}
       
-      {step === 1 && (
-        // ... (unchanged Step 1 JSX)
-        <div className="mt-4">
-          <p className="text-sm text-gray-500">
-            Find the original sale to begin the return process.
-          </p>
-          <div className="my-4 flex gap-2">
-            <FormInput
-              label="Search"
-              placeholder="Search by customer or invoice..."
-              value={search}
-              onChange={setSearch}
-              className="flex-grow"
-            />
-            <FormSelect label="Date" value={filter} onChange={setFilter}>
-              <option value="today">Today</option>
-              <option value="week">This Week</option>
-              <option value="custom">Custom</option>
-            </FormSelect>
-          </div>
-          <div className="mt-4 h-64 overflow-y-auto rounded-lg border dark:border-gray-700">
-            {isSearching && <p className="p-4 text-center text-gray-500">Loading...</p>}
-            {searchError && <p className="p-4 text-center text-red-500">{searchError.message}</p>}
-            {searchData && searchData.salesList?.length === 0 && <p className="p-4 text-center text-gray-500">No sales found.</p>}
-            
-            <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
-              <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
-                {searchData?.salesList?.map((sale: any) => (
-                  <tr 
-                    key={sale.id} 
-                    className={`cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 ${sale.paymentStatus === 'unpaid' || sale.status === 'refunded' ? 'opacity-50 cursor-not-allowed' : ''}`}
-                    onClick={() => {
-                      if (sale.paymentStatus !== 'unpaid' && sale.status !== 'refunded') {
-                        handleSelectSale(sale);
-                      }
-                    }}
-                    title={sale.paymentStatus === 'unpaid' ? 'Cannot refund an unpaid sale' : (sale.status === 'refunded' ? 'Sale already refunded' : 'Select this sale')}
-                  >
-                    <td className="p-3 text-sm">
-                      <div className="font-medium dark:text-white">{sale.customerName}</div>
-                      <div className="text-gray-500">{sale.invoiceId}</div>
-                    </td>
-                    <td className="p-3 text-right text-sm">
-                      <div className="font-medium dark:text-white">{formatCurrency(sale.totalAmount, sale.invoiceCurrency)}</div>
-                      <div className="text-gray-500">{dayjs(sale.createdAt).format('DD MMM YYYY')}</div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-
-      {step === 2 && saleData && (
-        // ... (unchanged Step 2 JSX)
-        <div className="mt-4 space-y-4">
-          <div>
-            <h4 className="font-semibold dark:text-white">Sale: {saleData.invoiceId}</h4>
-            <p className="text-sm text-gray-500 dark:text-gray-400">Customer: {saleData.customerName}</p>
+      {/* --- (NEW) PDF Download View --- */}
+      {pdfData && PdfComponent ? (
+        <>
+          <Dialog.Title className="text-lg font-medium leading-6 text-gray-900 dark:text-white flex items-center gap-2">
+            <CheckCircle className="h-6 w-6 text-green-500" />
+            Refund Processed
+          </Dialog.Title>
+          <div className="mt-4 space-y-4">
             <p className="text-sm text-gray-500 dark:text-gray-400">
-              Total Paid: <strong>{formatCurrency(saleData.totalPaid, saleData.invoiceCurrency)}</strong>
+              The refund has been successfully processed. You can now download the PDF credit note.
             </p>
+            <PDFDownloadLink
+              document={<PdfComponent data={pdfData.data} store={pdfData.store} />}
+              fileName={`CreditNote_${pdfData.data.id.slice(0, 6)}.pdf`}
+              className="w-full flex justify-center items-center gap-2 rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
+            >
+              {({ loading }) => 
+                loading ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <>
+                    <Download className="h-4 w-4" />
+                    Download Credit Note
+                  </>
+                )
+              }
+            </PDFDownloadLink>
           </div>
+          <div className="mt-6 flex justify-end">
+            <button
+              type="button"
+              className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
+              onClick={handleClose} // This will reset all state
+            >
+              Close
+            </button>
+          </div>
+        </>
+      ) : (
+        
+        // --- Original Form View ---
+        <>
+          <Dialog.Title className="text-lg font-medium leading-6 text-gray-900 dark:text-white">
+            Create New Return
+          </Dialog.Title>
+          {error && (
+            <div className="my-2 rounded-md border border-red-300 bg-red-50 p-3 dark:border-red-700 dark:bg-red-900/20">
+              <p className="text-sm font-medium text-red-700 dark:text-red-400">{error}</p>
+            </div>
+          )}
           
-          <div className="space-y-2">
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Items to Return</label>
-            {saleData.items.map((item: any) => (
-              <div key={item.productId} className="flex items-center justify-between gap-2 rounded border p-2 dark:border-gray-700">
-                <div>
-                  <p className="font-medium dark:text-white">{item.productName}</p>
-                  <p className="text-sm text-gray-500">Sold: {item.quantity} @ {formatCurrency(item.pricePerUnit, saleData.invoiceCurrency)}</p>
-                </div>
+          {step === 1 && (
+            // ... (unchanged Step 1 JSX)
+            <div className="mt-4">
+              <p className="text-sm text-gray-500">
+                Find the original sale to begin the return process.
+              </p>
+              <div className="my-4 flex gap-2">
                 <FormInput
-                  label="Return Qty"
-                  type="number"
-                  max={item.quantity}
-                  min={0}
-                  value={itemsToReturn[item.productId] || 0}
-                  onChange={(val: string) => handleItemQuantityChange(item.productId, Number(val), item.quantity)}
-                  className="w-24"
+                  label="Search"
+                  placeholder="Search by customer or invoice..."
+                  value={search}
+                  onChange={setSearch}
+                  className="flex-grow"
                 />
+                <FormSelect label="Date" value={filter} onChange={setFilter}>
+                  <option value="today">Today</option>
+                  <option value="week">This Week</option>
+                  <option value="custom">Custom</option>
+                </FormSelect>
               </div>
-            ))}
-          </div>
+              <div className="mt-4 h-64 overflow-y-auto rounded-lg border dark:border-gray-700">
+                {isSearching && <p className="p-4 text-center text-gray-500">Loading...</p>}
+                {searchError && <p className="p-4 text-center text-red-500">{searchError.message}</p>}
+                {searchData && searchData.salesList?.length === 0 && <p className="p-4 text-center text-gray-500">No sales found.</p>}
+                
+                <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+                  <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
+                    {searchData?.salesList?.map((sale: any) => (
+                      <tr 
+                        key={sale.id} 
+                        className={`cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 ${sale.paymentStatus === 'unpaid' || sale.status === 'refunded' ? 'opacity-50 cursor-not-allowed' : ''}`}
+                        onClick={() => {
+                          if (sale.paymentStatus !== 'unpaid' && sale.status !== 'refunded') {
+                            handleSelectSale(sale);
+                          }
+                        }}
+                        title={sale.paymentStatus === 'unpaid' ? 'Cannot refund an unpaid sale' : (sale.status === 'refunded' ? 'Sale already refunded' : 'Select this sale')}
+                      >
+                        <td className="p-3 text-sm">
+                          <div className="font-medium dark:text-white">{sale.customerName}</div>
+                          <div className="text-gray-500">{sale.invoiceId}</div>
+                        </td>
+                        <td className="p-3 text-right text-sm">
+                          <div className="font-medium dark:text-white">{formatCurrency(sale.totalAmount, sale.invoiceCurrency)}</div>
+                          <div className="text-gray-500">{dayjs(sale.createdAt).format('DD MMM YYYY')}</div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
 
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-            <FormInput
-              label="Refund Amount"
-              type="number"
-              value={refundAmount}
-              onChange={setRefundAmount}
-              max={saleData.totalPaid}
-            />
-            <FormSelect label="Currency" value={refundCurrency} onChange={setRefundCurrency}>
-              {CURRENCIES.map(c => <option key={c} value={c}>{c}</option>)}
-            </FormSelect>
-            <FormSelect label="Refund Method" value={refundMethod} onChange={setRefundMethod}>
-              {Object.entries(PAYMENT_PROVIDERS).map(([key, { label }]) => (
-                <option key={key} value={key}>{label}</option>
-              ))}
-            </FormSelect>
+          {step === 2 && saleData && (
+            // ... (unchanged Step 2 JSX)
+            <div className="mt-4 space-y-4">
+              <div>
+                <h4 className="font-semibold dark:text-white">Sale: {saleData.invoiceId}</h4>
+                <p className="text-sm text-gray-500 dark:text-gray-400">Customer: {saleData.customerName}</p>
+                <p className="text-sm text-gray-500 dark:text-gray-400">
+                  Total Paid: <strong>{formatCurrency(saleData.totalPaid, saleData.invoiceCurrency)}</strong>
+                </p>
+              </div>
+              
+              <div className="space-y-2">
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Items to Return</label>
+                {saleData.items.map((item: any) => (
+                  <div key={item.productId} className="flex items-center justify-between gap-2 rounded border p-2 dark:border-gray-700">
+                    <div>
+                      <p className="font-medium dark:text-white">{item.productName}</p>
+                      <p className="text-sm text-gray-500">Sold: {item.quantity} @ {formatCurrency(item.pricePerUnit, saleData.invoiceCurrency)}</p>
+                    </div>
+                    <FormInput
+                      label="Return Qty"
+                      type="number"
+                      max={item.quantity}
+                      min={0}
+                      value={itemsToReturn[item.productId] || 0}
+                      onChange={(val: string) => handleItemQuantityChange(item.productId, Number(val), item.quantity)}
+                      className="w-24"
+                    />
+                  </div>
+                ))}
+              </div>
+
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                <FormInput
+                  label="Refund Amount"
+                  type="number"
+                  value={refundAmount}
+                  onChange={setRefundAmount}
+                  max={saleData.totalPaid}
+                />
+                <FormSelect label="Currency" value={refundCurrency} onChange={setRefundCurrency}>
+                  {CURRENCIES.map(c => <option key={c} value={c}>{c}</option>)}
+                </FormSelect>
+                <FormSelect label="Refund Method" value={refundMethod} onChange={setRefundMethod}>
+                  {Object.entries(PAYMENT_PROVIDERS).map(([key, { label }]) => (
+                    <option key={key} value={key}>{label}</option>
+                  ))}
+                </FormSelect>
+              </div>
+              <FormTextarea
+                label="Reason for Return"
+                placeholder="e.g., Damaged item, wrong size..."
+                value={reason}
+                onChange={setReason}
+              />
+            </div>
+          )}
+
+          <div className="mt-6 flex justify-between gap-3">
+            {/* ... (unchanged modal buttons) */}
+            {step === 2 && !saleToReturn && ( 
+              <button type="button" className="rounded-lg border border-gray-300 px-4 py-2 text-sm" onClick={() => setStep(1)}>Back to Search</button>
+            )}
+            <div className="flex-grow" /> 
+            <button type="button" className="rounded-lg border border-gray-300 px-4 py-2 text-sm" onClick={handleClose}>Cancel</button>
+            {step === 2 && (
+              <button 
+                type="button" 
+                onClick={handleSubmitReturn}
+                disabled={isBusy}
+                className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-blue-700 disabled:opacity-50"
+              >
+                {isBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : "Process Return"}
+              </button>
+            )}
           </div>
-          <FormTextarea
-            label="Reason for Return"
-            placeholder="e.g., Damaged item, wrong size..."
-            value={reason}
-            onChange={setReason}
-          />
-        </div>
+        </>
       )}
-
-      <div className="mt-6 flex justify-between gap-3">
-        {/* ... (unchanged modal buttons) */}
-        {step === 2 && !saleToReturn && ( 
-          <button type="button" className="rounded-lg border border-gray-300 px-4 py-2 text-sm" onClick={() => setStep(1)}>Back to Search</button>
-        )}
-        <div className="flex-grow" /> 
-        <button type="button" className="rounded-lg border border-gray-300 px-4 py-2 text-sm" onClick={handleClose}>Cancel</button>
-        {step === 2 && (
-          <button 
-            type="button" 
-            onClick={handleSubmitReturn}
-            disabled={isBusy}
-            className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-blue-700 disabled:opacity-50"
-          >
-            {isBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : "Process Return"}
-          </button>
-        )}
-      </div>
     </TransitionedModal>
   );
 };
@@ -1366,7 +1499,17 @@ export const SalesDataContainer = ({ filters, view, onViewSale, onPrintSale, onR
   return null;
 };
 
-export const SalesReturns = ({ data, isLoading, currency, onPageChange, onNewReturn, onViewReturn }: any) => {
+// --- (MODIFIED) SalesReturns ---
+// Added onPrintReturn prop
+export const SalesReturns = ({ data, isLoading, currency, onPageChange, onNewReturn, onViewReturn, onPrintReturn }: { 
+  data: any, 
+  isLoading: boolean, 
+  currency: string, 
+  onPageChange: (page: number) => void, 
+  onNewReturn: () => void, 
+  onViewReturn: (ret: any) => void,
+  onPrintReturn: (ret: any) => void // <-- (NEW) Add prop
+}) => {
   const kpis = data?.kpis;
   return (
     <div className="space-y-6">
@@ -1403,6 +1546,7 @@ export const SalesReturns = ({ data, isLoading, currency, onPageChange, onNewRet
           isLoading={isLoading} 
           currency={currency}
           onView={onViewReturn}
+          onPrint={onPrintReturn} // <-- (NEW) Pass prop down
         />
         <Pagination pagination={data?.pagination} onPageChange={onPageChange} />
       </Card>

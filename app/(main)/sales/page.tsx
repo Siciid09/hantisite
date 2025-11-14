@@ -1,12 +1,14 @@
 // File: app/(main)/sales/page.tsx
 //
-// --- FINAL VERSION (with NEW PDF SYSTEM MERGED) ---
+// --- FINAL VERSION (with NEW PDF SYSTEM MERGED + FIX) ---
 // 1. (REMOVED) Old PDF import.
 // 2. (NEW) Added imports for @react-pdf/renderer, lucide, and the new pdfService.
 // 3. (NEW) Added state for 'saleToPrint' and 'PdfTemplate'.
 // 4. (NEW) Updated useAuth to get 'subscription' info.
 // 5. (FIX) 'handlePrintSale' is now rewritten to open the new PDF modal.
 // 6. (NEW) Added the PDF Download Modal JSX.
+// 7. (FIX) Added `handlePrintReturn` handler and passed it to `SalesReturns`
+//    to fix the 'onPrint is not a function' error.
 // -----------------------------------------------------------------------------
 
 "use client";
@@ -27,7 +29,7 @@ import {
   SalesDashboard,
   SalesDataContainer,
   SalesReturns,
-  TransitionedModal // <-- (NEW) Added TransitionedModal
+  TransitionedModal 
 } from "./components";
 import { Dialog } from "@headlessui/react";
 import { Download, Loader2, FileText } from "lucide-react"; // <-- (NEW) Imports for PDF Modal
@@ -74,6 +76,11 @@ function SalesPage() {
   // --- (NEW) PDF Modal State ---
   const [saleToPrint, setSaleToPrint] = useState<any | null>(null);
   const [PdfTemplate, setPdfTemplate] = useState<React.ElementType | null>(null);
+  
+  // --- (NEW) PDF state for single RETURN ---
+  const [returnToPrint, setReturnToPrint] = useState<any | null>(null);
+  const [ReturnPdfTemplate, setReturnPdfTemplate] = useState<React.ElementType | null>(null);
+
 
   // --- SWR Data Fetching (Only for 'returns' view) ---
   const returnsQueryString = useMemo(() => {
@@ -122,6 +129,26 @@ function SalesPage() {
     
     setPdfTemplate(() => TemplateComponent); 
     setSaleToPrint({ data: sale, store: storeInfo }); 
+  };
+  
+  // --- (NEW) Handler for printing a single return ---
+  const handlePrintReturn = (ret: any) => {
+    // NOTE: This assumes 'ret' (the return object) has the FULL data
+    // including the 'itemsReturned' array. If it doesn't, you must
+    // first fetch the full data for the return, then call this logic.
+    
+    const storeInfo = {
+      name: subscription?.storeName || "My Store",
+      address: subscription?.storeAddress || "123 Main St",
+      phone: subscription?.storePhone || "555-1234",
+      logoUrl: subscription?.logoUrl, 
+      planId: subscription?.planId,   
+    };
+    
+    const TemplateComponent = getTemplateComponent('refund' as ReportType, subscription);
+    
+    setReturnPdfTemplate(() => TemplateComponent); 
+    setReturnToPrint({ data: ret, store: storeInfo }); 
   };
   
   // Handlers for the "New Return" modal
@@ -175,7 +202,8 @@ function SalesPage() {
             currency={filters.currency}
             onPageChange={() => {}} // Pagination is now handled in container
             onNewReturn={() => handleOpenReturnModal(null)} 
-            onViewReturn={(ret: any) => console.log("View Return:", ret)} 
+            onViewReturn={(ret: any) => console.log("View Return:", ret)}
+            onPrintReturn={handlePrintReturn} // <-- (FIX) Add the missing prop
           />
         </>
       )}
@@ -213,8 +241,7 @@ function SalesPage() {
         globalFilters={filters}
       />
 
-      {/* --- (NEW) PDF Download Modal --- */}
-      {/* This modal opens when handlePrintSale is called */}
+      {/* --- (NEW) PDF Download Modal for INVOICES --- */}
       {saleToPrint && PdfTemplate && (
         <TransitionedModal isOpen={true} onClose={() => setSaleToPrint(null)} size="md">
           <Dialog.Title as="h3" className="text-lg font-medium leading-6 text-gray-900 dark:text-white flex items-center">
@@ -249,6 +276,47 @@ function SalesPage() {
               type="button"
               className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
               onClick={() => setSaleToPrint(null)}
+            >
+              Close
+            </button>
+          </div>
+        </TransitionedModal>
+      )}
+      
+      {/* --- (NEW) PDF Download Modal for REFUNDS --- */}
+      {returnToPrint && ReturnPdfTemplate && (
+        <TransitionedModal isOpen={true} onClose={() => setReturnToPrint(null)} size="md">
+          <Dialog.Title as="h3" className="text-lg font-medium leading-6 text-gray-900 dark:text-white flex items-center">
+            <FileText className="h-6 w-6 text-blue-500 inline-block mr-2" />
+            Credit Note Ready
+          </Dialog.Title>
+          <div className="mt-4 space-y-4">
+            <p className="text-sm text-gray-500 dark:text-gray-400">
+              Your credit note (ID: {returnToPrint.data.id.slice(0, 8)}...) is ready.
+            </p>
+            
+            <PDFDownloadLink
+              document={React.createElement(ReturnPdfTemplate, { data: returnToPrint.data, store: returnToPrint.store })}
+              fileName={`CreditNote_${returnToPrint.data.id.slice(0, 6)}.pdf`}
+              className="w-full flex justify-center items-center gap-2 rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
+            >
+              {({ loading }) => 
+                loading ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <>
+                    <Download className="h-4 w-4" />
+                    Download Credit Note
+                  </>
+                )
+              }
+            </PDFDownloadLink>
+          </div>
+          <div className="mt-6 flex justify-end">
+            <button
+              type="button"
+              className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
+              onClick={() => setReturnToPrint(null)}
             >
               Close
             </button>

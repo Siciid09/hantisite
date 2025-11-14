@@ -1,3 +1,5 @@
+// File: lib/pdfService.ts
+
 import * as Templates from '@/app/components/pdf/AllTemplates';
 
 // Define the shape of the settings/subscription object
@@ -18,7 +20,9 @@ export type ReportType =
   | 'hr' 
   | 'main_business' 
   | 'debts_credits' 
-  | 'customer_supplier';
+  | 'customer_supplier'
+  | 'inventory_summary' // <-- (NEW) Add this new report type
+  | 'sales_summary'; // <-- (NEW) Added this new report type
 
 // --- Master Template Map ---
 const templateMap = {
@@ -27,6 +31,19 @@ const templateMap = {
     modern: Templates.InvoiceModern,
     premium: Templates.InvoicePremium
   },
+  // --- (NEW) Added this entry for the Sales Report page ---
+  'sales_summary': {
+    default: Templates.SalesSummaryReportDefault,
+    modern: Templates.SalesSummaryReportDefault, // You can create Modern/Premium versions later
+    premium: Templates.SalesSummaryReportDefault,
+  },
+  // --- (NEW) Add this new entry ---
+  'inventory_summary': {
+    default: Templates.InventorySummaryReportDefault,
+    modern: Templates.InventorySummaryReportDefault, // You can make Modern/Premium later
+    premium: Templates.InventorySummaryReportDefault,
+  },
+  // --- End of new entry ---
   'product_report': {
     default: Templates.ProductReportDefault,
     modern: Templates.ProductReportModern,
@@ -66,6 +83,11 @@ const templateMap = {
     default: Templates.DebtsCreditsDefault,
     modern: Templates.DebtsCreditsModern,
     premium: Templates.DebtsCreditsPremium
+  },
+  'purchase_report': {
+    default: Templates.PurchaseReportDefault,
+    modern: Templates.PurchaseReportModern,
+    premium: Templates.PurchaseReportPremium
   },
   'customer_supplier': {
     default: Templates.CustomerSupplierDefault,
