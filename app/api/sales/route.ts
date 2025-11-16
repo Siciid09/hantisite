@@ -1,9 +1,11 @@
 // File: app/api/sales/route.ts
 //
-// --- LATEST FIX (Product History Bug) ---
-// 1. (CRITICAL FIX) The `transaction.set()` and `transaction.update()`
-//    conflict for new customers is now resolved.
-// 2. (KEPT) All other logic (income, debt creation) is the same.
+// --- LATEST FIX (Increment Crash) ---
+// 1. (CRITICAL FIX) Replaced `transaction.update` with `transaction.set(..., { merge: true })`
+//    for all `FieldValue.increment` operations. This prevents the server
+//    from crashing if a field (like `quantity` or `totalSpent.USD`)
+//    does not exist yet.
+// 2. (KEPT) The previous fix for new customers is still included.
 // -----------------------------------------------------------------------------
 
 import { NextResponse, NextRequest } from "next/server";
@@ -182,15 +184,13 @@ export async function POST(request: NextRequest) {
       if (customer.id === "walkin") {
         newCustomerId = "walkin";
       } else if (customer.id.startsWith("new_")) {
-        // --- FIX START: Combine Set and Update for NEW customers ---
+        // This is the fix from last time (KEPT)
         customerRef = db.collection("customers").doc();
         newCustomerId = customerRef.id;
         
-        // Prepare the initial KPI data
         const initialTotalSpent = { [invoiceCurrency]: totalAmount };
         const initialTotalOwed = { [invoiceCurrency]: debtAmount > 0 ? debtAmount : 0 };
 
-        // Set all data, including KPIs, in one operation
         transaction.set(customerRef, {
           storeId: storeId,
           name: customer.name,
@@ -198,10 +198,9 @@ export async function POST(request: NextRequest) {
           whatsapp: customer.whatsapp || null,
           notes: customer.notes || null,
           createdAt: FieldValue.serverTimestamp(),
-          totalSpent: initialTotalSpent, // Set initial value
-          totalOwed: initialTotalOwed,   // Set initial value
+          totalSpent: initialTotalSpent, 
+          totalOwed: initialTotalOwed,
         });
-        // --- FIX END: Removed the invalid `transaction.update` calls ---
 
       } else {
         // Use existing customer
@@ -216,21 +215,25 @@ export async function POST(request: NextRequest) {
           }, { merge: true });
         }
         
-        // This is CORRECT: Update an existing customer
-        transaction.update(customerRef, {
-          [`totalSpent.${invoiceCurrency}`]: FieldValue.increment(totalAmount)
-        });
+        // --- FIX START: Use `set` + `merge` instead of `update` ---
+        // This safely creates or updates the nested currency field
+        transaction.set(customerRef, {
+          totalSpent: {
+            [invoiceCurrency]: FieldValue.increment(totalAmount)
+          }
+        }, { merge: true });
+        
         if (debtAmount > 0) {
-          transaction.update(customerRef, {
-            [`totalOwed.${invoiceCurrency}`]: FieldValue.increment(debtAmount)
-          });
+          transaction.set(customerRef, {
+            totalOwed: {
+              [invoiceCurrency]: FieldValue.increment(debtAmount)
+            }
+          }, { merge: true });
         }
+        // --- FIX END ---
       }
 
-      // --- (CRITICAL FIX) ---
-      // Create a simple array of product IDs for querying
       const productIds = processedItems.map(item => item.productId);
-      // --- (END FIX) ---
 
       // c. Prepare Sale Document
       const newSaleRef = db.collection("sales").doc();
@@ -242,7 +245,7 @@ export async function POST(request: NextRequest) {
         customerId: newCustomerId,
         customerName: customer.name,
         items: processedItems,
-        productIds: productIds, // <-- KEPT THIS FIELD
+        productIds: productIds,
         invoiceCurrency,
         totalAmount,
         totalCostUsd,
@@ -260,9 +263,10 @@ export async function POST(request: NextRequest) {
 
       // e. Decrement Stock
       for (const update of productUpdates) {
-        transaction.update(update.ref, { 
+        // --- FIX: Use `set` + `merge` for stock update ---
+        transaction.set(update.ref, { 
           quantity: FieldValue.increment(update.change) 
-        });
+        }, { merge: true });
       }
       
       // f. Create Income Documents
@@ -317,7 +321,11 @@ export async function POST(request: NextRequest) {
     if (error.message.startsWith("Overpayment detected")) {
       return NextResponse.json({ error: error.message }, { status: 400 });
     }
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    // Log the full error for debugging
+    return NextResponse.json({ 
+      error: error.message,
+      stack: error.stack 
+    }, { status: 500 });
   }
 }
 
