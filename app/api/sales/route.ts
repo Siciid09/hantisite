@@ -1,12 +1,9 @@
 // File: app/api/sales/route.ts
 //
 // --- LATEST FIX (Product History Bug) ---
-// 1. (FIX) The 'customerRef' (ts(2454)) error is fixed.
-// 2. (FIX) The customer KPI logic moved inside if/else block.
-// 3. (KEPT) All other logic (income, debt creation) is the same.
-// 4. (NEW) Added server-side overpayment validation.
-// 5. (CRITICAL FIX) Added 'productIds' array to the 'newSaleData' object.
-//    This is required for the product details page to find sales.
+// 1. (CRITICAL FIX) The `transaction.set()` and `transaction.update()`
+//    conflict for new customers is now resolved.
+// 2. (KEPT) All other logic (income, debt creation) is the same.
 // -----------------------------------------------------------------------------
 
 import { NextResponse, NextRequest } from "next/server";
@@ -185,10 +182,15 @@ export async function POST(request: NextRequest) {
       if (customer.id === "walkin") {
         newCustomerId = "walkin";
       } else if (customer.id.startsWith("new_")) {
-        // Create new customer
+        // --- FIX START: Combine Set and Update for NEW customers ---
         customerRef = db.collection("customers").doc();
         newCustomerId = customerRef.id;
         
+        // Prepare the initial KPI data
+        const initialTotalSpent = { [invoiceCurrency]: totalAmount };
+        const initialTotalOwed = { [invoiceCurrency]: debtAmount > 0 ? debtAmount : 0 };
+
+        // Set all data, including KPIs, in one operation
         transaction.set(customerRef, {
           storeId: storeId,
           name: customer.name,
@@ -196,19 +198,10 @@ export async function POST(request: NextRequest) {
           whatsapp: customer.whatsapp || null,
           notes: customer.notes || null,
           createdAt: FieldValue.serverTimestamp(),
-          totalSpent: {},
-          totalOwed: {},
-        }, { merge: true });
-
-        // Update KPIs for the NEW customer
-        transaction.update(customerRef, {
-          [`totalSpent.${invoiceCurrency}`]: FieldValue.increment(totalAmount)
+          totalSpent: initialTotalSpent, // Set initial value
+          totalOwed: initialTotalOwed,   // Set initial value
         });
-        if (debtAmount > 0) {
-          transaction.update(customerRef, {
-            [`totalOwed.${invoiceCurrency}`]: FieldValue.increment(debtAmount)
-          });
-        }
+        // --- FIX END: Removed the invalid `transaction.update` calls ---
 
       } else {
         // Use existing customer
@@ -223,7 +216,7 @@ export async function POST(request: NextRequest) {
           }, { merge: true });
         }
         
-        // Update KPIs for the EXISTING customer
+        // This is CORRECT: Update an existing customer
         transaction.update(customerRef, {
           [`totalSpent.${invoiceCurrency}`]: FieldValue.increment(totalAmount)
         });
@@ -249,7 +242,7 @@ export async function POST(request: NextRequest) {
         customerId: newCustomerId,
         customerName: customer.name,
         items: processedItems,
-        productIds: productIds, // <-- ADDED THIS FIELD
+        productIds: productIds, // <-- KEPT THIS FIELD
         invoiceCurrency,
         totalAmount,
         totalCostUsd,
