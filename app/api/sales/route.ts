@@ -1,11 +1,13 @@
 // File: app/api/sales/route.ts
 //
-// --- LATEST FIX (Increment Crash) ---
-// 1. (CRITICAL FIX) Replaced `transaction.update` with `transaction.set(..., { merge: true })`
-//    for all `FieldValue.increment` operations. This prevents the server
-//    from crashing if a field (like `quantity` or `totalSpent.USD`)
-//    does not exist yet.
-// 2. (KEPT) The previous fix for new customers is still included.
+// --- FINAL FIX (Nested Increment Crash) ---
+// 1. (CRITICAL FIX) The `POST` transaction now correctly handles updating
+//    nested fields (like `totalSpent.USD`) on existing customers.
+// 2. It now READS the customer document first.
+// 3. If the parent map (e.g., `totalSpent`) doesn't exist, it creates it.
+// 4. THEN it safely increments the nested currency field.
+// 5. (KEPT) The `set-merge` for top-level fields like `quantity` is correct and kept.
+// 6. (KEPT) The fix for creating NEW customers is also kept.
 // -----------------------------------------------------------------------------
 
 import { NextResponse, NextRequest } from "next/server";
@@ -93,7 +95,7 @@ export async function POST(request: NextRequest) {
       const processedItems = [];
       const productUpdates = []; // Will store { ref, change }
       
-      // --- 5. READ PHASE ---
+      // --- 5. READ PHASE (Products) ---
       const productRefsToFetch = [];
       const manualItems = [];
 
@@ -110,8 +112,30 @@ export async function POST(request: NextRequest) {
       const productDocs = await Promise.all(
         productRefsToFetch.map(p => transaction.get(p.ref))
       );
+      
+      // --- 6. READ PHASE (Customer) ---
+      let customerRef: FirebaseFirestore.DocumentReference;
+      let customerDoc: FirebaseFirestore.DocumentSnapshot | null = null;
+      let customerData: FirebaseFirestore.DocumentData | undefined = undefined;
 
-      // --- 6. PROCESS & VALIDATE (In-Memory) ---
+      if (customer.id === "walkin") {
+        newCustomerId = "walkin";
+      } else if (customer.id.startsWith("new_")) {
+        // This is a new customer, just create the ref
+        customerRef = db.collection("customers").doc();
+        newCustomerId = customerRef.id;
+      } else {
+        // This is an existing customer, get their doc
+        customerRef = db.collection("customers").doc(customer.id);
+        newCustomerId = customer.id;
+        customerDoc = await transaction.get(customerRef); // <-- READ
+        if (!customerDoc.exists) {
+          throw new Error("Selected customer does not exist.");
+        }
+        customerData = customerDoc.data();
+      }
+
+      // --- 7. PROCESS & VALIDATE (In-Memory) ---
       for (let i = 0; i < productDocs.length; i++) {
         const productDoc = productDocs[i];
         const { ref, item } = productRefsToFetch[i]; 
@@ -166,7 +190,7 @@ export async function POST(request: NextRequest) {
         });
       }
       
-      // --- 7. WRITE PHASE ---
+      // --- 8. WRITE PHASE ---
       
       // b. Calculate Payment Totals
       const totalPaid = paymentLines.reduce((sum: number, p: any) => sum + (p.valueInInvoiceCurrency || 0), 0);
@@ -179,15 +203,8 @@ export async function POST(request: NextRequest) {
       const paymentStatus = debtAmount <= 0.01 ? 'paid' : (totalPaid > 0 ? 'partial' : 'unpaid');
 
       // a. Handle Customer & Update KPIs
-      let customerRef: FirebaseFirestore.DocumentReference;
-
-      if (customer.id === "walkin") {
-        newCustomerId = "walkin";
-      } else if (customer.id.startsWith("new_")) {
-        // This is the fix from last time (KEPT)
-        customerRef = db.collection("customers").doc();
-        newCustomerId = customerRef.id;
-        
+      if (customer.id.startsWith("new_")) {
+        // --- This is a NEW customer (Kept from previous fix) ---
         const initialTotalSpent = { [invoiceCurrency]: totalAmount };
         const initialTotalOwed = { [invoiceCurrency]: debtAmount > 0 ? debtAmount : 0 };
 
@@ -202,10 +219,8 @@ export async function POST(request: NextRequest) {
           totalOwed: initialTotalOwed,
         });
 
-      } else {
-        // Use existing customer
-        customerRef = db.collection("customers").doc(newCustomerId);
-        
+      } else if (customer.id !== "walkin" && customerDoc) {
+        // --- This is an EXISTING customer (NEW FIX) ---
         if (customer.saveToContacts) {
           transaction.set(customerRef, {
             name: customer.name,
@@ -215,22 +230,32 @@ export async function POST(request: NextRequest) {
           }, { merge: true });
         }
         
-        // --- FIX START: Use `set` + `merge` instead of `update` ---
-        // This safely creates or updates the nested currency field
-        transaction.set(customerRef, {
-          totalSpent: {
-            [invoiceCurrency]: FieldValue.increment(totalAmount)
-          }
-        }, { merge: true });
+        // --- FIX: Safely update nested fields ---
+        const updates: { [key: string]: any } = {};
+
+        // 1. Check if parent maps exist. If not, create them.
+        if (!customerData?.totalSpent) {
+          updates.totalSpent = {};
+        }
+        if (debtAmount > 0 && !customerData?.totalOwed) {
+          updates.totalOwed = {};
+        }
+        // Apply creation updates first (if any)
+        if (Object.keys(updates).length > 0) {
+          transaction.update(customerRef, updates);
+        }
+
+        // 2. Now it's safe to increment
+        transaction.update(customerRef, {
+          [`totalSpent.${invoiceCurrency}`]: FieldValue.increment(totalAmount)
+        });
         
         if (debtAmount > 0) {
-          transaction.set(customerRef, {
-            totalOwed: {
-              [invoiceCurrency]: FieldValue.increment(debtAmount)
-            }
-          }, { merge: true });
+          transaction.update(customerRef, {
+            [`totalOwed.${invoiceCurrency}`]: FieldValue.increment(debtAmount)
+          });
         }
-        // --- FIX END ---
+        // --- END FIX ---
       }
 
       const productIds = processedItems.map(item => item.productId);
@@ -263,7 +288,7 @@ export async function POST(request: NextRequest) {
 
       // e. Decrement Stock
       for (const update of productUpdates) {
-        // --- FIX: Use `set` + `merge` for stock update ---
+        // This is correct: `quantity` is a top-level field.
         transaction.set(update.ref, { 
           quantity: FieldValue.increment(update.change) 
         }, { merge: true });
