@@ -1,13 +1,12 @@
 // File: app/api/sales/route.ts
 //
-// --- FINAL FIX (Nested Increment Crash) ---
-// 1. (CRITICAL FIX) The `POST` transaction now correctly handles updating
-//    nested fields (like `totalSpent.USD`) on existing customers.
-// 2. It now READS the customer document first.
-// 3. If the parent map (e.g., `totalSpent`) doesn't exist, it creates it.
-// 4. THEN it safely increments the nested currency field.
-// 5. (KEPT) The `set-merge` for top-level fields like `quantity` is correct and kept.
-// 6. (KEPT) The fix for creating NEW customers is also kept.
+// --- LATEST FIX (Product History Bug) ---
+// 1. (FIX) The 'customerRef' (ts(2454)) error is fixed.
+// 2. (FIX) The customer KPI logic moved inside if/else block.
+// 3. (KEPT) All other logic (income, debt creation) is the same.
+// 4. (NEW) Added server-side overpayment validation.
+// 5. (CRITICAL FIX) Added 'productIds' array to the 'newSaleData' object.
+//    This is required for the product details page to find sales.
 // -----------------------------------------------------------------------------
 
 import { NextResponse, NextRequest } from "next/server";
@@ -95,7 +94,7 @@ export async function POST(request: NextRequest) {
       const processedItems = [];
       const productUpdates = []; // Will store { ref, change }
       
-      // --- 5. READ PHASE (Products) ---
+      // --- 5. READ PHASE ---
       const productRefsToFetch = [];
       const manualItems = [];
 
@@ -112,30 +111,8 @@ export async function POST(request: NextRequest) {
       const productDocs = await Promise.all(
         productRefsToFetch.map(p => transaction.get(p.ref))
       );
-      
-      // --- 6. READ PHASE (Customer) ---
-      let customerRef: FirebaseFirestore.DocumentReference;
-      let customerDoc: FirebaseFirestore.DocumentSnapshot | null = null;
-      let customerData: FirebaseFirestore.DocumentData | undefined = undefined;
 
-      if (customer.id === "walkin") {
-        newCustomerId = "walkin";
-      } else if (customer.id.startsWith("new_")) {
-        // This is a new customer, just create the ref
-        customerRef = db.collection("customers").doc();
-        newCustomerId = customerRef.id;
-      } else {
-        // This is an existing customer, get their doc
-        customerRef = db.collection("customers").doc(customer.id);
-        newCustomerId = customer.id;
-        customerDoc = await transaction.get(customerRef); // <-- READ
-        if (!customerDoc.exists) {
-          throw new Error("Selected customer does not exist.");
-        }
-        customerData = customerDoc.data();
-      }
-
-      // --- 7. PROCESS & VALIDATE (In-Memory) ---
+      // --- 6. PROCESS & VALIDATE (In-Memory) ---
       for (let i = 0; i < productDocs.length; i++) {
         const productDoc = productDocs[i];
         const { ref, item } = productRefsToFetch[i]; 
@@ -190,7 +167,7 @@ export async function POST(request: NextRequest) {
         });
       }
       
-      // --- 8. WRITE PHASE ---
+      // --- 7. WRITE PHASE ---
       
       // b. Calculate Payment Totals
       const totalPaid = paymentLines.reduce((sum: number, p: any) => sum + (p.valueInInvoiceCurrency || 0), 0);
@@ -203,11 +180,15 @@ export async function POST(request: NextRequest) {
       const paymentStatus = debtAmount <= 0.01 ? 'paid' : (totalPaid > 0 ? 'partial' : 'unpaid');
 
       // a. Handle Customer & Update KPIs
-      if (customer.id.startsWith("new_")) {
-        // --- This is a NEW customer (Kept from previous fix) ---
-        const initialTotalSpent = { [invoiceCurrency]: totalAmount };
-        const initialTotalOwed = { [invoiceCurrency]: debtAmount > 0 ? debtAmount : 0 };
+      let customerRef: FirebaseFirestore.DocumentReference;
 
+      if (customer.id === "walkin") {
+        newCustomerId = "walkin";
+      } else if (customer.id.startsWith("new_")) {
+        // Create new customer
+        customerRef = db.collection("customers").doc();
+        newCustomerId = customerRef.id;
+        
         transaction.set(customerRef, {
           storeId: storeId,
           name: customer.name,
@@ -215,12 +196,24 @@ export async function POST(request: NextRequest) {
           whatsapp: customer.whatsapp || null,
           notes: customer.notes || null,
           createdAt: FieldValue.serverTimestamp(),
-          totalSpent: initialTotalSpent, 
-          totalOwed: initialTotalOwed,
-        });
+          totalSpent: {},
+          totalOwed: {},
+        }, { merge: true });
 
-      } else if (customer.id !== "walkin" && customerDoc) {
-        // --- This is an EXISTING customer (NEW FIX) ---
+        // Update KPIs for the NEW customer
+        transaction.update(customerRef, {
+          [`totalSpent.${invoiceCurrency}`]: FieldValue.increment(totalAmount)
+        });
+        if (debtAmount > 0) {
+          transaction.update(customerRef, {
+            [`totalOwed.${invoiceCurrency}`]: FieldValue.increment(debtAmount)
+          });
+        }
+
+      } else {
+        // Use existing customer
+        customerRef = db.collection("customers").doc(newCustomerId);
+        
         if (customer.saveToContacts) {
           transaction.set(customerRef, {
             name: customer.name,
@@ -230,35 +223,21 @@ export async function POST(request: NextRequest) {
           }, { merge: true });
         }
         
-        // --- FIX: Safely update nested fields ---
-        const updates: { [key: string]: any } = {};
-
-        // 1. Check if parent maps exist. If not, create them.
-        if (!customerData?.totalSpent) {
-          updates.totalSpent = {};
-        }
-        if (debtAmount > 0 && !customerData?.totalOwed) {
-          updates.totalOwed = {};
-        }
-        // Apply creation updates first (if any)
-        if (Object.keys(updates).length > 0) {
-          transaction.update(customerRef, updates);
-        }
-
-        // 2. Now it's safe to increment
+        // Update KPIs for the EXISTING customer
         transaction.update(customerRef, {
           [`totalSpent.${invoiceCurrency}`]: FieldValue.increment(totalAmount)
         });
-        
         if (debtAmount > 0) {
           transaction.update(customerRef, {
             [`totalOwed.${invoiceCurrency}`]: FieldValue.increment(debtAmount)
           });
         }
-        // --- END FIX ---
       }
 
+      // --- (CRITICAL FIX) ---
+      // Create a simple array of product IDs for querying
       const productIds = processedItems.map(item => item.productId);
+      // --- (END FIX) ---
 
       // c. Prepare Sale Document
       const newSaleRef = db.collection("sales").doc();
@@ -270,7 +249,7 @@ export async function POST(request: NextRequest) {
         customerId: newCustomerId,
         customerName: customer.name,
         items: processedItems,
-        productIds: productIds,
+        productIds: productIds, // <-- ADDED THIS FIELD
         invoiceCurrency,
         totalAmount,
         totalCostUsd,
@@ -288,10 +267,9 @@ export async function POST(request: NextRequest) {
 
       // e. Decrement Stock
       for (const update of productUpdates) {
-        // This is correct: `quantity` is a top-level field.
-        transaction.set(update.ref, { 
+        transaction.update(update.ref, { 
           quantity: FieldValue.increment(update.change) 
-        }, { merge: true });
+        });
       }
       
       // f. Create Income Documents
@@ -346,11 +324,7 @@ export async function POST(request: NextRequest) {
     if (error.message.startsWith("Overpayment detected")) {
       return NextResponse.json({ error: error.message }, { status: 400 });
     }
-    // Log the full error for debugging
-    return NextResponse.json({ 
-      error: error.message,
-      stack: error.stack 
-    }, { status: 500 });
+    return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }
 
@@ -411,9 +385,12 @@ export async function GET(request: NextRequest) {
       .where("createdAt", ">=", startDate)
       .where("createdAt", "<=", endDate);
 
-    if (status) {
+  
+
+    if (status && status !== 'all') { // <-- This is the only line that changed
       baseQuery = baseQuery.where("paymentStatus", "==", status);
     } else {
+      // This will now correctly run for "all" or if no status is provided
       baseQuery = baseQuery.where("paymentStatus", "not-in", ["voided", "refunded"]);
     }
 

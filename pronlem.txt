@@ -125,3 +125,106 @@ These are helper files that support your main screens.
     * `app_screens_settings.dart` now calls `GET /api/settings` to load and `PUT /api/settings` to save. [cite_start]This is confirmed by the new `api_settings_route.ts` file you just sent[cite: 39].
     * `app_screens_search_results_page.dart` will be changed to make **one call** to a (missing) `GET /api/search` route.
     * `app_services_pdf_invoice_service.dart` doesn't change much, but it now receives data from your `ApiService` (which got it from the API) instead of Firebase.
+Here is the complete update plan, broken into logical phases. Each file you sent is listed **exactly once** in the phase where its main update occurs.
+
+
+
+---
+## ## Phase 0: The Foundation (The "Translator")
+
+**Goal:** Create the new files and update the core app structure to support the API. You must do this first.
+
+* **New File (To Be Created): `lib/services/api_service.dart`**
+    * **Problem:** You have no central "translator" file to talk to your Next.js API. You have many old, separate service files (`FirestoreService`, `DebtService`, etc.).
+    * **Solution:** Create this new file. This "translator" will be responsible for all HTTP requests (`GET`, `POST`, `PUT`, `DELETE`). It will get the auth token from `AppAuthProvider` and add it to the header of every API call.
+
+* **File: `app_auth_authprovider.dart`**
+    * **Problem:** This file only handles user login and listens to Firebase for subscription data. It doesn't provide the "passport" (Auth ID Token) your API needs for security.
+    * **Solution:**
+        1.  Add logic to get the `FirebaseAuth.instance.currentUser.getIdToken()` after login and store it.
+        2.  Provide a function for `ApiService` to get this token.
+        3.  **Delete** the `_listenToStoreData` function. All subscription and count logic is now handled by your backend.
+
+* **File: `main.dart`**
+    * **Problem:** The app only "provides" (makes available) the `AppAuthProvider` and old Firebase services.
+    * **Solution:** Update your `MultiProvider` to create and "provide" your new `ApiService` to all widgets, ensuring it has access to the `AppAuthProvider` to get the auth token.
+
+---
+## ## Phase 1: Update Data Models (The "Language")
+
+**Goal:** Teach your Flutter app to understand the "language" of your API (JSON) instead of the old "language" (Firebase Documents).
+
+* **Files:**
+    * `app_models_sale_transaction.dart`
+    * `app_screens_models_appmodel.dart`
+    * `app_screens_models_datamodel.dart`
+
+* **Problem:** All your data models (like `Product`, `Sale`, `DebtRecord`) are built to be created from a Firebase `DocumentSnapshot` (e.g., `Product.fromFirestore(doc)`).
+* **Solution:** Update **every single model class** in these files with a new `factory .fromJson(Map<String, dynamic> json)` constructor. This will allow them to be created from the JSON data your Next.js API sends back.
+
+---
+## ## Phase 2: Refactor "Read" Screens (GET Requests)
+
+**Goal:** Make all your main dashboard and list screens fetch and display data from your new API.
+
+* **Files:**
+    * `app_screens_dashboard_screen.dart`
+    * `app_screens_sales_screen.dart`
+    * `app_screens_inventorydash.dart`
+    * `app_screens_debtscr.dart`
+    * `app_screens_inc_exp.dart`
+    * `app_screens_reports_screen.dart`
+    * `app_screens_invoices.dart`
+    * `app_screens_maincont.dart`
+    * `app_screens_subscribtion.dart`
+    * `app_screens_search_results_page.dart`
+
+* **Problem:** All these screens use `StreamBuilder`s and call old services (like `DashboardService`, `DebtService`) to get data directly from Firebase.
+* **Solution:**
+    1.  Remove all imports to your old service files (e.g., `dashboard_service.dart`).
+    2.  Replace all `StreamBuilder` widgets with `FutureBuilder` widgets.
+    3.  The `future` for each `FutureBuilder` will now call a function from your new `ApiService`.
+    * **Example:** `app_screens_sales_screen.dart` will now call `ApiService.getSales(startDate, endDate)`. This one API call hits your `api_sales_route.ts` and gets all KPIs, charts, and lists at once.
+    * **Example:** `app_screens_search_results_page.dart` will be changed to make **one call** to a (missing) `GET /api/search` route.
+
+---
+## ## Phase 3: Refactor "Write" Screens (POST / PUT Requests)
+
+**Goal:** Make your "Add" and "Edit" forms save data by sending it to your API, which now contains all the business logic.
+
+* **Files:**
+    * `app_pages_add_sale.dart`
+    * `app_pages_addpro.dart`
+    * `app_pages_add_expen.dart`
+    * `app_pages_add_income.dart`
+    * `app_pages_edit_editpro.dart`
+    * `app_models_company_profile.txt`
+    * `app_screens_settings.dart`
+
+* **Problem:** These files contain dangerous business logic. `app_pages_add_sale.dart` (the `_saveSale` function) tries to update stock, create sales, and create debts all by itself.
+* **Solution:**
+    1.  **Remove all logic** from the save/update functions in these files.
+    2.  Their *only* job is to build a JSON object (`Map<String, dynamic>`) of the form data.
+    3.  Call the new `ApiService` function.
+    * **Example:** `app_pages_add_sale.dart`'s `_saveSale` method will no longer update stock or create debts. It will just build a `saleData` map and call `ApiService.saveSale(saleData)`. Your backend `api_sales_route.ts` (the `POST` function) now safely handles all the complex logic.
+    * **Example:** `app_screens_settings.dart`'s `_saveSettings` method will call `ApiService.saveSettings(settingsData)`, which hits your `PUT /api/settings` route (which you provided).
+
+---
+## ## Phase 4: Cleanup & Utilities
+
+**Goal:** Finalize the migration by removing old files and verifying that helper files still work.
+
+* **Files to be Deleted:**
+    * `app_services_firestore_service.dart`
+    * `app_services_dashboard_service.dart`
+    * `app_services_debt_service.dart`
+    * `app_auth_login.dart` (This file was empty)
+    * **Problem:** These files contain all the old, direct-to-Firebase logic.
+    * **Solution:** **Delete these files.** Their logic is now 100% handled by your Next.js backend.
+
+* **Files with No Changes:**
+    * `app_auth_wrapper.dart`
+    * `app_services_pdf_invoice_service.dart`
+    * **Problem:** None.
+    * **Solution:** These files are fine. `app_auth_wrapper.dart`'s logic is still correct. `app_services_pdf_invoice_service.dart` is a helper that just needs data, and it will now get it from your `ApiService` instead of Firebase (this change happens in `app_screens_invoices.dart`, not here).
+    

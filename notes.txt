@@ -33,3 +33,10 @@ euro> cash, bank, other
 dashboard not showing in summery
 finance not showing
 
+
+
+
+
+give m ethe products/page.tsx which have the button upted for dowload
+
+the button asks the user as fast as he click dowload report a box popup which shows filter like what kind of report he neeed date select date star end with else ready buttons today this work this month custom, and also all products and also 

@@ -1,12 +1,14 @@
 // File: app/api/sadmin/route.ts
-// Description: [V3] FULLY DYNAMIC - Corrected all database field mismatches.
+// Description: [V4] PUSH ENABLED - Fully dynamic with FCM Push Notifications.
 // Reads/writes 'subscriptionExpiryDate', 'subscriptionType', 'contactInfo'.
-// Reads from 'support' collection (not 'supportTickets').
+// Reads from 'support' collection.
 // -----------------------------------------------------------------------------
 
 import { NextResponse, NextRequest } from "next/server";
 import { firestoreAdmin, authAdmin } from "@/lib/firebaseAdmin";
 import { FieldValue } from "firebase-admin/firestore";
+// 👇 NEW IMPORT for sending Push Notifications
+import { getMessaging } from "firebase-admin/messaging"; 
 
 // --- Super Admin Auth Helper ---
 async function checkSuperAdminAuth(request: NextRequest) {
@@ -64,7 +66,6 @@ export async function GET(request: NextRequest) {
       const [storesSnap, paymentsSnap, ticketsSnap] = await Promise.all([
         firestoreAdmin.collection('stores').get(),
         firestoreAdmin.collection('payments').where('status', '==', 'paid').get(),
-        // *** FIX: Reading from 'support' collection ***
         firestoreAdmin.collection('support').where('status', '==', 'open').get(),
       ]);
 
@@ -92,11 +93,10 @@ export async function GET(request: NextRequest) {
         return convertTimestamps({
           id: doc.id,
           name: data.name,
-          // *** FIX: Reading correct fields ***
-          ownerEmail: data.contactInfo, // Use contactInfo
-          plan: data.subscriptionType, // Use subscriptionType
+          ownerEmail: data.contactInfo, 
+          plan: data.subscriptionType,
           status: data.status,
-          expiryDate: data.subscriptionExpiryDate, // Use subscriptionExpiryDate
+          expiryDate: data.subscriptionExpiryDate,
         });
       });
       return NextResponse.json({ success: true, stores });
@@ -123,7 +123,6 @@ export async function GET(request: NextRequest) {
             id: storeSnap.id,
             name: storeData.name,
             status: storeData.status,
-            // *** FIX: Reading correct fields ***
             ownerName: adminUser?.name || 'N/A',
             ownerEmail: storeData.contactInfo || adminUser?.email || 'N/A',
             plan: storeData.subscriptionType,
@@ -147,8 +146,7 @@ export async function GET(request: NextRequest) {
         return NextResponse.json({ success: true, payments });
     }
 
-    // --- 📢 Action: Get Announcements ---
-    // Renamed to 'notifications'
+    // --- 📢 Action: Get Notifications ---
     if (action === "getNotifications") {
         const snap = await firestoreAdmin.collection('notifications')
             .orderBy('createdAt', 'desc').get();
@@ -158,7 +156,6 @@ export async function GET(request: NextRequest) {
     
     // --- 💬 Action: Get Support Tickets ---
     if (action === "getSupportTickets") {
-        // *** FIX: Reading from 'support' collection ***
         const ticketsSnap = await firestoreAdmin.collection('support')
             .orderBy('createdAt', 'desc').get();
         const tickets = ticketsSnap.docs.map(doc => convertTimestamps({ id: doc.id, ...doc.data() }));
@@ -170,11 +167,9 @@ export async function GET(request: NextRequest) {
         const ticketId = searchParams.get("ticketId");
         if (!ticketId) throw new Error("ticketId is required");
         
-        // *** FIX: Reading from 'support' collection ***
         const ticketRef = firestoreAdmin.collection('support').doc(ticketId);
         const [ticketSnap, messagesSnap] = await Promise.all([
             ticketRef.get(),
-            // *** FIX: Using 'messages' subcollection and 'sentAt' field ***
             ticketRef.collection('messages').orderBy('sentAt', 'asc').get()
         ]);
         
@@ -197,7 +192,7 @@ export async function GET(request: NextRequest) {
 
 
 // =============================================================================
-// ➕ POST - Create new entities
+// ➕ POST - Create new entities (WITH PUSH NOTIFICATIONS)
 // =============================================================================
 export async function POST(request: NextRequest) {
   try {
@@ -208,10 +203,12 @@ export async function POST(request: NextRequest) {
     // --- 📢 Action: Create Notification ---
     if (action === "createNotification") {
       const { title, message, targetType, targetStores = [] } = body.data;
+      
       if (!title || !message || !targetType) {
         throw new Error("Missing fields for notification");
       }
       
+      // 1. SAVE TO DATABASE (Preserves Admin Dashboard View)
       const newNotifRef = firestoreAdmin.collection('notifications').doc();
       const newData = {
         id: newNotifRef.id,
@@ -223,6 +220,61 @@ export async function POST(request: NextRequest) {
         createdAt: FieldValue.serverTimestamp(),
       };
       await newNotifRef.set(newData);
+
+      // 2. SEND PUSH NOTIFICATION (New Logic)
+      // We wrap this in try/catch so DB save isn't affected if FCM fails
+      try {
+        let userTokens: string[] = [];
+
+        if (targetType === 'all') {
+          // A. Send to everyone with a token
+          const usersSnap = await firestoreAdmin.collection('users')
+            .where('fcmToken', '!=', null)
+            .get();
+          usersSnap.docs.forEach(doc => {
+             const t = doc.data().fcmToken;
+             if (t) userTokens.push(t);
+          });
+
+        } else if (targetStores.length > 0) {
+          // B. Send to specific stores
+          // Note: Firestore 'in' limit is 10. We slice to be safe.
+          const safeTargetStores = targetStores.slice(0, 10);
+          const usersSnap = await firestoreAdmin.collection('users')
+            .where('storeId', 'in', safeTargetStores)
+            .get();
+          
+          usersSnap.docs.forEach(doc => {
+             const data = doc.data();
+             if (data.fcmToken) userTokens.push(data.fcmToken);
+          });
+        }
+
+        // C. Blast the Message
+        if (userTokens.length > 0) {
+          // Remove duplicate tokens
+          const uniqueTokens = [...new Set(userTokens)];
+          
+          const messagePayload = {
+            notification: {
+              title: title,
+              body: message,
+            },
+            data: {
+              route: "/notifications", 
+              click_action: "FLUTTER_NOTIFICATION_CLICK"
+            },
+            tokens: uniqueTokens,
+          };
+
+          const response = await getMessaging(firestoreAdmin.app).sendEachForMulticast(messagePayload);
+          console.log(`[FCM] Successfully sent: ${response.successCount}, Failed: ${response.failureCount}`);
+        }
+      } catch (pushError) {
+        console.error("[FCM] Failed to send push notification:", pushError);
+        // Continue execution to return success for the DB save
+      }
+
       return NextResponse.json({ success: true, notification: convertTimestamps(newData) });
     }
     
@@ -231,23 +283,20 @@ export async function POST(request: NextRequest) {
         const { ticketId, message } = body.data;
         if (!ticketId || !message) throw new Error("ticketId and message are required");
         
-        // *** FIX: Writing to 'support' collection ***
         const ticketRef = firestoreAdmin.collection('support').doc(ticketId);
         const newMessageRef = ticketRef.collection('messages').doc();
         
         const newMessage = {
-          id: newMessageRef.id, // <-- ADD THIS LINE
+          id: newMessageRef.id,
             text: message,
-            // *** FIX: Matching 'support' user route structure ***
             senderId: sadminUser.uid,
             senderName: sadminUser.name,
-            // *** FIX: Using 'sentAt' field ***
             sentAt: FieldValue.serverTimestamp(),
         };
         
         await newMessageRef.set(newMessage);
         await ticketRef.update({
-            status: 'in_progress', // or 'admin_reply'
+            status: 'in_progress',
             updatedAt: FieldValue.serverTimestamp()
         });
         
@@ -287,7 +336,6 @@ export async function PUT(request: NextRequest) {
       const { storeId, newExpiryDate } = body.data; 
       if (!storeId || !newExpiryDate) throw new Error("storeId and newExpiryDate are required");
       
-      // *** FIX: Writing to 'subscriptionExpiryDate' ***
       await firestoreAdmin.collection('stores').doc(storeId).update({ 
         subscriptionExpiryDate: new Date(newExpiryDate), 
         updatedAt: FieldValue.serverTimestamp() 
@@ -300,7 +348,6 @@ export async function PUT(request: NextRequest) {
       const { storeId, newPlan } = body.data; 
       if (!storeId || !newPlan) throw new Error("storeId and newPlan are required");
       
-      // *** FIX: Writing to 'subscriptionType' ***
       await firestoreAdmin.collection('stores').doc(storeId).update({ 
         subscriptionType: newPlan, 
         updatedAt: FieldValue.serverTimestamp() 
@@ -313,7 +360,6 @@ export async function PUT(request: NextRequest) {
         const { ticketId, status } = body.data;
         if (!ticketId || !status) throw new Error("ticketId and status are required");
         
-        // *** FIX: Writing to 'support' collection ***
         await firestoreAdmin.collection('support').doc(ticketId).update({
             status: status,
             updatedAt: FieldValue.serverTimestamp()
