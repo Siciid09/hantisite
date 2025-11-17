@@ -1,5 +1,5 @@
 // File: app/api/sadmin/route.ts
-// Description: [V4] PUSH ENABLED - Fully dynamic with FCM Push Notifications.
+// Description: [V4.1] BUILD FIXED - FCM Push Notifications with TypeScript fix.
 // Reads/writes 'subscriptionExpiryDate', 'subscriptionType', 'contactInfo'.
 // Reads from 'support' collection.
 // -----------------------------------------------------------------------------
@@ -7,7 +7,6 @@
 import { NextResponse, NextRequest } from "next/server";
 import { firestoreAdmin, authAdmin } from "@/lib/firebaseAdmin";
 import { FieldValue } from "firebase-admin/firestore";
-// 👇 NEW IMPORT for sending Push Notifications
 import { getMessaging } from "firebase-admin/messaging"; 
 
 // --- Super Admin Auth Helper ---
@@ -192,7 +191,7 @@ export async function GET(request: NextRequest) {
 
 
 // =============================================================================
-// ➕ POST - Create new entities (WITH PUSH NOTIFICATIONS)
+// ➕ POST - Create new entities
 // =============================================================================
 export async function POST(request: NextRequest) {
   try {
@@ -221,7 +220,7 @@ export async function POST(request: NextRequest) {
       };
       await newNotifRef.set(newData);
 
-      // 2. SEND PUSH NOTIFICATION (New Logic)
+      // 2. SEND PUSH NOTIFICATION
       // We wrap this in try/catch so DB save isn't affected if FCM fails
       try {
         let userTokens: string[] = [];
@@ -267,7 +266,8 @@ export async function POST(request: NextRequest) {
             tokens: uniqueTokens,
           };
 
-          const response = await getMessaging(firestoreAdmin.app).sendEachForMulticast(messagePayload);
+          // FIX: Removed .app parameter to satisfy TypeScript
+          const response = await getMessaging().sendEachForMulticast(messagePayload);
           console.log(`[FCM] Successfully sent: ${response.successCount}, Failed: ${response.failureCount}`);
         }
       } catch (pushError) {

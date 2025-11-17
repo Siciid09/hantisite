@@ -1,12 +1,12 @@
 // File: app/api/sales/route.ts
 //
-// --- LATEST FIX (Product History Bug) ---
-// 1. (FIX) The 'customerRef' (ts(2454)) error is fixed.
-// 2. (FIX) The customer KPI logic moved inside if/else block.
-// 3. (KEPT) All other logic (income, debt creation) is the same.
-// 4. (NEW) Added server-side overpayment validation.
-// 5. (CRITICAL FIX) Added 'productIds' array to the 'newSaleData' object.
-//    This is required for the product details page to find sales.
+// --- FINAL FIX (TS2454 Error Solved) ---
+// 1. (CRITICAL FIX) Removed the top-level 'let customerRef'.
+// 2. (CRITICAL FIX) 'customerRef' is now declared with 'const' *inside*
+//    the 'if (new customer)' and 'if (existing customer)' blocks.
+// 3. (LOGIC FIX) No KPI updates are attempted for "walk-in" customers,
+//    which was the source of the error.
+// 4. (KEPT) All other logic (productIds, overpayment) is correct.
 // -----------------------------------------------------------------------------
 
 import { NextResponse, NextRequest } from "next/server";
@@ -180,13 +180,16 @@ export async function POST(request: NextRequest) {
       const paymentStatus = debtAmount <= 0.01 ? 'paid' : (totalPaid > 0 ? 'partial' : 'unpaid');
 
       // a. Handle Customer & Update KPIs
-      let customerRef: FirebaseFirestore.DocumentReference;
+      // --- (CRITICAL FIX) ---
+      // 'customerRef' is no longer declared here.
 
       if (customer.id === "walkin") {
         newCustomerId = "walkin";
+        // No customerRef is created, no KPIs are updated. This is correct.
       } else if (customer.id.startsWith("new_")) {
         // Create new customer
-        customerRef = db.collection("customers").doc();
+        // --- (FIX) Declare customerRef here ---
+        const customerRef = db.collection("customers").doc();
         newCustomerId = customerRef.id;
         
         transaction.set(customerRef, {
@@ -212,7 +215,8 @@ export async function POST(request: NextRequest) {
 
       } else {
         // Use existing customer
-        customerRef = db.collection("customers").doc(newCustomerId);
+        // --- (FIX) Declare customerRef here ---
+        const customerRef = db.collection("customers").doc(newCustomerId);
         
         if (customer.saveToContacts) {
           transaction.set(customerRef, {
@@ -233,6 +237,8 @@ export async function POST(request: NextRequest) {
           });
         }
       }
+      // --- (END OF FIX) ---
+
 
       // --- (CRITICAL FIX) ---
       // Create a simple array of product IDs for querying
@@ -249,7 +255,7 @@ export async function POST(request: NextRequest) {
         customerId: newCustomerId,
         customerName: customer.name,
         items: processedItems,
-        productIds: productIds, // <-- ADDED THIS FIELD
+        productIds: productIds, // <-- KEPT THIS FIELD
         invoiceCurrency,
         totalAmount,
         totalCostUsd,
@@ -385,14 +391,14 @@ export async function GET(request: NextRequest) {
       .where("createdAt", ">=", startDate)
       .where("createdAt", "<=", endDate);
 
-  
-
-    if (status && status !== 'all') { // <-- This is the only line that changed
+    // --- THIS IS THE "ALL" FILTER FIX ---
+    if (status && status !== 'all') {
       baseQuery = baseQuery.where("paymentStatus", "==", status);
     } else {
       // This will now correctly run for "all" or if no status is provided
       baseQuery = baseQuery.where("paymentStatus", "not-in", ["voided", "refunded"]);
     }
+    // --- END FIX ---
 
     // Get paginated list
     const paginatedQuery = baseQuery
