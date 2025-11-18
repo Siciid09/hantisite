@@ -1,11 +1,9 @@
 // File: app/api/mobile/sales/route.ts
 //
-// --- MOBILE-SPECIFIC ENDPOINT ---
-// 1. (FIX) This file is a copy of 'api/sales/route.ts' but with a modified GET query
-//    to support the mobile app's 'InvoiceScreen'.
-// 2. (FIX) Uses `where("paymentStatus", "in", ...)` which works with `orderBy`.
-// 3. (FIX) Includes the 'customerRef' TS2454 build fix for the POST function.
-// 4. (SAFE) This file does NOT affect your production website.
+// --- FINAL MOBILE ENDPOINT (FIXED) ---
+// 1. (FIX) GET: Uses 'paymentStatus' IN [...] logic to match your Firebase Index.
+// 2. (FIX) GET: Applies .orderBy("createdAt", "desc") immediately to fix Dashboard/Count errors.
+// 3. (FIX) POST: Solves the 'customerRef' variable scope issue (TS2454).
 // -----------------------------------------------------------------------------
 
 import { NextResponse, NextRequest } from "next/server";
@@ -50,7 +48,7 @@ async function checkAuth(
 }
 
 // =============================================================================
-// 🚀 POST - Create New Sale (Includes Build Fix)
+// 🚀 POST - Create New Sale (Fixed TS2454)
 // =============================================================================
 export async function POST(request: NextRequest) {
   if (!authAdmin || !firestoreAdmin) {
@@ -179,7 +177,6 @@ export async function POST(request: NextRequest) {
       const paymentStatus = debtAmount <= 0.01 ? 'paid' : (totalPaid > 0 ? 'partial' : 'unpaid');
 
       // a. Handle Customer & Update KPIs
-      
       if (customer.id === "walkin") {
         newCustomerId = "walkin";
         // No customerRef is created, no KPIs are updated.
@@ -326,7 +323,7 @@ export async function POST(request: NextRequest) {
 }
 
 // =============================================================================
-// 📊 GET - Fetch Sales Data (MOBILE APP FIX)
+// 📊 GET - Fetch Sales Data (FIXED FOR MOBILE INVOICE SCREEN)
 // =============================================================================
 export async function GET(request: NextRequest) {
   try {
@@ -335,7 +332,7 @@ export async function GET(request: NextRequest) {
     const view = searchParams.get("view");
     const currency = searchParams.get("currency") || "USD";
 
-    // --- Handle Search Views ---
+    // --- 1. Handle Search Views (Unchanged) ---
     const searchQuery = searchParams.get("searchQuery");
     if (view === "search_products") {
       if (!searchQuery) return NextResponse.json({ products: [] });
@@ -362,18 +359,15 @@ export async function GET(request: NextRequest) {
       const customers = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       return NextResponse.json({ customers });
     }
-    // --- End of Search ---
 
-    // Date filters
+    // --- 2. Standard Filters ---
     const startDate = dayjs(searchParams.get("startDate") || dayjs().startOf("month")).startOf("day").toDate();
     const endDate = dayjs(searchParams.get("endDate") || dayjs().endOf("month")).endOf("day").toDate();
-    
-    // Pagination
     const page = parseInt(searchParams.get("page") || "1");
     const limit = 10;
     const status = searchParams.get("status");
 
-    // Build base query
+    // --- 3. Build Base Query ---
     let baseQuery: Query = firestoreAdmin
       .collection("sales")
       .where("storeId", "==", storeId)
@@ -381,24 +375,27 @@ export async function GET(request: NextRequest) {
       .where("createdAt", ">=", startDate)
       .where("createdAt", "<=", endDate);
 
-    // --- (MOBILE APP FIX) ---
-    // This logic fixes the 'InvoiceScreen' by using an 'in' query,
-    // which is compatible with 'orderBy'.
+    // --- 4. MOBILE FIX: Payment Status Logic ---
     if (status && status !== 'all') {
-      // This is for 'paid', 'unpaid', 'partial'
+      // Filter for specific status (Paid, Unpaid, etc.)
       baseQuery = baseQuery.where("paymentStatus", "==", status);
     } else {
-      // This is the new, correct logic for 'all'
+      // Filter for "All" (Exclude voided/refunded by only including valid ones)
+      // This "IN" query is what requires the special index
       baseQuery = baseQuery.where("paymentStatus", "in", ["paid", "unpaid", "partial"]);
     }
-    // --- (END OF MOBILE APP FIX) ---
 
-    // Get paginated list
+    // --- 5. CRITICAL FIX: Apply Sort IMMEDIATELY ---
+    // We MUST apply this here so that .count() and .get() both use the
+    // "Descending" index you created. Without this line, .count() fails.
+    baseQuery = baseQuery.orderBy("createdAt", "desc");
+
+    // --- 6. Get Paginated Data ---
     const paginatedQuery = baseQuery
-      .orderBy("createdAt", "desc")
       .limit(limit)
       .offset((page - 1) * limit);
 
+    // Run Count and List queries in parallel
     const [listSnapshot, countSnapshot] = await Promise.all([
       paginatedQuery.get(),
       baseQuery.count().get()
@@ -415,9 +412,10 @@ export async function GET(request: NextRequest) {
       currentPage: page,
       totalPages: Math.ceil(totalMatchingSales / limit),
       totalResults: totalMatchingSales,
+      hasMore: page < Math.ceil(totalMatchingSales / limit),
     };
 
-    // --- Data specifically for Dashboard View ---
+    // --- 7. Dashboard Calculations (Uses the same baseQuery) ---
     if (view === "dashboard") {
       const allDocsSnapshot = await baseQuery.get();
 
@@ -454,6 +452,7 @@ export async function GET(request: NextRequest) {
         totalTransactions,
         avgSale: totalTransactions > 0 ? totalSales / totalTransactions : 0,
         totalDebts,
+        totalDebtsCount: 0, // Added to match some UI needs if necessary
         paidPercent: totalTransactions > 0 ? (paidTransactions / totalTransactions) * 100 : 0,
       };
 
@@ -475,22 +474,22 @@ export async function GET(request: NextRequest) {
       });
     }
 
-    // --- Data for History / Invoices (just the list) ---
+    // --- 8. Return Invoice/List View Data ---
     return NextResponse.json({
       view: view,
       salesList,
       pagination,
     });
 
-  } catch (error: any)
-{
+  } catch (error: any) {
     console.error("[Sales API GET] Error:", error.stack || error.message);
+    
+    // Helper to return the exact index creation link if needed
     if (error.message.includes("requires an index")) {
          return NextResponse.json(
            { 
-             error: `Query failed. You need to create a composite index in Firestore. ${error.message}`,
-             // Provide the link to create the index
-             createIndexUrl: `https://console.firebase.google.com/project/${process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID}/firestore/indexes?create_composite=${error.message.split('query requires an index: ')[1]}`
+             error: `Query failed. You need to create a composite index in Firestore.`,
+             details: error.message
            },
            { status: 500 }
          );
