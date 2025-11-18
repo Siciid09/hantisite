@@ -1,11 +1,9 @@
-// File: app/api/mobile/sales/route.ts
+// File: app/api/mobile/route.ts
 //
-// --- MOBILE-SPECIFIC ENDPOINT ---
-// 1. (FIX) This file is a copy of 'api/sales/route.ts' but with a modified GET query
-//    to support the mobile app's 'InvoiceScreen'.
-// 2. (FIX) Uses `where("paymentStatus", "in", ...)` which works with `orderBy`.
-// 3. (FIX) Includes the 'customerRef' TS2454 build fix for the POST function.
-// 4. (SAFE) This file does NOT affect your production website.
+// --- FINAL COMPLETE VERSION ---
+// 1. FIX: "Method Not Allowed" -> This file handles the mobile API route directly.
+// 2. FIX: "Something Went Wrong" -> Forces .orderBy("createdAt", "desc") to match your Firebase Index.
+// 3. FIX: "TS2454" -> Fixes the customerRef variable scope issue.
 // -----------------------------------------------------------------------------
 
 import { NextResponse, NextRequest } from "next/server";
@@ -13,31 +11,45 @@ import { firestoreAdmin, authAdmin } from "@/lib/firebaseAdmin";
 import { FieldValue, Timestamp, Query } from "firebase-admin/firestore";
 import dayjs from "dayjs";
 
-// --- Helper: checkAuth (Unchanged) ---
+// =============================================================================
+// 🛡️ Helper: Authentication & Authorization
+// =============================================================================
 async function checkAuth(
   request: NextRequest,
   allowedRoles: ('admin' | 'manager' | 'user')[]
 ) {
-  if (!authAdmin) throw new Error("Auth Admin is not initialized.");
-  if (!firestoreAdmin) throw new Error("Firestore Admin is not initialized.");
+  if (!authAdmin) {
+    throw new Error("Auth Admin is not initialized.");
+  }
+  if (!firestoreAdmin) {
+    throw new Error("Firestore Admin is not initialized.");
+  }
 
   const authHeader = request.headers.get("Authorization");
   const token = authHeader?.split("Bearer ")[1];
-  if (!token) throw new Error("Unauthorized: No token provided.");
+  
+  if (!token) {
+    throw new Error("Unauthorized: No token provided.");
+  }
   
   const decodedToken = await authAdmin.verifyIdToken(token);
   const uid = decodedToken.uid;
   const userDoc = await firestoreAdmin.collection("users").doc(uid).get();
 
-  if (!userDoc.exists) throw new Error("Unauthorized: User data not found.");
+  if (!userDoc.exists) {
+    throw new Error("Unauthorized: User data not found.");
+  }
   
   const userData = userDoc.data();
   const storeId = userData?.storeId;
   const role = userData?.role; 
-  if (!storeId) throw new Error("Unauthorized: User has no store.");
+  
+  if (!storeId) {
+    throw new Error("Unauthorized: User has no store.");
+  }
   
   if (!role || !allowedRoles.includes(role)) {
-    console.warn(`[Auth] User ${uid} (Role: ${role}) tried to access a resource restricted to roles: [${allowedRoles.join(', ')}]`);
+    console.warn(`[Auth] User ${uid} (Role: ${role}) tried to access a restricted resource.`);
     throw new Error("Forbidden: You do not have permission to perform this action.");
   }
   
@@ -50,7 +62,7 @@ async function checkAuth(
 }
 
 // =============================================================================
-// 🚀 POST - Create New Sale (Includes Build Fix)
+// 🚀 POST - Create New Sale (Fully Corrected)
 // =============================================================================
 export async function POST(request: NextRequest) {
   if (!authAdmin || !firestoreAdmin) {
@@ -63,22 +75,22 @@ export async function POST(request: NextRequest) {
   const db = firestoreAdmin;
   
   try {
-    // 1. Authenticate and Authorize
+    // 1. Authenticate
     const { storeId, uid, userName } = await checkAuth(request, ['admin', 'manager', 'user']);
 
-    // 2. Parse Raw Data from Client
+    // 2. Parse Data
     const body = await request.json();
     const {
-      customer, // { id, name, phone, ... }
-      invoiceCurrency, // "BIRR"
-      items: rawItems, // [{ productId, quantity, discount, pricePerUnit (if manual) }]
-      paymentLines, // [{ method, amount, currency, valueInInvoiceCurrency }]
-      saleDate, // "2025-11-05"
+      customer, 
+      invoiceCurrency, 
+      items: rawItems, 
+      paymentLines, 
+      saleDate, 
       salesperson,
       notes,
     } = body;
     
-    // 3. Basic Validation
+    // 3. Validate
     if (!invoiceCurrency || !rawItems || rawItems.length === 0 || !customer) {
       return NextResponse.json({ error: "Invalid data. Missing required fields." }, { status: 400 });
     }
@@ -86,14 +98,14 @@ export async function POST(request: NextRequest) {
     const createdAt = saleDate ? Timestamp.fromDate(dayjs(saleDate).toDate()) : Timestamp.now();
     let newCustomerId = customer.id;
 
-    // 4. Run as a single, atomic transaction
+    // 4. Start Transaction
     const newSale = await db.runTransaction(async (transaction) => {
       let totalAmount = 0;
       let totalCostUsd = 0;
       const processedItems = [];
-      const productUpdates = []; // Will store { ref, change }
+      const productUpdates = []; 
       
-      // --- 5. READ PHASE ---
+      // --- 5. READ PHASE: Fetch Products ---
       const productRefsToFetch = [];
       const manualItems = [];
 
@@ -107,11 +119,13 @@ export async function POST(request: NextRequest) {
           });
         }
       }
+      
+      // Batch read all products
       const productDocs = await Promise.all(
         productRefsToFetch.map(p => transaction.get(p.ref))
       );
 
-      // --- 6. PROCESS & VALIDATE (In-Memory) ---
+      // --- 6. PROCESS PHASE: Calculations ---
       for (let i = 0; i < productDocs.length; i++) {
         const productDoc = productDocs[i];
         const { ref, item } = productRefsToFetch[i]; 
@@ -121,19 +135,22 @@ export async function POST(request: NextRequest) {
         }
         const productData = productDoc.data();
         
+        // Check Stock
         const currentStock = productData?.quantity || 0;
         if (currentStock < item.quantity) { 
           throw new Error(`Not enough stock for ${productData?.name}. Available: ${currentStock}`);
         }
 
+        // Check Price
         let pricePerUnit = productData?.salePrices?.[invoiceCurrency];
         if (pricePerUnit === undefined || pricePerUnit === null || pricePerUnit === 0) {
           if (item.pricePerUnit) {
-            pricePerUnit = item.pricePerUnit;
+            pricePerUnit = item.pricePerUnit; // Use manual override if allowed
           } else {
             throw new Error(`Price for ${productData?.name} in ${invoiceCurrency} is not set.`);
           }
         }
+
         const subtotal = (pricePerUnit * item.quantity) * (1 - (item.discount || 0) / 100);
         const itemCostUsd = (productData?.costPrices?.USD || 0) * item.quantity;
         
@@ -153,6 +170,7 @@ export async function POST(request: NextRequest) {
         });
       }
 
+      // Handle Manual Items
       for (const item of manualItems) {
         const price = item.pricePerUnit || 0;
         const subtotal = (price * item.quantity) * (1 - (item.discount || 0) / 100);
@@ -166,9 +184,7 @@ export async function POST(request: NextRequest) {
         });
       }
       
-      // --- 7. WRITE PHASE ---
-      
-      // b. Calculate Payment Totals
+      // --- 7. PAYMENT CALCULATIONS ---
       const totalPaid = paymentLines.reduce((sum: number, p: any) => sum + (p.valueInInvoiceCurrency || 0), 0);
       
       if (totalPaid > totalAmount + 0.01) {
@@ -178,13 +194,12 @@ export async function POST(request: NextRequest) {
       const debtAmount = totalAmount - totalPaid;
       const paymentStatus = debtAmount <= 0.01 ? 'paid' : (totalPaid > 0 ? 'partial' : 'unpaid');
 
-      // a. Handle Customer & Update KPIs
-      
+      // --- 8. WRITE PHASE: Customer Updates ---
       if (customer.id === "walkin") {
         newCustomerId = "walkin";
-        // No customerRef is created, no KPIs are updated.
+        // Do not update KPIs for walk-in
       } else if (customer.id.startsWith("new_")) {
-        // Create new customer
+        // -- Create NEW Customer --
         const customerRef = db.collection("customers").doc();
         newCustomerId = customerRef.id;
         
@@ -199,7 +214,6 @@ export async function POST(request: NextRequest) {
           totalOwed: {},
         }, { merge: true });
 
-        // Update KPIs for the NEW customer
         transaction.update(customerRef, {
           [`totalSpent.${invoiceCurrency}`]: FieldValue.increment(totalAmount)
         });
@@ -210,7 +224,7 @@ export async function POST(request: NextRequest) {
         }
 
       } else {
-        // Use existing customer
+        // -- Update EXISTING Customer --
         const customerRef = db.collection("customers").doc(newCustomerId);
         
         if (customer.saveToContacts) {
@@ -222,7 +236,6 @@ export async function POST(request: NextRequest) {
           }, { merge: true });
         }
         
-        // Update KPIs for the EXISTING customer
         transaction.update(customerRef, {
           [`totalSpent.${invoiceCurrency}`]: FieldValue.increment(totalAmount)
         });
@@ -233,11 +246,10 @@ export async function POST(request: NextRequest) {
         }
       }
 
-      // Create a simple array of product IDs for querying
+      // --- 9. WRITE PHASE: Save Sale ---
       const productIds = processedItems.map(item => item.productId);
-
-      // c. Prepare Sale Document
       const newSaleRef = db.collection("sales").doc();
+      
       const newSaleData = {
         id: newSaleRef.id,
         storeId,
@@ -259,17 +271,16 @@ export async function POST(request: NextRequest) {
         invoiceId: `INV-${Date.now().toString().slice(-6)}`,
       };
       
-      // d. Save the Sale
       transaction.set(newSaleRef, newSaleData);
 
-      // e. Decrement Stock
+      // --- 10. WRITE PHASE: Update Stock ---
       for (const update of productUpdates) {
         transaction.update(update.ref, { 
           quantity: FieldValue.increment(update.change) 
         });
       }
       
-      // f. Create Income Documents
+      // --- 11. WRITE PHASE: Incomes & Debts ---
       for (const payment of paymentLines) {
         if (payment.amount > 0) {
           const incomeRef = db.collection("incomes").doc();
@@ -287,7 +298,6 @@ export async function POST(request: NextRequest) {
         }
       }
 
-      // g. Create Debit Document
       if (debtAmount > 0) {
         const debitRef = db.collection("debits").doc();
         transaction.set(debitRef, {
@@ -310,10 +320,9 @@ export async function POST(request: NextRequest) {
         });
       }
       
-      return newSaleData; // Return the final sale data
-    }); // End of Transaction
+      return newSaleData; 
+    }); 
 
-    // 10. Return the successfully created sale
     return NextResponse.json({ success: true, sale: newSale }, { status: 201 });
 
   } catch (error: any) {
@@ -326,7 +335,7 @@ export async function POST(request: NextRequest) {
 }
 
 // =============================================================================
-// 📊 GET - Fetch Sales Data (MOBILE APP FIX)
+// 📊 GET - Fetch Sales Data (FIXED FOR "SOMETHING WENT WRONG" ERROR)
 // =============================================================================
 export async function GET(request: NextRequest) {
   try {
@@ -335,7 +344,7 @@ export async function GET(request: NextRequest) {
     const view = searchParams.get("view");
     const currency = searchParams.get("currency") || "USD";
 
-    // --- Handle Search Views ---
+    // --- 1. Handle Search Views ---
     const searchQuery = searchParams.get("searchQuery");
     if (view === "search_products") {
       if (!searchQuery) return NextResponse.json({ products: [] });
@@ -362,18 +371,15 @@ export async function GET(request: NextRequest) {
       const customers = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       return NextResponse.json({ customers });
     }
-    // --- End of Search ---
 
-    // Date filters
+    // --- 2. Standard Filters ---
     const startDate = dayjs(searchParams.get("startDate") || dayjs().startOf("month")).startOf("day").toDate();
     const endDate = dayjs(searchParams.get("endDate") || dayjs().endOf("month")).endOf("day").toDate();
-    
-    // Pagination
     const page = parseInt(searchParams.get("page") || "1");
     const limit = 10;
     const status = searchParams.get("status");
 
-    // Build base query
+    // --- 3. Build Base Query ---
     let baseQuery: Query = firestoreAdmin
       .collection("sales")
       .where("storeId", "==", storeId)
@@ -381,27 +387,28 @@ export async function GET(request: NextRequest) {
       .where("createdAt", ">=", startDate)
       .where("createdAt", "<=", endDate);
 
-    // --- (MOBILE APP FIX) ---
-    // This logic fixes the 'InvoiceScreen' by using an 'in' query,
-    // which is compatible with 'orderBy'.
+    // --- 4. MOBILE FIX: Payment Status Logic ---
+    // This matches your index requirements exactly.
     if (status && status !== 'all') {
-      // This is for 'paid', 'unpaid', 'partial'
       baseQuery = baseQuery.where("paymentStatus", "==", status);
     } else {
-      // This is the new, correct logic for 'all'
       baseQuery = baseQuery.where("paymentStatus", "in", ["paid", "unpaid", "partial"]);
     }
-    // --- (END OF MOBILE APP FIX) ---
 
-    // Get paginated list
+    // --- 5. CRITICAL SORT FIX ---
+    // We MUST apply this immediately. This forces Firestore to use the Descending index.
+    // If we don't do this here, the .count() query below defaults to Ascending and CRASHES.
+    baseQuery = baseQuery.orderBy("createdAt", "desc");
+
+    // --- 6. Run Queries ---
     const paginatedQuery = baseQuery
-      .orderBy("createdAt", "desc")
       .limit(limit)
       .offset((page - 1) * limit);
 
+    // Run Count and List queries in parallel
     const [listSnapshot, countSnapshot] = await Promise.all([
       paginatedQuery.get(),
-      baseQuery.count().get()
+      baseQuery.count().get() // Safe now because of the sort fix
     ]);
 
     const salesList = listSnapshot.docs.map((doc) => ({
@@ -417,7 +424,7 @@ export async function GET(request: NextRequest) {
       totalResults: totalMatchingSales,
     };
 
-    // --- Data specifically for Dashboard View ---
+    // --- 7. Dashboard Calculations ---
     if (view === "dashboard") {
       const allDocsSnapshot = await baseQuery.get();
 
@@ -475,22 +482,22 @@ export async function GET(request: NextRequest) {
       });
     }
 
-    // --- Data for History / Invoices (just the list) ---
+    // --- 8. Default Response (List View) ---
     return NextResponse.json({
       view: view,
       salesList,
       pagination,
     });
 
-  } catch (error: any)
-{
+  } catch (error: any) {
     console.error("[Sales API GET] Error:", error.stack || error.message);
+    
+    // Return helpful error if index is missing
     if (error.message.includes("requires an index")) {
          return NextResponse.json(
            { 
-             error: `Query failed. You need to create a composite index in Firestore. ${error.message}`,
-             // Provide the link to create the index
-             createIndexUrl: `https://console.firebase.google.com/project/${process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID}/firestore/indexes?create_composite=${error.message.split('query requires an index: ')[1]}`
+             error: `Query failed. Index missing.`,
+             details: error.message
            },
            { status: 500 }
          );
