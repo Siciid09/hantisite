@@ -1,5 +1,10 @@
 // File: app/api/settings/route.ts
 // Description: API for managing ALL settings (GET, PUT) and deletion (DELETE).
+//
+// --- LATEST FIXES ---
+// 1. (FIX) PDF Template Disconnect: Now syncs 'invoiceTemplate' and 'currencies' 
+//    to the 'stores' collection. This ensures the PDF generator (which reads 'stores') 
+//    and the frontend (which reads 'settings') are always in sync.
 // -----------------------------------------------------------------------------
 
 import { NextResponse, NextRequest } from "next/server";
@@ -42,7 +47,6 @@ async function getSettingsRef(storeId: string) {
         const newSettingsRef = firestoreAdmin.collection('settings').doc();
         await newSettingsRef.set({
             storeId: storeId,
-            // *** (FIX) Read from the correct fields in the stores doc ***
             storeName: storeData?.storeName || storeData?.name || "My Store",
             storePhone: storeData?.storePhone || "",
             storeAddress: storeData?.storeAddress || "",
@@ -83,7 +87,6 @@ export async function PUT(request: NextRequest) {
     const body = await request.json();
 
     // --- Part 1: Handle Profile Update (name, phone) ---
-    // This part is correct and unchanged
     if (body.name !== undefined || body.phone !== undefined) {
       const { name, phone } = body;
       const userRef = firestoreAdmin.collection("users").doc(uid);
@@ -125,15 +128,18 @@ export async function PUT(request: NextRequest) {
     
     // *** (FIX) Update the main 'stores' doc with the REAL fields ***
     const storeUpdate: any = {};
-    if (storeName !== undefined) storeUpdate.storeName = storeName;     // Write to storeName
-    if (storePhone !== undefined) storeUpdate.storePhone = storePhone;   // Write to storePhone
-    if (storeAddress !== undefined) storeUpdate.storeAddress = storeAddress; // Write to storeAddress
+    if (storeName !== undefined) storeUpdate.storeName = storeName;     
+    if (storePhone !== undefined) storeUpdate.storePhone = storePhone;   
+    if (storeAddress !== undefined) storeUpdate.storeAddress = storeAddress; 
     
     // Also update 'name' for compatibility with SAdmin
     if (storeName !== undefined) storeUpdate.name = storeName; 
     
-    // Also update currencies if it was part of this request
+    // FIX: Sync currencies to store doc (Critical for PDF generator)
     if (settingsUpdate.currencies) storeUpdate.currencies = settingsUpdate.currencies;
+    
+    // FIX: Sync invoiceTemplate to store doc (Critical for PDF generator)
+    if (invoiceTemplate !== undefined) storeUpdate.invoiceTemplate = invoiceTemplate;
     
     if (Object.keys(storeUpdate).length > 0) {
         await firestoreAdmin.collection('stores').doc(storeId).update(storeUpdate);

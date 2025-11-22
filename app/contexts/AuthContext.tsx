@@ -1,12 +1,11 @@
-// File: app/contexts/AuthContext.tsx (CORRECTED)
-
+// File: app/contexts/AuthContext.tsx
 "use client";
 
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { onAuthStateChanged, User as FirebaseUser } from 'firebase/auth';
 import { doc, getDoc } from 'firebase/firestore';
 import { auth, firestore } from '@/lib/firebaseConfig';
-import Image from "next/image"; // Make sure imported
+// import Image from "next/image"; // Not strictly needed in Context, but kept if you used it
 
 // Define the shape of the custom user object
 interface AppUser {
@@ -14,8 +13,6 @@ interface AppUser {
   email: string | null;
   name?: string;
   storeId?: string;
-  // --- THIS IS THE FIX ---
-  // Added all roles to the type
   role?: 'admin' | 'manager' | 'hr' | 'cashier' | 'user';
   firebaseUser: FirebaseUser;
 }
@@ -25,7 +22,7 @@ interface AuthContextType {
   user: AppUser | null;
   loading: boolean;
   storeId: string | null;
-  subscription: any; // This will hold the 'stores' document data
+  subscription: any; 
 }
 
 // Create the context
@@ -36,7 +33,7 @@ const AuthContext = createContext<AuthContextType>({
   subscription: null 
 });
 
-// --- Helper Functions (Unchanged) ---
+// --- Helper Functions ---
 
 async function createSession(idToken: string) {
   try {
@@ -62,12 +59,12 @@ async function clearSession() {
   }
 }
 
-// --- Provider Component (THIS IS THE FIX) ---
+// --- Provider Component ---
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AppUser | null>(null);
   const [storeId, setStoreId] = useState<string | null>(null);
-  const [subscription, setSubscription] = useState<any>(null); // This will hold the store data
+  const [subscription, setSubscription] = useState<any>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -81,7 +78,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (firebaseUser) {
           // --- User is logged in ---
           
-          // 1. Get the User Document
+          // 1. CRITICAL FIX: Create Session Cookie FIRST
+          // We wait for this to finish before updating state.
+          const idToken = await firebaseUser.getIdToken();
+          await createSession(idToken);
+
+          // 2. Get the User Document
           const userDocRef = doc(firestore, 'users', firebaseUser.uid);
           const userDoc = await getDoc(userDocRef);
 
@@ -93,7 +95,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               throw new Error("User has no associated storeId.");
             }
 
-            // 2. Get the Store Document (which has the subscription)
+            // 3. Get the Store Document
             const storeDocRef = doc(firestore, 'stores', userStoreId);
             const storeDoc = await getDoc(storeDocRef);
 
@@ -102,9 +104,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             }
             
             const storeData = storeDoc.data();
-            // --- END OF FIX ---
 
-            // 3. Set all state
+            // 4. Set all state (Only AFTER cookie is set and data is fetched)
             const appUser: AppUser = {
               uid: firebaseUser.uid,
               email: firebaseUser.email,
@@ -114,15 +115,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               firebaseUser: firebaseUser,
             };
 
-            setUser(appUser);
+            // Batch updates
+            setSubscription(storeData);
             setStoreId(userStoreId);
-            setSubscription(storeData); // <-- SET SUB FROM STORE DOC
+            setUser(appUser); 
             
-            console.log("[AuthContext] User and Subscription state updated.");
-
-            // 4. Create session cookie
-            const idToken = await firebaseUser.getIdToken();
-            await createSession(idToken);
+            console.log("[AuthContext] User, Cookie, and Data all ready.");
 
           } else {
             console.error("[AuthContext] Firestore doc MISSING for UID:", firebaseUser.uid);
@@ -148,14 +146,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
     });
 
-    // Cleanup subscription on unmount
     return () => {
-      console.log("[AuthContext] Unsubscribing from onAuthStateChanged.");
+      console.log("[AuthContext] Unsubscribing.");
       unsubscribe();
     }
   }, []);
 
-  // Render children
   return (
     <AuthContext.Provider value={{ user, loading, storeId, subscription }}>
       {children}
@@ -163,5 +159,4 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 }
 
-// Create the hook (Unchanged)
 export const useAuth = () => useContext(AuthContext);

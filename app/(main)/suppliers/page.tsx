@@ -18,8 +18,18 @@ import dayjs from "dayjs";
 import {
   Users, Briefcase, DollarSign, Plus, Search, ChevronLeft,
   ChevronRight, X, Loader2, Phone, MessageSquare, AlertOctagon,
-  CreditCard, Eye,
-  RefreshCw // <-- (FIX) RECALC: Added icon
+ Eye,
+  RefreshCw , Building2, 
+  User, 
+
+  MessageCircle, 
+  Mail, 
+  MapPin, 
+  TrendingUp, 
+  AlertCircle, 
+  History,Save,
+  Calendar,
+  CreditCard// <-- (FIX) RECALC: Added icon
 } from "lucide-react";
 
 // -----------------------------------------------------------------------------
@@ -457,24 +467,119 @@ const AddSupplierModal = ({ onClose, onSuccess }: any) => {
     }
   };
 
-  return (
-    <ModalBase title="Add New Supplier" onClose={onClose}>
-      <form onSubmit={handleSubmit} className="space-y-4">
-        <FormInput label="Supplier Name" name="name" value={formData.name} onChange={handleChange} required />
-        <FormInput label="Contact Person (Optional)" name="contactPerson" value={formData.contactPerson} onChange={handleChange} />
-        <FormInput label="Phone Number" name="phone" value={formData.phone} onChange={handleChange} required />
-        <FormInput label="WhatsApp (Optional)" name="whatsapp" placeholder="e.g. +252..." value={formData.whatsapp} onChange={handleChange} />
-        <FormInput label="Email (Optional)" name="email" type="email" value={formData.email} onChange={handleChange} />
-        <FormInput label="Address (Optional)" name="address" value={formData.address} onChange={handleChange} />
+ return (
+    <ModalBase title="Register New Supplier" onClose={onClose}>
+      <form onSubmit={handleSubmit} className="px-1 pb-2">
         
-        {error && <p className="text-sm text-red-600">{error}</p>}
+        <div className="space-y-6">
+          {/* --- SECTION 1: IDENTITY --- */}
+          <div className="rounded-xl border border-gray-100 bg-gray-50/50 p-4 dark:border-gray-700 dark:bg-gray-800/50">
+            <h4 className="mb-3 flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400">
+              <Building2 className="h-3.5 w-3.5" /> Business Identity
+            </h4>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div className="sm:col-span-2">
+                <FormInput 
+                  label="Supplier / Company Name" 
+                  name="name" 
+                  placeholder="e.g. Global Trading Co."
+                  value={formData.name} 
+                  onChange={handleChange} 
+                  required 
+                />
+              </div>
+              <div className="sm:col-span-2">
+                <FormInput 
+                  label="Contact Person" 
+                  name="contactPerson" 
+                  placeholder="e.g. Ahmed Ali"
+                  value={formData.contactPerson} 
+                  onChange={handleChange} 
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* --- SECTION 2: CONTACT DETAILS --- */}
+          <div>
+            <h4 className="mb-3 flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400">
+              <Phone className="h-3.5 w-3.5" /> Contact Information
+            </h4>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <FormInput 
+                label="Phone Number" 
+                name="phone" 
+                placeholder="Primary Contact"
+                value={formData.phone} 
+                onChange={handleChange} 
+                required 
+              />
+              <FormInput 
+                label="WhatsApp" 
+                name="whatsapp" 
+                placeholder="e.g. +252..." 
+                value={formData.whatsapp} 
+                onChange={handleChange} 
+              />
+              <div className="sm:col-span-2">
+                <FormInput 
+                  label="Email Address" 
+                  name="email" 
+                  type="email" 
+                  placeholder="info@example.com"
+                  value={formData.email} 
+                  onChange={handleChange} 
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* --- SECTION 3: LOCATION --- */}
+          <div>
+            <h4 className="mb-3 flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400">
+              <MapPin className="h-3.5 w-3.5" /> Location
+            </h4>
+            <FormInput 
+              label="Physical Address" 
+              name="address" 
+              placeholder="Street, City, Region"
+              value={formData.address} 
+              onChange={handleChange} 
+            />
+          </div>
+        </div>
         
-        <div className="flex justify-end gap-3 pt-4">
-          <button type="button" onClick={onClose} className="rounded-lg border bg-white px-4 py-2 text-sm font-medium hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-800 dark:hover:bg-gray-700">Cancel</button>
-          <button type="submit" disabled={isSaving} className="flex min-w-[80px] items-center justify-center rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50">
-            {isSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : "Save"}
+        {/* --- ERROR DISPLAY --- */}
+        {error && (
+          <div className="mt-4 rounded-lg bg-red-50 p-3 text-sm text-red-600 dark:bg-red-900/20 dark:text-red-400">
+            <span className="font-bold">Error:</span> {error}
+          </div>
+        )}
+        
+        {/* --- FOOTER ACTIONS --- */}
+        <div className="mt-8 flex justify-end gap-3 border-t border-gray-100 pt-5 dark:border-gray-700">
+          <button 
+            type="button" 
+            onClick={onClose} 
+            className="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
+          >
+            Cancel
+          </button>
+          <button 
+            type="submit" 
+            disabled={isSaving} 
+            className="flex min-w-[100px] items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white shadow-md shadow-blue-500/20 hover:bg-blue-700 disabled:opacity-50 disabled:shadow-none"
+          >
+            {isSaving ? (
+              <Loader2 className="h-4 w-4 animate-spin" /> 
+            ) : (
+              <>
+                <Save className="h-4 w-4" /> Save Supplier
+              </>
+            )}
           </button>
         </div>
+
       </form>
     </ModalBase>
   );
@@ -565,91 +670,174 @@ const ViewSupplierModal = ({ supplier, onClose }: { supplier: any, onClose: () =
     isLoading 
   } = useSWR(supplier ? `/api/purchases?supplierId=${supplier.id}` : null, fetcher);
 
-  return (
-    <ModalBase title="Supplier Details" onClose={onClose}>
-      <div className="space-y-6">
-        {/* Section 1: Supplier Info */}
-        <div className="grid grid-cols-1 gap-4 rounded-lg border p-4 dark:border-gray-700 md:grid-cols-2">
-          <div>
-            <h3 className="text-sm font-medium text-gray-500">Name</h3>
-            <p className="text-lg font-semibold">{supplier.name}</p>
+return (
+ <ModalBase title="Supplier Profile" onClose={onClose}>
+      <div className="px-1 pb-6">
+        
+        {/* --- HERO SECTION: Identity --- */}
+        <div className="mt-2 flex flex-col gap-6 sm:flex-row">
+          {/* Avatar / Icon Placeholder */}
+          <div className="flex h-20 w-20 flex-shrink-0 items-center justify-center rounded-2xl bg-blue-50 text-blue-600 ring-1 ring-blue-100 dark:bg-blue-900/20 dark:text-blue-400 dark:ring-blue-900/30">
+            <Building2 className="h-10 w-10" />
           </div>
-          <div>
-            <h3 className="text-sm font-medium text-gray-500">Contact Person</h3>
-            <p>{supplier.contactPerson || "N/A"}</p>
-          </div>
-          <div>
-            <h3 className="text-sm font-medium text-gray-500">Phone</h3>
-            <p>{supplier.phone || "N/A"}</p>
-          </div>
-          <div>
-            <h3 className="text-sm font-medium text-gray-500">WhatsApp</h3>
-            <p>{supplier.whatsapp || "N/A"}</p>
-          </div>
-          <div className="md:col-span-2">
-            <h3 className="text-sm font-medium text-gray-500">Email</h3>
-            <p>{supplier.email || "N/A"}</p>
-          </div>
-          <div className="md:col-span-2">
-            <h3 className="text-sm font-medium text-gray-500">Address</h3>
-            <p>{supplier.address || "N/A"}</p>
+
+          {/* Name & Contact Person */}
+          <div className="flex-1">
+            <h2 className="text-2xl font-bold text-gray-900 dark:text-white">
+              {supplier.name}
+            </h2>
+            <div className="mt-2 flex flex-wrap items-center gap-4 text-sm text-gray-500 dark:text-gray-400">
+              <div className="flex items-center gap-1.5">
+                <User className="h-4 w-4" />
+                <span className="font-medium text-gray-700 dark:text-gray-300">
+                  {supplier.contactPerson || "No contact person"}
+                </span>
+              </div>
+              {supplier.address && (
+                <div className="flex items-center gap-1.5">
+                  <MapPin className="h-4 w-4" />
+                  <span>{supplier.address}</span>
+                </div>
+              )}
+            </div>
           </div>
         </div>
 
-        {/* Section 2: Stats */}
-        <div className="grid grid-cols-2 gap-4">
-          <div className="rounded-lg bg-red-50 p-4 dark:bg-red-900/20">
-            <h3 className="text-sm font-medium text-red-700 dark:text-red-400">Total Owed</h3>
-            <p className="text-2xl font-bold text-red-600 dark:text-red-300">
-              {formatCurrency(supplier.totalOwed, "USD")}
+        {/* --- CONTACT GRID --- */}
+        <div className="mt-8 grid grid-cols-1 gap-4 sm:grid-cols-3">
+          <div className="rounded-xl border border-gray-100 bg-white p-3 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+            <div className="mb-1 flex items-center gap-2 text-xs font-bold uppercase text-gray-400">
+              <Phone className="h-3 w-3" /> Phone
+            </div>
+            <p className="font-medium text-gray-900 dark:text-white truncate">
+              {supplier.phone || "N/A"}
             </p>
           </div>
-          <div className="rounded-lg bg-green-50 p-4 dark:bg-green-900/20">
-            <h3 className="text-sm font-medium text-green-700 dark:text-green-400">Total Spent</h3>
-            <p className="text-2xl font-bold text-green-600 dark:text-green-300">
-              {formatCurrency(supplier.totalSpent, "USD")}
+          <div className="rounded-xl border border-gray-100 bg-white p-3 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+            <div className="mb-1 flex items-center gap-2 text-xs font-bold uppercase text-gray-400">
+              <MessageCircle className="h-3 w-3" /> WhatsApp
+            </div>
+            <p className="font-medium text-gray-900 dark:text-white truncate">
+              {supplier.whatsapp || "N/A"}
+            </p>
+          </div>
+          <div className="rounded-xl border border-gray-100 bg-white p-3 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+            <div className="mb-1 flex items-center gap-2 text-xs font-bold uppercase text-gray-400">
+              <Mail className="h-3 w-3" /> Email
+            </div>
+            <p className="font-medium text-gray-900 dark:text-white truncate">
+              {supplier.email || "N/A"}
             </p>
           </div>
         </div>
 
-        {/* Section 3: Purchase History */}
-        <div>
-          <h3 className="mb-2 text-lg font-semibold">Purchase History</h3>
-          <div className="max-h-60 overflow-y-auto rounded-lg border dark:border-gray-700">
-            {isLoading && <LoadingSpinner />}
+        {/* --- FINANCIAL STATS --- */}
+        <div className="mt-8 grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <div className="flex items-center justify-between rounded-xl bg-red-50 p-4 dark:bg-red-900/10">
+            <div>
+              <p className="flex items-center gap-2 text-xs font-bold uppercase text-red-600 dark:text-red-400">
+                <AlertCircle className="h-3.5 w-3.5" /> Outstanding Balance
+              </p>
+              <p className="mt-1 text-2xl font-bold text-red-700 dark:text-red-400">
+                {formatCurrency(supplier.totalOwed, "USD")}
+              </p>
+            </div>
+            <div className="rounded-full bg-white p-2 text-red-500 shadow-sm dark:bg-red-900/30 dark:text-red-300">
+              <CreditCard className="h-5 w-5" />
+            </div>
+          </div>
+
+          <div className="flex items-center justify-between rounded-xl bg-green-50 p-4 dark:bg-green-900/10">
+            <div>
+              <p className="flex items-center gap-2 text-xs font-bold uppercase text-green-600 dark:text-green-400">
+                <TrendingUp className="h-3.5 w-3.5" /> Lifetime Spent
+              </p>
+              <p className="mt-1 text-2xl font-bold text-green-700 dark:text-green-400">
+                {formatCurrency(supplier.totalSpent, "USD")}
+              </p>
+            </div>
+            <div className="rounded-full bg-white p-2 text-green-500 shadow-sm dark:bg-green-900/30 dark:text-green-300">
+              <TrendingUp className="h-5 w-5" />
+            </div>
+          </div>
+        </div>
+
+        {/* --- PURCHASE HISTORY --- */}
+        <div className="mt-10">
+          <h3 className="mb-4 flex items-center gap-2 text-sm font-bold uppercase text-gray-900 dark:text-white">
+            <History className="h-4 w-4 text-gray-500" /> Purchase History
+          </h3>
+          
+          <div className="overflow-hidden rounded-xl border border-gray-200 dark:border-gray-700">
+            {isLoading && (
+              <div className="flex justify-center py-8"><Loader2 className="h-5 w-5 animate-spin text-gray-400" /></div>
+            )}
+            
             {error && <ErrorDisplay error={error} />}
+            
             {purchaseData && (
-              <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
-                <thead className="bg-gray-50 dark:bg-gray-700">
-                  <tr>
-                    <th className="px-4 py-2 text-left text-xs font-medium uppercase">Date</th>
-                    <th className="px-4 py-2 text-left text-xs font-medium uppercase">Total</th>
-                    <th className="px-4 py-2 text-left text-xs font-medium uppercase">Remaining</th>
-                    <th className="px-4 py-2 text-left text-xs font-medium uppercase">Status</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
-                  {purchaseData.purchases.length === 0 && (
-                    <tr><td colSpan={4}><TableEmptyState message="No purchases found for this supplier." /></td></tr>
-                  )}
-                  {purchaseData.purchases.map((po: any) => (
-                    <tr key={po.id}>
-                      <td className="px-4 py-2 whitespace-nowrap text-sm">{dayjs(po.purchaseDate).format("DD MMM YYYY")}</td>
-                      <td className="px-4 py-2 whitespace-nowrap text-sm">{formatCurrency(po.totalAmount, po.currency)}</td>
-                      <td className="px-4 py-2 whitespace-nowrap text-sm font-medium text-red-600">{formatCurrency(po.remainingAmount, po.currency)}</td>
-                      <td className="px-4 py-2 whitespace-nowrap text-sm">{po.status}</td>
+              <div className="max-h-64 overflow-y-auto scrollbar-thin scrollbar-thumb-gray-200 dark:scrollbar-thumb-gray-700">
+                <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+                  <thead className="bg-gray-50 sticky top-0 z-10 dark:bg-gray-800">
+                    <tr>
+                      <th className="px-4 py-3 text-left text-xs font-semibold uppercase text-gray-500 dark:text-gray-400">Date</th>
+                      <th className="px-4 py-3 text-right text-xs font-semibold uppercase text-gray-500 dark:text-gray-400">Total</th>
+                      <th className="px-4 py-3 text-right text-xs font-semibold uppercase text-gray-500 dark:text-gray-400">Remaining</th>
+                      <th className="px-4 py-3 text-center text-xs font-semibold uppercase text-gray-500 dark:text-gray-400">Status</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody className="divide-y divide-gray-200 bg-white dark:divide-gray-700 dark:bg-gray-900">
+                    {purchaseData.purchases.length === 0 ? (
+                      <tr>
+                        <td colSpan={4} className="px-4 py-8 text-center text-sm text-gray-500 italic">
+                          No purchase records found.
+                        </td>
+                      </tr>
+                    ) : (
+                      purchaseData.purchases.map((po: any) => (
+                        <tr key={po.id} className="group hover:bg-gray-50 dark:hover:bg-gray-800/50">
+                          <td className="px-4 py-3 text-sm text-gray-600 dark:text-gray-300">
+                            <span className="flex items-center gap-2">
+                              <Calendar className="h-3.5 w-3.5 text-gray-400" />
+                              {dayjs(po.purchaseDate).format("DD MMM YY")}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 text-right text-sm font-medium text-gray-900 dark:text-white">
+                            {formatCurrency(po.totalAmount, po.currency)}
+                          </td>
+                          <td className={`px-4 py-3 text-right text-sm font-medium ${po.remainingAmount > 0 ? 'text-red-600' : 'text-green-600'}`}>
+                            {formatCurrency(po.remainingAmount, po.currency)}
+                          </td>
+                          <td className="px-4 py-3 text-center">
+                            <span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${
+                              po.status === 'received' ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' :
+                              po.status === 'ordered' ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400' :
+                              'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400'
+                            }`}>
+                              {po.status}
+                            </span>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
             )}
           </div>
         </div>
-        
-        {/* Close Button */}
-        <div className="flex justify-end pt-4">
-          <button type="button" onClick={onClose} className="rounded-lg border bg-white px-4 py-2 text-sm font-medium hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-800 dark:hover:bg-gray-700">Close</button>
+
+        {/* --- ACTIONS --- */}
+        <div className="mt-8 flex justify-end border-t border-gray-100 pt-5 dark:border-gray-700">
+          <button 
+            type="button" 
+            onClick={onClose} 
+            className="rounded-lg border border-gray-300 bg-white px-5 py-2.5 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
+          >
+            Close Profile
+          </button>
         </div>
+
       </div>
     </ModalBase>
   );

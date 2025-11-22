@@ -27,7 +27,13 @@ import {
   MoreVertical, X, AlertTriangle, FileText, CheckCircle, Clock, 
   XCircle, Info, TrendingUp, Send, Undo, FileWarning, Printer,
   Loader2, DollarSign, Receipt, CreditCard, Plus, Trash2,
-  Download // <-- (NEW) IMPORT
+  Download, User, Phone, Package,
+  ArrowUpRight,
+
+  CheckCircle2,
+ 
+  AlertCircle,
+  MoreHorizontal, Calendar // <-- (NEW) IMPORT
 } from "lucide-react"; 
 import { Dialog, Transition, Popover } from "@headlessui/react";
 
@@ -663,104 +669,219 @@ export const TransitionedModal = ({
 }
 
 // ... (ViewSaleModal unchanged)
-export const ViewSaleModal = ({ isOpen, onClose, sale, onPrint }: { isOpen: boolean, onClose: () => void, sale: any | null, onPrint: (sale: any) => void }) => {
+export const ViewSaleModal = ({ 
+  isOpen, 
+  onClose, 
+  sale, 
+  onPrint 
+}: { 
+  isOpen: boolean, 
+  onClose: () => void, 
+  sale: any | null, 
+  onPrint: (sale: any) => void 
+}) => {
   if (!sale) return null;
 
   const currency = sale.invoiceCurrency || 'USD';
 
   return (
     <TransitionedModal isOpen={isOpen} onClose={onClose} size="lg">
-      <Dialog.Title className="text-lg font-medium leading-6 text-gray-900 dark:text-white">
-        Sale Details: {sale.invoiceId || sale.id.slice(0, 6)}
-      </Dialog.Title>
-      <div className="mt-4 grid grid-cols-1 gap-6 md:grid-cols-3">
-        <div className="md:col-span-1">
-          <h4 className="font-semibold dark:text-white">Customer</h4>
-          <p className="text-sm text-gray-600 dark:text-gray-300">{sale.customerName}</p>
-          <p className="text-sm text-gray-500 dark:text-gray-400">{sale.customerPhone}</p>
-          <h4 className="mt-4 font-semibold dark:text-white">Sale Info</h4>
-          <p className="text-sm text-gray-600 dark:text-gray-300">Date: {dayjs(sale.createdAt).format("DD MMM YYYY, h:mm A")}</p>
-          <p className="text-sm text-gray-600 dark:text-gray-300">Salesperson: {sale.salespersonName}</p>
+      
+      {/* --- TOP BAR: Close Button Only (Clean look) --- */}
+      <div className="absolute right-4 top-4 z-10">
+        <button
+          type="button"
+          onClick={onClose}
+          className="rounded-full bg-gray-100 p-1 text-gray-500 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-400 dark:hover:bg-gray-700"
+        >
+          <X className="h-5 w-5" />
+        </button>
+      </div>
+
+      {/* --- HEADER SECTION --- */}
+      <div className="mb-6">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h2 className="text-2xl font-bold text-gray-900 dark:text-white">
+              Invoice <span className="text-gray-400">#</span>{sale.invoiceId || sale.id.slice(0, 6)}
+            </h2>
+            <div className="mt-1 flex items-center gap-3 text-sm text-gray-500 dark:text-gray-400">
+              <span className="flex items-center gap-1">
+                <Calendar className="h-3.5 w-3.5" />
+                {dayjs(sale.createdAt).format("DD MMM YYYY")}
+              </span>
+              <span className="h-1 w-1 rounded-full bg-gray-300 dark:bg-gray-600"></span>
+              <span className="flex items-center gap-1">
+                <Clock className="h-3.5 w-3.5" />
+                {dayjs(sale.createdAt).format("h:mm A")}
+              </span>
+            </div>
+          </div>
           
-          {/* --- FIX: Also use corrected status logic here --- */}
-          <StatusBadge 
-            status={
-              (sale.status === 'refunded' || sale.status === 'voided') 
-              ? sale.status 
-              : sale.paymentStatus
-            } 
-            options={SALE_STATUSES} 
-          />
-          
-        </div>
-        <div className="md:col-span-2">
-          <h4 className="font-semibold dark:text-white">Items</h4>
-          <div className="mt-2 flow-root">
-            <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
-              <thead className="bg-gray-50 dark:bg-gray-700/50">
-                <tr>
-                  <th className="py-2 pl-4 pr-3 text-left text-xs font-semibold text-gray-900 dark:text-white sm:pl-0">Product</th>
-                  <th className="px-3 py-2 text-left text-xs font-semibold text-gray-900 dark:text-white">Qty</th>
-                  <th className="px-3 py-2 text-left text-xs font-semibold text-gray-900 dark:text-white">Price</th>
-                  <th className="px-3 py-2 text-left text-xs font-semibold text-gray-900 dark:text-white">Total</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
-                {sale.items?.map((item: any) => (
-                  <tr key={item.productId || item.productName}>
-                    <td className="py-2 pl-4 pr-3 text-sm font-medium text-gray-900 dark:text-white sm:pl-0">{item.productName}</td>
-                    <td className="px-3 py-2 text-sm text-gray-500 dark:text-gray-400">{item.quantity}</td>
-                    <td className="px-3 py-2 text-sm text-gray-500 dark:text-gray-400">{formatCurrency(item.pricePerUnit, currency)}</td>
-                    <td className="px-3 py-2 text-sm font-medium text-gray-900 dark:text-white">{formatCurrency(item.quantity * item.pricePerUnit, currency)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <div className="mt-2 sm:mt-0">
+             <StatusBadge 
+              status={
+                (sale.status === 'refunded' || sale.status === 'voided') 
+                ? sale.status 
+                : sale.paymentStatus
+              } 
+              options={SALE_STATUSES} 
+            />
           </div>
         </div>
       </div>
-      <div className="mt-6 border-t border-gray-200 pt-4 dark:border-gray-700">
-        <h4 className="font-semibold dark:text-white">Financials</h4>
-        <div className="mt-2 space-y-2">
-          <TotalRow label="Total Amount" value={formatCurrency(sale.totalAmount, currency)} isBold={true} />
-          <TotalRow label="Amount Paid" value={formatCurrency(sale.totalPaid, currency)} />
-          <TotalRow label="Debt Remaining" value={formatCurrency(sale.debtAmount, currency)} isDebt={sale.debtAmount > 0} isBold={true} />
-        </div>
-        <h4 className="mt-4 font-semibold dark:text-white">Payment Methods</h4>
-        <div className="mt-2 space-y-1">
-          {sale.paymentLines?.length > 0 ? (
-            sale.paymentLines.map((pm: any, index: number) => (
-              <p key={index} className="text-sm text-gray-600 dark:text-gray-300">
-                - {formatCurrency(pm.amount, pm.currency || currency)} via <strong>{pm.method}</strong>
+
+      {/* --- INFO CARDS GRID --- */}
+      <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2">
+        
+        {/* Card 1: Customer Details */}
+        <div className="rounded-2xl border border-gray-100 bg-gray-50 p-4 dark:border-gray-700 dark:bg-gray-800/50">
+          <div className="mb-3 flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">
+            <User className="h-4 w-4 text-blue-500" />
+            Billed To
+          </div>
+          <div className="flex items-start justify-between">
+            <div>
+              <p className="text-base font-bold text-gray-900 dark:text-white">
+                {sale.customerName || 'Guest Customer'}
               </p>
-            ))
-          ) : (
-            <p className="text-sm text-gray-500 dark:text-gray-400">No payment details recorded.</p>
-          )}
+              {sale.customerPhone ? (
+                 <p className="mt-0.5 flex items-center gap-1.5 text-sm text-gray-600 dark:text-gray-300">
+                   <Phone className="h-3.5 w-3.5 text-gray-400" />
+                   {sale.customerPhone}
+                 </p>
+              ) : (
+                <p className="text-sm italic text-gray-400">No contact info</p>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Card 2: Sales Metadata */}
+        <div className="rounded-2xl border border-gray-100 bg-gray-50 p-4 dark:border-gray-700 dark:bg-gray-800/50">
+          <div className="mb-3 flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">
+            <CheckCircle className="h-4 w-4 text-green-500" />
+            Processed By
+          </div>
+          <div>
+             <p className="text-base font-bold text-gray-900 dark:text-white">
+                {sale.salespersonName || 'System Admin'}
+              </p>
+             <p className="mt-0.5 text-sm text-gray-600 dark:text-gray-300">
+               Sales Staff
+             </p>
+          </div>
         </div>
       </div>
+
+      {/* --- ITEMS TABLE --- */}
+      <div className="mb-6 overflow-hidden rounded-2xl border border-gray-200 dark:border-gray-700">
+        <div className="overflow-x-auto">
+          <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+            <thead className="bg-gray-50/80 backdrop-blur dark:bg-gray-800">
+              <tr>
+                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">Item</th>
+                <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">Qty</th>
+                <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">Price</th>
+                <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">Total</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-200 bg-white dark:divide-gray-700 dark:bg-gray-900">
+              {sale.items?.map((item: any, idx: number) => (
+                <tr key={idx} className="group hover:bg-gray-50 dark:hover:bg-gray-800/50">
+                  <td className="px-4 py-3">
+                    <div className="font-medium text-gray-900 dark:text-white">{item.productName}</div>
+                    {item.selectedVariants && Object.keys(item.selectedVariants).length > 0 && (
+                      <div className="mt-1 flex flex-wrap gap-1">
+                         {Object.values(item.selectedVariants).filter(Boolean).map((val: any, vIdx) => (
+                           <span key={vIdx} className="inline-flex items-center rounded border border-gray-200 px-1.5 py-0.5 text-[10px] text-gray-500 dark:border-gray-700 dark:text-gray-400">
+                             {val}
+                           </span>
+                         ))}
+                      </div>
+                    )}
+                  </td>
+                  <td className="px-4 py-3 text-right text-sm text-gray-600 dark:text-gray-300">{item.quantity}</td>
+                  <td className="px-4 py-3 text-right text-sm text-gray-600 dark:text-gray-300">{formatCurrency(item.pricePerUnit, currency)}</td>
+                  <td className="px-4 py-3 text-right text-sm font-semibold text-gray-900 dark:text-white">{formatCurrency(item.quantity * item.pricePerUnit, currency)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* --- FINANCIALS FOOTER --- */}
+      <div className="rounded-2xl bg-gray-900 p-6 text-white dark:bg-black/40 dark:ring-1 dark:ring-white/10">
+        <div className="grid grid-cols-1 gap-8 md:grid-cols-2">
+          
+          {/* Left: Payment Methods */}
+          <div className="space-y-4">
+            <h4 className="flex items-center gap-2 text-sm font-medium text-gray-400">
+              <CreditCard className="h-4 w-4" />
+              Payment History
+            </h4>
+            <div className="space-y-2">
+              {sale.paymentLines?.length > 0 ? (
+                sale.paymentLines.map((pm: any, index: number) => (
+                  <div key={index} className="flex items-center justify-between rounded-lg bg-gray-800/50 px-3 py-2 text-sm">
+                    <div className="flex items-center gap-2">
+                      <div className="h-1.5 w-1.5 rounded-full bg-green-500"></div>
+                      <span className="capitalize text-gray-300">{pm.method}</span>
+                    </div>
+                    <span className="font-mono font-medium">{formatCurrency(pm.amount, pm.currency || currency)}</span>
+                  </div>
+                ))
+              ) : (
+                <p className="text-sm italic text-gray-500">No payments recorded.</p>
+              )}
+            </div>
+          </div>
+
+          {/* Right: Big Totals */}
+          <div className="flex flex-col justify-center space-y-3 border-t border-gray-800 pt-4 md:border-l md:border-t-0 md:pl-8 md:pt-0">
+             <div className="flex justify-between text-sm text-gray-400">
+               <span>Subtotal</span>
+               <span>{formatCurrency(sale.totalAmount, currency)}</span>
+             </div>
+             
+             <div className="flex items-baseline justify-between">
+               <span className="text-lg font-medium text-gray-200">Total Due</span>
+               <span className="text-3xl font-bold tracking-tight">{formatCurrency(sale.totalAmount, currency)}</span>
+             </div>
+
+             {sale.debtAmount > 0 && (
+               <div className="mt-2 flex items-center justify-between rounded-lg bg-red-500/10 px-3 py-2 text-red-400">
+                 <span className="text-sm font-medium">Outstanding Balance</span>
+                 <span className="font-bold">{formatCurrency(sale.debtAmount, currency)}</span>
+               </div>
+             )}
+          </div>
+        </div>
+      </div>
+
+      {/* --- ACTIONS --- */}
       <div className="mt-6 flex justify-end gap-3">
         <button
           type="button"
-          className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
           onClick={onClose}
+          className="rounded-xl border border-gray-200 bg-white px-5 py-2.5 text-sm font-semibold text-gray-700 shadow-sm hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700"
         >
           Close
         </button>
         <button
           type="button"
-          className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-blue-700"
           onClick={() => onPrint(sale)}
+          className="flex items-center gap-2 rounded-xl bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white shadow-lg shadow-blue-500/30 hover:bg-blue-700 focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 dark:focus:ring-offset-gray-900"
         >
-          <Printer className="h-4 w-4 mr-2 inline" />
+          <Printer className="h-4 w-4" />
           Print Invoice
         </button>
       </div>
+
     </TransitionedModal>
   );
 };
-
-
 // --- (MODIFIED) NewReturnModal (with PDF) ---
 export const NewReturnModal = ({ isOpen, onClose, onSuccess, saleToReturn }: { 
   isOpen: boolean, 

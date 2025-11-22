@@ -1,42 +1,111 @@
-purchases
-form upload invoice image,,, 
-login:
-login needs refresh
+//////////////////////////
 
-product
-alaab faaido khasare
+birr and ksh no readinf on phone
 
 
-report unknown debit name
+dashaboard takes time for updating data
+dashbaord showing income as sales 
+
+sales not showing up in the mobile curency
 
 
-dashboard 
-today,month,
-invoice should be changed total refunded amount
-week and  custom shows normal, yestrday also normal i think
+alllll/////////////////////
+i saved sale with 230 price paid 100 debt  130 
+so my web shows note there was 23 exisiting manual debt
+dash :Today's Sales
+$200.00
 
-refund sales
-debt customer can be refunded 
+Sales Count
+1
 
+Total Revenue
+$200.00
 
-payment methods
+Profit Margin %
+100.0%
 
-payment methods should be usd sos slsh euro ksh birr
-payment methods should be linked to dropdown currency
-usd > shows as method >cash, bank, zaad, edahab, somnet, evc pluse, sahal,other
-sos> shows method cash bamk others
-slsh> shows cash, bank, edahab, zaad, other
-birr> cash, bank, ebirr, other
-ksh>bank, cash, other, m-pessa
-euro> cash, bank, other
+Net Profit
+$200.00
 
-dashboard not showing in summery
-finance not showing
+Total Expenses
+$0.00
 
+Cash Balance
+$0.00
 
+New Debts (Period)
+$153.00
 
+Outstanding Invoices
+$153.00
 
+Total Payables
+$0.00
 
-give m ethe products/page.tsx which have the button upted for dowload
+Low Stock
+0Items
 
-the button asks the user as fast as he click dowload report a box popup which shows filter like what kind of report he neeed date select date star end with else ready buttons today this work this month custom, and also all products and also 
+Total Products
+1Items
+sales:
+Total Sales
+$230.00
+
+Transactions
+1
+
+Average Sale
+$230.00
+
+Total Debts
+$130.00
+
+Paid %
+0%
+
+income :Total Income
+$200.00
+
+Total Expenses
+$0.00
+
+Net Profit
+$200.00
+
+Outstanding Invoices
+$153.00
+
+Cash on Hand
+$0.00
+
+Zaad Balance
+$0.00
+report: debt show Total Outstanding Debts
+$130.00
+
+Total Collected
+$0.00
+
+Total Debtors
+1
+report finance tab:Total Income
+$100.00
+
+Total Expenses
+$0.00
+
+Net Profit
+$100.00
+
+debt:Total Unpaid Debts
+$153.00
+
+Total Debts Paid
+$100.00
+
+mobile appp:
+sales: no data
+dash:income 200 profit 200, recent sale, 230+, 
+repott: income:100, debt 153
+debt:153 debt paid 100
+what do u think

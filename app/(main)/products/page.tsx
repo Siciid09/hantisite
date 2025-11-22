@@ -10,49 +10,50 @@
 // -----------------------------------------------------------------------------
 
 "use client";
+
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
-    UploadCloud,
-    AlertCircle
+  // --- Existing Icons ---
+  UploadCloud, TrendingUp, History, DollarSign, BarChart3,
+  ArrowRightLeft, AlertCircle, Box, Package, Tag, GitCompare, 
+  BookOpen, Plus, Trash, Edit, Search, AlertTriangle, Wallet, 
+  X, PackageCheck, PackageX, Warehouse, Loader2, List, Pencil, 
+  Camera, Download, Calendar as CalendarIconLucide, ChevronDown, 
+  Eye, ChevronLeft, ChevronRight, Layers, Image as ImageIcon,
+  
+  // --- NEWLY ADDED ICONS (For Modals/Forms) ---
+  Save, Building2, User, Phone, MessageCircle, Mail, MapPin,
+  CreditCard, Receipt, CheckCircle2, FileText
 } from 'lucide-react';
+
 import React, { useState, useEffect, useMemo } from "react";
 import useSWR, { useSWRConfig } from "swr";
 import useSWRInfinite from "swr/infinite";
-import { useAuth } from "@/app/contexts/AuthContext"; // Import useAuth
+import { useAuth } from "@/app/contexts/AuthContext"; 
 import { auth, storage } from "@/lib/firebaseConfig";
 import { ref, uploadBytes, getDownloadURL, deleteObject } from "firebase/storage";
 import dayjs from "dayjs";
 import Image from "next/image";
 import Link from "next/link"; 
 
-// --- (NEW) Import for PDF Generation ---
-import { PDFDownloadLink, PDFViewer } from '@react-pdf/renderer'; // The new library
-import { getTemplateComponent, ReportType } from '@/lib/pdfService'; // The new "brain"
+// --- PDF Generation ---
+import { PDFDownloadLink, PDFViewer } from '@react-pdf/renderer';
+import { getTemplateComponent, ReportType } from '@/lib/pdfService';
 
-// (Req 4) Imports for PDF/Excel (Excel still uses this)
+// --- Excel/PDF Legacy ---
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
 import * as XLSX from "xlsx";
-import {
-  Package, Tag, GitCompare, BookOpen, Plus, Trash, Edit,
-  Search, AlertTriangle, Wallet, X, PackageCheck,
-  PackageX, Warehouse, Loader2, List, Pencil, Camera, Download,
-  Calendar as CalendarIconLucide,
-  ChevronDown,
-  Eye,
-  ChevronLeft, ChevronRight,
-} from "lucide-react";
+
 import { Button } from "../../components/ui/Button";
 import { Popover, PopoverContent, PopoverTrigger } from "../../components/ui/popover";
 import { cn } from "@/lib/utils";
 import { 
   add, addDays, format, startOfWeek, startOfMonth, endOfDay,
   eachDayOfInterval, endOfMonth, endOfWeek, isSameDay, isSameMonth,
-  isToday, parse, sub,
-  isAfter, isBefore
+  isToday, parse, sub, isAfter, isBefore
 } from "date-fns";
 import { type DateRange } from "react-day-picker";
-
 // (A) Helpers
 // ... (All helpers: useDebounce, formatCurrency, etc. are unchanged) ...
 const fetcher = async (url: string) => {
@@ -1773,102 +1774,246 @@ function ProductViewModal({ product, onClose, displayCurrency }: {
     return Array.from(allCurrencies);
   }, [product]);
 
-  return (
-    <ModalBase title="Product Details" onClose={onClose}>
-      <div className="mt-4 space-y-4 max-h-[80vh] overflow-y-auto pr-2">
-        <div className="flex flex-col sm:flex-row gap-4">
-          <div className="flex-shrink-0">
-            {product.imageUrl ? (
-              <Image 
-                src={product.imageUrl} 
-                alt={product.name}
-                width={150}
-                height={150}
-                className="rounded-lg object-cover w-full sm:w-[150px] h-[150px]"
-              />
-            ) : (
-              <div className="flex h-[150px] w-full sm:w-[150px] items-center justify-center rounded-lg bg-gray-100 text-gray-400 dark:bg-gray-700">
-                <Package className="h-16 w-16" />
-              </div>
-            )}
-          </div>
-          <div className="flex-1">
-            <h2 className="text-2xl font-bold">{product.name}</h2>
-            <p className="mt-1 text-sm text-gray-500">{product.category}</p>
-            <p className="mt-4 text-gray-700 dark:text-gray-300">
-              {product.description || "No description provided."}
-            </p>
-          </div>
-        </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-4 border-t dark:border-gray-700">
-          <div>
-            <h4 className="font-semibold mb-2">Prices</h4>
-            <div className="space-y-2 rounded-lg border p-3 dark:border-gray-600">
-              {allPrices.length > 0 ? allPrices.map(currency => (
-                <div key={currency} className="flex justify-between items-center">
-                  <span className="font-medium text-gray-500">{currency}</span>
-                  <div className="text-right">
-                    <p>
-                      <span className="text-xs">Sale: </span> 
-                      {formatCurrency(product.salePrices?.[currency], currency)}
-                    </p>
-                    <p>
-                      <span className="text-xs">Cost: </span> 
-                      {formatCurrency(product.costPrices?.[currency], currency)}
-                    </p>
-                  </div>
-                </div>
-              )) : (
-                <p className="text-sm text-gray-400">No prices set.</p>
-              )}
-            </div>
-          </div>
-          <div>
-            <h4 className="font-semibold mb-2">Stock Levels</h4>
-            <div className="space-y-2 rounded-lg border p-3 dark:border-gray-600">
-              {stockError && <p className="text-sm text-red-500">Error loading stock.</p>}
-              {!stockLevels && !stockError && <TableLoader />}
-              {stockLevels && stockLevels.length === 0 && (
-                <p className="text-sm text-gray-400">No stock recorded.</p>
-              )}
-              {stockLevels?.map((stock: any) => (
-                <div key={stock.id} className="flex justify-between items-center">
-                  <span className="font-medium text-gray-500">{stock.warehouseName}</span>
-                  <span className="font-bold text-lg">{stock.quantity}</span>
-                </div>
-              ))}
-              <div className="flex justify-between items-center border-t pt-2 mt-2 dark:border-gray-600">
-                <span className="font-bold text-gray-800 dark:text-gray-200">Total Stock</span>
-                <span className="font-extrabold text-xl text-blue-600">{product.quantity}</span>
-              </div>
-            </div>
-          </div>
-        </div>
-        <div className="mt-4 pt-4 border-t dark:border-gray-700">
-          {hubLoading && <TableLoader />}
-          {hubError && <ErrorDisplay error={hubError} />}
-          {hubData && (
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-              <div>
-                <h4 className="font-semibold mb-2">Recent Sales</h4>
-                <div className="max-h-60 overflow-y-auto">
-                  <SalesHistoryTable sales={hubData.salesHistory} />
-                </div>
-              </div>
-              <div>
-                <h4 className="font-semibold mb-2">Stock Adjustments</h4>
-                <div className="max-h-60 overflow-y-auto">
-                  <AdjustmentsHistoryTable adjustments={hubData.adjustmentHistory} />
-                </div>
-              </div>
+return (
+  <ModalBase title="Product Overview" onClose={onClose}>
+    <div className="mt-2 max-h-[85vh] overflow-y-auto px-1 pb-8 scrollbar-hide">
+      
+      {/* ==========================================
+          1. HERO SECTION: Image & Key Info
+      ========================================== */}
+      <div className="flex flex-col gap-6 sm:flex-row">
+        {/* Product Image */}
+        <div className="relative h-40 w-40 flex-shrink-0 overflow-hidden rounded-2xl border border-gray-100 bg-white shadow-sm dark:border-gray-700 dark:bg-gray-800">
+          {product.imageUrl ? (
+            <Image 
+              src={product.imageUrl} 
+              alt={product.name} 
+              fill 
+              className="object-cover" 
+            />
+          ) : (
+            <div className="flex h-full w-full flex-col items-center justify-center text-gray-300 dark:text-gray-600">
+              <Package className="h-10 w-10 stroke-[1.5]" />
+              <span className="mt-2 text-[10px] font-medium uppercase tracking-widest">No Image</span>
             </div>
           )}
         </div>
-      </div>
-    </ModalBase>
-  );
-}
 
+        {/* Details */}
+        <div className="flex flex-1 flex-col justify-center">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="inline-flex items-center gap-1 rounded-md bg-gray-100 px-2.5 py-1 text-xs font-medium text-gray-600 dark:bg-gray-800 dark:text-gray-300">
+              <Tag className="h-3 w-3" />
+              {product.category || 'Uncategorized'}
+            </span>
+            <span className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-xs font-medium ${product.quantity > 0 ? 'bg-green-50 text-green-700 dark:bg-green-900/20 dark:text-green-400' : 'bg-red-50 text-red-700 dark:bg-red-900/20 dark:text-red-400'}`}>
+              <Box className="h-3 w-3" />
+              {product.quantity > 0 ? 'In Stock' : 'Out of Stock'}
+            </span>
+          </div>
+          
+          <h2 className="mt-3 text-3xl font-bold tracking-tight text-gray-900 dark:text-white">
+            {product.name}
+          </h2>
+          
+          <p className="mt-2 text-sm leading-relaxed text-gray-500 dark:text-gray-400">
+            {product.description || "No description provided."}
+          </p>
+          {/* --- VARIANT DISPLAY --- */}
+{product.options && product.options.length > 0 && (
+  <div className="mt-4 flex flex-wrap gap-2">
+    {product.options.map((opt: any, idx: number) => (
+      <span key={idx} className="inline-flex items-center rounded-md bg-blue-50 px-2 py-1 text-xs font-medium text-blue-700 ring-1 ring-inset ring-blue-700/10 dark:bg-blue-900/30 dark:text-blue-300">
+        {opt.name}: {Array.isArray(opt.values) ? opt.values.join(", ") : opt.values}
+      </span>
+    ))}
+  </div>
+)}
+{/* ----------------------- */}
+        </div>
+      </div>
+
+      {/* ==========================================
+          2. KEY METRICS ROW
+      ========================================== */}
+      <div className="mt-8 grid grid-cols-1 gap-4 border-y border-gray-100 py-6 dark:border-gray-700 sm:grid-cols-3">
+        <div className="px-2">
+          <p className="text-xs font-medium uppercase tracking-wider text-gray-500">Total Inventory</p>
+          <p className="mt-1 text-2xl font-bold text-gray-900 dark:text-white">{product.quantity}</p>
+        </div>
+        <div className="border-l border-gray-100 px-4 dark:border-gray-700">
+          <p className="text-xs font-medium uppercase tracking-wider text-gray-500">Base Price ({displayCurrency})</p>
+          <p className="mt-1 text-2xl font-bold text-gray-900 dark:text-white">
+            {formatCurrency(product.salePrices?.[displayCurrency] || 0, displayCurrency)}
+          </p>
+        </div>
+        <div className="border-l border-gray-100 px-4 dark:border-gray-700">
+          <p className="text-xs font-medium uppercase tracking-wider text-gray-500">Warehouses</p>
+          <p className="mt-1 text-2xl font-bold text-gray-900 dark:text-white">{stockLevels?.length || 0}</p>
+        </div>
+      </div>
+
+      {/* ==========================================
+          3. DATA TABLES (Pricing & Stock)
+      ========================================== */}
+      <div className="mt-8 grid grid-cols-1 gap-8 lg:grid-cols-2">
+        
+        {/* Pricing Table */}
+        <div>
+          <div className="mb-4 flex items-center gap-2">
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-50 text-blue-600 dark:bg-blue-900/20 dark:text-blue-400">
+              <DollarSign className="h-4 w-4" />
+            </div>
+            <h3 className="text-sm font-bold text-gray-900 dark:text-white">Pricing Structure</h3>
+          </div>
+          
+          <div className="overflow-hidden rounded-xl border border-gray-100 dark:border-gray-700">
+            <table className="min-w-full divide-y divide-gray-100 dark:divide-gray-700">
+              <thead className="bg-gray-50 dark:bg-gray-800">
+                <tr>
+                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase text-gray-500">Currency</th>
+                  <th className="px-4 py-3 text-right text-xs font-semibold uppercase text-gray-500">Cost</th>
+                  <th className="px-4 py-3 text-right text-xs font-semibold uppercase text-gray-500">Sale</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100 bg-white dark:divide-gray-700 dark:bg-gray-900">
+                {allPrices.length > 0 ? allPrices.map(curr => (
+                  <tr key={curr}>
+                    <td className="px-4 py-3 text-sm font-medium text-gray-900 dark:text-white">{curr}</td>
+                    <td className="px-4 py-3 text-right text-sm text-gray-500 font-mono">{formatCurrency(product.costPrices?.[curr], curr)}</td>
+                    <td className="px-4 py-3 text-right text-sm font-semibold text-gray-900 dark:text-white font-mono">{formatCurrency(product.salePrices?.[curr], curr)}</td>
+                  </tr>
+                )) : (
+                  <tr><td colSpan={3} className="p-4 text-center text-sm text-gray-400">No prices configured</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        {/* Stock Table */}
+        <div>
+          <div className="mb-4 flex items-center gap-2">
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-purple-50 text-purple-600 dark:bg-purple-900/20 dark:text-purple-400">
+              <Warehouse className="h-4 w-4" />
+            </div>
+            <h3 className="text-sm font-bold text-gray-900 dark:text-white">Stock Distribution</h3>
+          </div>
+
+          <div className="overflow-hidden rounded-xl border border-gray-100 dark:border-gray-700">
+            {stockError ? (
+               <div className="p-4 text-center text-sm text-red-500">Failed to load stock levels</div>
+            ) : !stockLevels ? (
+               <div className="p-4"><TableLoader /></div>
+            ) : (
+              <table className="min-w-full divide-y divide-gray-100 dark:divide-gray-700">
+                <thead className="bg-gray-50 dark:bg-gray-800">
+                  <tr>
+                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase text-gray-500">Location</th>
+                    <th className="px-4 py-3 text-right text-xs font-semibold uppercase text-gray-500">Available</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100 bg-white dark:divide-gray-700 dark:bg-gray-900">
+                  {stockLevels.length > 0 ? stockLevels.map((stock: any) => (
+                    <tr key={stock.id}>
+                      <td className="px-4 py-3 text-sm text-gray-600 dark:text-gray-300">{stock.warehouseName}</td>
+                      <td className="px-4 py-3 text-right text-sm font-bold text-gray-900 dark:text-white">{stock.quantity}</td>
+                    </tr>
+                  )) : (
+                    <tr><td colSpan={2} className="p-4 text-center text-sm text-gray-400">No stock recorded</td></tr>
+                  )}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* ==========================================
+          4. HISTORY SECTION
+      ========================================== */}
+      <div className="mt-10">
+        <h3 className="mb-6 text-lg font-bold text-gray-900 dark:text-white">Activity History</h3>
+        
+        {hubLoading && <TableLoader />}
+        {hubError && <div className="text-sm text-red-500">Error loading history data.</div>}
+        
+        {hubData && (
+          <div className="grid grid-cols-1 gap-8 lg:grid-cols-2">
+            
+            {/* Recent Sales */}
+            <div className="rounded-xl border border-gray-100 bg-white p-1 dark:border-gray-700 dark:bg-gray-900">
+              <div className="px-4 py-3 border-b border-gray-100 dark:border-gray-700">
+                <h4 className="flex items-center gap-2 text-xs font-bold uppercase text-gray-500">
+                  <BarChart3 className="h-3.5 w-3.5" /> Recent Sales
+                </h4>
+              </div>
+              <div className="max-h-60 overflow-y-auto">
+                {/* INLINED TABLE TO PREVENT HYDRATION ERRORS */}
+                {hubData.salesHistory?.length > 0 ? (
+                  <table className="min-w-full divide-y divide-gray-50 dark:divide-gray-800">
+                    <tbody className="divide-y divide-gray-50 dark:divide-gray-800">
+                      {hubData.salesHistory.map((sale: any) => (
+                        <tr key={sale.id} className="group hover:bg-gray-50 dark:hover:bg-gray-800/50">
+                          <td className="px-4 py-3 text-sm font-medium text-blue-600 dark:text-blue-400">
+                            #{sale.invoiceId?.slice(-6) || '---'}
+                          </td>
+                          <td className="px-4 py-3 text-right text-sm text-gray-600 dark:text-gray-300">
+                            {sale.quantity} items
+                          </td>
+                          <td className="px-4 py-3 text-right text-xs text-gray-400">
+                            {dayjs(sale.createdAt).format("DD MMM")}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                ) : (
+                  <p className="p-4 text-center text-sm text-gray-400 italic">No recent sales found.</p>
+                )}
+              </div>
+            </div>
+
+            {/* Stock Adjustments */}
+            <div className="rounded-xl border border-gray-100 bg-white p-1 dark:border-gray-700 dark:bg-gray-900">
+              <div className="px-4 py-3 border-b border-gray-100 dark:border-gray-700">
+                <h4 className="flex items-center gap-2 text-xs font-bold uppercase text-gray-500">
+                  <ArrowRightLeft className="h-3.5 w-3.5" /> Stock Movement
+                </h4>
+              </div>
+              <div className="max-h-60 overflow-y-auto">
+                {/* INLINED TABLE TO PREVENT HYDRATION ERRORS */}
+                {hubData.adjustmentHistory?.length > 0 ? (
+                  <table className="min-w-full divide-y divide-gray-50 dark:divide-gray-800">
+                    <tbody className="divide-y divide-gray-50 dark:divide-gray-800">
+                      {hubData.adjustmentHistory.map((adj: any) => (
+                        <tr key={adj.id} className="group hover:bg-gray-50 dark:hover:bg-gray-800/50">
+                          <td className="px-4 py-3 text-sm text-gray-900 dark:text-white capitalize">
+                            {adj.reason}
+                          </td>
+                          <td className={`px-4 py-3 text-right text-sm font-bold ${adj.quantityChange > 0 ? 'text-green-600' : 'text-red-600'}`}>
+                            {adj.quantityChange > 0 ? '+' : ''}{adj.quantityChange}
+                          </td>
+                          <td className="px-4 py-3 text-right text-xs text-gray-400">
+                            {dayjs(adj.createdAt).format("DD MMM")}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                ) : (
+                  <p className="p-4 text-center text-sm text-gray-400 italic">No stock adjustments found.</p>
+                )}
+              </div>
+            </div>
+
+          </div>
+        )}
+      </div>
+    </div>
+  </ModalBase>
+);
+}
 type ProductFormErrors = {
   name?: string;
   category?: string;
@@ -2084,182 +2229,407 @@ const ProductFormModal = React.memo(function ProductFormModal({ productToEdit, o
     } finally {
       setIsSubmitting(false);
     }
+  };// --- START: New Logic for Variants ---
+  const [options, setOptions] = useState<{ name: string; values: string }[]>([]);
+
+  const addOptionRow = () => {
+    setOptions([...options, { name: "", values: "" }]);
   };
-  return (
-    <ModalBase title={isEditMode ? "Edit Product" : "Add New Product"} onClose={onClose}>
-      <form onSubmit={handleSubmit} className="mt-4 space-y-4 max-h-[70vh] overflow-y-auto pr-2">
+
+  const removeOptionRow = (idx: number) => {
+    const newOptions = [...options];
+    newOptions.splice(idx, 1);
+    setOptions(newOptions);
+  };
+
+  const handleOptionChange = (idx: number, field: 'name' | 'values', val: string) => {
+    const newOptions = [...options];
+    newOptions[idx][field] = val;
+    setOptions(newOptions);
+  };
+  // --- END: New Logic for Variants ---
+return (
+    <ModalBase title={isEditMode ? "Edit Product" : "New Product Catalog"} onClose={onClose}>
+      <form onSubmit={handleSubmit} className="px-1 pb-4">
+        
+        {/* Global Error Banner */}
         {formErrors.name && !formErrors.category && !formErrors.warehouseId && (
-          <div className="rounded-md bg-red-50 p-3 text-red-700">
+          <div className="mb-6 flex items-center gap-3 rounded-lg bg-red-50 p-4 text-red-700 dark:bg-red-900/20 dark:text-red-400">
+            <AlertCircle className="h-5 w-5 flex-shrink-0" />
             <p className="text-sm font-medium">{formErrors.name}</p>
           </div>
         )}
-        <div className="flex flex-col items-center gap-2">
-          <label className="mb-1 block text-sm font-medium">Product Image (Optional)</label>
-          <div className="h-24 w-24 rounded-lg border bg-gray-50 dark:bg-gray-700 dark:border-gray-600 flex items-center justify-center">
-            {imagePreview ? (
-              <Image src={imagePreview} alt="Product" width={96} height={96} className="h-full w-full object-cover rounded-lg" />
-            ) : (
-              <Camera className="h-10 w-10 text-gray-400" />
-            )}
-          </div>
-          <div className="flex gap-2">
-            <label className="cursor-pointer rounded-md border px-3 py-1 text-sm text-blue-600 dark:border-gray-600 dark:text-blue-400">
-              Change Image
-              <input type="file" accept="image/*" className="hidden" onChange={handleImageSelect} />
-            </label>
-            {imagePreview && (
-              <button type="button" onClick={() => { setImageFile(null); setExistingImageUrl(null); setImagePreview(null); }} className="text-red-500 text-sm">
-                Remove
-              </button>
-            )}
-          </div>
-        </div>
-        <FormInput 
-          label="Product Name" 
-          value={name} 
-          onChange={setName} 
-          error={formErrors.name} 
-        />
-        <div className="flex items-end gap-2">
-          <FormSelect 
-            label="Category" 
-            value={category} 
-            onChange={setCategory} 
-            error={formErrors.category}
-            className="flex-1"
-          >
-            <option value="">-- Select Category --</option>
-            {categoriesData?.categories?.map((c: any) => (
-              <option key={c.id} value={c.name}>{c.name}</option>
-            ))}
-          </FormSelect>
-          <button 
-            type="button" 
-            title="Add new category"
-            onClick={() => setShowAddCategory(!showAddCategory)}
-            className="flex-shrink-0 rounded-lg border p-2.5 dark:border-gray-600"
-          >
-            <Plus className="h-5 w-5" />
-          </button>
-        </div>
-        {showAddCategory && (
-          <div className="flex items-end gap-2 rounded-lg border p-3 dark:border-gray-600">
-            <FormInput
-              label="New Category Name"
-              value={newCategoryName}
-              onChange={setNewCategoryName}
-              placeholder="e.g., Electronics"
-              className="flex-1"
+
+        <div className="max-h-[70vh] space-y-8 overflow-y-auto pr-2 scrollbar-thin scrollbar-thumb-gray-200 dark:scrollbar-thumb-gray-700">
+          
+          {/* --- SECTION 1: HERO (Image + Basics) --- */}
+         {/* --- SECTION 1: HERO (Clear, Big, Readable) --- */}
+<div className="rounded-xl bg-white p-6 shadow-sm ring-1 ring-gray-200 dark:bg-gray-800 dark:ring-gray-700">
+  
+  <div className="flex flex-col gap-8 md:flex-row">
+    
+    {/* LEFT: Image Upload (Big & Obvious) */}
+    <div className="flex flex-col gap-3">
+      <label className="text-sm font-bold text-gray-900 dark:text-white">
+        Product Image
+      </label>
+      
+      <div className="group relative h-48 w-48 overflow-hidden rounded-xl border-2 border-dashed border-gray-300 bg-gray-50 hover:bg-gray-100 dark:border-gray-600 dark:bg-gray-900">
+        
+        {imagePreview ? (
+          <>
+            <Image 
+              src={imagePreview} 
+              alt="Preview" 
+              fill 
+              className="object-cover" 
             />
+            {/* Permanent Remove Button - No Hover Tricks */}
             <button 
-              type="button" 
-              onClick={() => handleAddInline("category")}
-              disabled={isSavingInline}
-              className="rounded-lg bg-blue-600 px-3 py-2 text-white disabled:opacity-50"
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setImageFile(null); 
+                setExistingImageUrl(null); 
+                setImagePreview(null); 
+              }}
+              className="absolute right-2 top-2 flex h-9 w-9 items-center justify-center rounded-full bg-white shadow-md hover:bg-red-50 hover:text-red-600"
+              title="Delete Image"
             >
-              {isSavingInline ? <Loader2 className="h-4 w-4 animate-spin" /> : "Add"}
+              <Trash className="h-5 w-5 text-gray-600 hover:text-red-600" />
             </button>
+            
+            <div className="absolute bottom-0 w-full bg-black/50 py-2 text-center">
+              <span className="text-xs font-medium text-white">Click to Change</span>
+            </div>
+          </>
+        ) : (
+          <div className="flex h-full flex-col items-center justify-center text-center p-4 text-gray-500">
+            <Camera className="mb-2 h-10 w-10 text-gray-400" />
+            <span className="text-sm font-bold text-blue-600">Click to Upload</span>
+            <span className="mt-1 text-xs">JPG or PNG</span>
           </div>
         )}
-        <FormTextArea label="Description (Optional)" value={description} onChange={setDescription} />
-        {!isEditMode && (
-          <div className="rounded-lg border border-gray-300 p-3 dark:border-gray-600">
-            <h4 className="font-semibold">Initial Stock</h4>
-            <p className="text-xs text-gray-500 mb-3">Stock quantity is managed via adjustments after creation.</p>
-            <div className="grid grid-cols-2 gap-4">
-              <FormInput 
-                label="Initial Quantity" 
-                type="number" 
-                value={quantity} 
-                onChange={setQuantity} 
-                error={formErrors.quantity}
-                min="0"
+
+        {/* The actual input is invisible but covers the whole box */}
+        <input 
+          type="file" 
+          accept="image/*" 
+          className="absolute inset-0 h-full w-full cursor-pointer opacity-0" 
+          onChange={handleImageSelect} 
+        />
+      </div>
+    </div>
+
+
+    {/* RIGHT: Form Fields (High Contrast, Boxed Inputs) */}
+    <div className="flex-1 space-y-6">
+      
+      {/* 1. Product Name - Big Input */}
+      <div>
+        <label className="mb-2 block text-sm font-bold text-gray-900 dark:text-white">
+          Product Name <span className="text-red-500">*</span>
+        </label>
+        <input
+          type="text"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="e.g. Pepsi 500ml"
+          className="block w-full rounded-lg border-gray-300 px-4 py-3 text-lg font-medium text-gray-900 shadow-sm placeholder:text-gray-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700 dark:text-white"
+        />
+      </div>
+
+      <div className="grid gap-6 sm:grid-cols-2">
+        
+        {/* 2. Category Selection */}
+        <div>
+          <div className="mb-2 flex items-center justify-between">
+             <label className="text-sm font-bold text-gray-900 dark:text-white">
+               Category <span className="text-red-500">*</span>
+             </label>
+             {/* Clear Text Button for Add New */}
+             <button 
+                type="button"
+                onClick={() => setShowAddCategory(!showAddCategory)}
+                className="text-sm font-medium text-blue-600 hover:underline"
+             >
+               {showAddCategory ? "Cancel" : "+ Add New"}
+             </button>
+          </div>
+
+          {showAddCategory ? (
+            <div className="flex gap-2">
+              <input 
+                className="w-full rounded-lg border-gray-300 px-3 py-2.5 text-gray-900 shadow-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700 dark:text-white"
+                placeholder="New Category Name"
+                value={newCategoryName}
+                onChange={(e) => setNewCategoryName(e.target.value)}
               />
-              <div className="flex items-end gap-2">
-                <FormSelect 
-                  label="Warehouse" 
-                  value={warehouseId} 
-                  onChange={setWarehouseId} 
-                  error={formErrors.warehouseId}
-                  className="flex-1"
-                >
-                  <option value="">-- Select Warehouse --</option>
-                  {stockData?.warehouses?.map((w: any) => (
-                    <option key={w.id} value={w.id}>{w.name}</option>
-                  ))}
-                </FormSelect>
-                <button 
-                  type="button" 
-                  title="Add new warehouse"
-                  onClick={() => setShowAddWarehouse(!showAddWarehouse)}
-                  className="flex-shrink-0 rounded-lg border p-2.5 dark:border-gray-600"
-                >
-                  <Plus className="h-5 w-5" />
+              <button 
+                type="button" 
+                onClick={() => handleAddInline("category")}
+                disabled={isSavingInline}
+                className="rounded-lg bg-blue-600 px-4 font-bold text-white hover:bg-blue-700 disabled:opacity-50"
+              >
+                Save
+              </button>
+            </div>
+          ) : (
+            <div className="relative">
+              <select
+                value={category}
+                onChange={(e) => setCategory(e.target.value)}
+                className="block w-full appearance-none rounded-lg border-gray-300 bg-white px-4 py-3 text-base text-gray-900 shadow-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700 dark:text-white"
+              >
+                <option value="">Select a Category...</option>
+                {categoriesData?.categories?.map((c: any) => (
+                  <option key={c.id} value={c.name}>{c.name}</option>
+                ))}
+              </select>
+              {/* Dropdown Arrow Icon */}
+              <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-4 text-gray-500">
+                <ChevronDown className="h-5 w-5" />
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* 3. Description */}
+        <div>
+          <label className="mb-2 block text-sm font-bold text-gray-900 dark:text-white">
+            Short Note / Description
+          </label>
+          <input
+            type="text"
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            placeholder="Any details..."
+            className="block w-full rounded-lg border-gray-300 px-4 py-3 text-base text-gray-900 shadow-sm placeholder:text-gray-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700 dark:text-white"
+          />
+        </div>
+
+      </div>
+    </div>
+  </div>
+</div>
+
+          {/* --- SECTION 2: VARIANTS --- */}
+          <div className="rounded-xl border border-gray-100 bg-white p-5 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+            <div className="mb-4 flex items-center justify-between">
+              <h4 className="flex items-center gap-2 text-sm font-bold uppercase text-gray-900 dark:text-white">
+                <Layers className="h-4 w-4 text-purple-500" /> Variants
+              </h4>
+              <button type="button" onClick={addOptionRow} className="flex items-center gap-1 text-xs font-bold uppercase text-blue-600 hover:text-blue-700 dark:text-blue-400">
+                <Plus className="h-3 w-3" /> Add Variant
+              </button>
+            </div>
+            
+            {options.length === 0 ? (
+              <div className="rounded-lg border border-dashed border-gray-200 bg-gray-50 p-6 text-center dark:border-gray-700 dark:bg-gray-800/50">
+                <p className="text-sm text-gray-500">Does this product have options like Size or Color?</p>
+                <button type="button" onClick={addOptionRow} className="mt-2 text-sm font-medium text-blue-600 hover:underline">
+                  + Add Options
                 </button>
               </div>
+            ) : (
+              <div className="space-y-3">
+                {options.map((opt, idx) => (
+                  <div key={idx} className="group flex items-start gap-3 rounded-lg bg-gray-50 p-3 dark:bg-gray-900/50">
+                    <div className="w-1/3">
+                      <label className="mb-1 block text-[10px] font-bold uppercase text-gray-400">Option Name</label>
+                      <input
+                        placeholder="e.g. Size"
+                        value={opt.name}
+                        onChange={(e) => handleOptionChange(idx, 'name', e.target.value)}
+                        className="w-full rounded-md border border-gray-200 px-3 py-1.5 text-sm focus:border-blue-500 focus:outline-none dark:border-gray-700 dark:bg-gray-800"
+                      />
+                    </div>
+                    <div className="flex-1">
+                      <label className="mb-1 block text-[10px] font-bold uppercase text-gray-400">Values (Comma Separated)</label>
+                      <input
+                        placeholder="e.g. Small, Medium, Large"
+                        value={opt.values}
+                        onChange={(e) => handleOptionChange(idx, 'values', e.target.value)}
+                        className="w-full rounded-md border border-gray-200 px-3 py-1.5 text-sm focus:border-blue-500 focus:outline-none dark:border-gray-700 dark:bg-gray-800"
+                      />
+                    </div>
+                    <button type="button" onClick={() => removeOptionRow(idx)} className="mt-5 rounded-md p-1.5 text-gray-400 hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-900/20">
+                      <Trash className="h-4 w-4" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* --- SECTION 3: INVENTORY --- */}
+          {!isEditMode && (
+            <div className="rounded-xl border border-gray-100 bg-white p-5 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+              <h4 className="mb-4 flex items-center gap-2 text-sm font-bold uppercase text-gray-900 dark:text-white">
+                <Package className="h-4 w-4 text-orange-500" /> Initial Stock
+              </h4>
+              
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <FormInput 
+                  label="Starting Quantity" 
+                  type="number" 
+                  value={quantity} 
+                  onChange={setQuantity} 
+                  error={formErrors.quantity} 
+                  min="0"
+                  placeholder="0" 
+                />
+                
+                <div className="space-y-1">
+                  <div className="flex items-end gap-2">
+                    <div className="flex-1">
+                       <FormSelect label="Warehouse" value={warehouseId} onChange={setWarehouseId} error={formErrors.warehouseId}>
+                        <option value="">Select Location</option>
+                        {stockData?.warehouses?.map((w: any) => (
+                          <option key={w.id} value={w.id}>{w.name}</option>
+                        ))}
+                      </FormSelect>
+                    </div>
+                    <button 
+                      type="button" 
+                      onClick={() => setShowAddWarehouse(!showAddWarehouse)} 
+                      className={`mb-[2px] flex h-[42px] w-[42px] items-center justify-center rounded-lg border transition-colors ${showAddWarehouse ? 'bg-blue-50 border-blue-200 text-blue-600' : 'border-gray-300 hover:bg-gray-50 dark:border-gray-600'}`}
+                    >
+                      <Plus className="h-5 w-5" />
+                    </button>
+                  </div>
+                  
+                  {/* Inline Add Warehouse Form */}
+                  {showAddWarehouse && (
+                    <div className="mt-2 rounded-lg bg-gray-50 p-3 dark:bg-gray-900/50">
+                      <div className="mb-2 grid grid-cols-2 gap-2">
+                         <input 
+                          className="w-full rounded border border-gray-300 px-2 py-1.5 text-sm dark:border-gray-600 dark:bg-gray-700"
+                          placeholder="Name"
+                          value={newWarehouseName}
+                          onChange={(e) => setNewWarehouseName(e.target.value)}
+                        />
+                         <input 
+                          className="w-full rounded border border-gray-300 px-2 py-1.5 text-sm dark:border-gray-600 dark:bg-gray-700"
+                          placeholder="Address"
+                          value={newWarehouseAddress}
+                          onChange={(e) => setNewWarehouseAddress(e.target.value)}
+                        />
+                      </div>
+                      <button 
+                        type="button" 
+                        onClick={() => handleAddInline("warehouse")} 
+                        disabled={isSavingInline} 
+                        className="w-full rounded bg-blue-600 py-1.5 text-xs font-bold text-white hover:bg-blue-700"
+                      >
+                        {isSavingInline ? <Loader2 className="mx-auto h-3 w-3 animate-spin" /> : "Save Location"}
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* --- SECTION 4: PRICING --- */}
+        {/* --- SECTION 4: PRICING --- */}
+          <div className="rounded-xl border border-gray-100 bg-white p-5 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+            <div className="mb-5 flex items-center justify-between">
+              <h4 className="flex items-center gap-2 text-sm font-bold uppercase text-gray-900 dark:text-white">
+                <DollarSign className="h-4 w-4 text-green-500" /> Pricing Strategy
+              </h4>
+              <button type="button" onClick={addPriceField} className="flex items-center gap-1 text-xs font-bold uppercase text-blue-600 hover:text-blue-700 dark:text-blue-400">
+                <Plus className="h-3 w-3" /> Add Currency
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              {priceFields.map((field, index) => (
+                <div key={field.id} className="flex flex-col gap-4 rounded-xl border border-gray-200 bg-gray-50/50 p-4 dark:border-gray-700 dark:bg-gray-900/50 sm:flex-row sm:items-start">
+                   
+                   {/* Currency Selector */}
+                   <div className="w-full sm:w-[140px]">
+                      <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-gray-500">Currency</label>
+                      <FormSelect 
+                        label="" // Hide default label to avoid duplication
+                        value={field.currency} 
+                        onChange={(val: string) => handlePriceChange(field.id, "currency", val)}
+                        className="h-11 bg-white font-medium shadow-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 dark:bg-gray-800"
+                      >
+                        {AVAILABLE_CURRENCIES.map(c => <option key={c} value={c}>{c}</option>)}
+                      </FormSelect>
+                   </div>
+
+                   {/* Sale Price Input */}
+                   <div className="flex-1">
+                      <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-blue-600/80 dark:text-blue-400">Sale Price</label>
+                      <div className="relative">
+                         <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
+                           <span className="text-gray-400 font-bold">$</span>
+                         </div>
+                         <FormInput 
+                          label="" // Hide default label
+                          type="number" 
+                          placeholder="0.00" 
+                          value={field.sale} 
+                          onChange={(val: string) => handlePriceChange(field.id, "sale", val)} 
+                          className="h-11 w-full rounded-lg border border-gray-300 bg-white pl-7 text-lg font-bold text-gray-900 placeholder-gray-300 shadow-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 dark:border-gray-600 dark:bg-gray-800 dark:text-white"
+                        />
+                      </div>
+                   </div>
+
+                   {/* Cost Price Input */}
+                   <div className="flex-1">
+                      <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-orange-600/80 dark:text-orange-400">Cost Price</label>
+                      <div className="relative">
+                         <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
+                           <span className="text-gray-400 font-bold">$</span>
+                         </div>
+                         <FormInput 
+                          label="" // Hide default label
+                          type="number" 
+                          placeholder="0.00" 
+                          value={field.cost} 
+                          onChange={(val: string) => handlePriceChange(field.id, "cost", val)}
+                          className="h-11 w-full rounded-lg border border-gray-300 bg-white pl-7 text-lg font-bold text-gray-900 placeholder-gray-300 shadow-sm focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 dark:border-gray-600 dark:bg-gray-800 dark:text-white"
+                        />
+                      </div>
+                   </div>
+                   
+                   {/* Remove Button */}
+                   <div className="flex h-[74px] items-end sm:h-auto sm:pt-7">
+                     {priceFields.length > 1 && (
+                       <button 
+                         type="button" 
+                         onClick={() => removePriceField(field.id)} 
+                         className="flex h-11 w-11 items-center justify-center rounded-lg border border-gray-200 bg-white text-gray-400 hover:border-red-200 hover:bg-red-50 hover:text-red-500 dark:border-gray-700 dark:bg-gray-800 dark:hover:bg-red-900/20"
+                         title="Remove Currency"
+                       >
+                         <Trash className="h-5 w-5" />
+                       </button>
+                     )}
+                   </div>
+                </div>
+              ))}
             </div>
           </div>
-        )}
-        {!isEditMode && showAddWarehouse && (
-          <div className="space-y-3 rounded-lg border p-3 dark:border-gray-600">
-            <div className="flex items-end gap-2">
-              <FormInput
-                label="New Warehouse Name"
-                value={newWarehouseName}
-                onChange={setNewWarehouseName}
-                placeholder="e.g., Main Branch"
-                className="flex-1"
-              />
-              <FormInput
-                label="Address (Optional)"
-                value={newWarehouseAddress}
-                onChange={setNewWarehouseAddress}
-                placeholder="e.g., 123 Main St"
-                className="flex-1"
-              />
-            </div>
-            <button 
-              type="button" 
-              onClick={() => handleAddInline("warehouse")}
-              disabled={isSavingInline}
-              className="w-full rounded-lg bg-blue-600 px-3 py-2 text-white disabled:opacity-50"
-            >
-              {isSavingInline ? <Loader2 className="h-4 w-4 animate-spin" /> : "Add Warehouse"}
-            </button>
-          </div>
-        )}
-        <div className="space-y-3">
-          <h4 className="font-semibold">Prices</h4>
-          {priceFields.map((field, index) => (
-            <div key={field.id} className="grid grid-cols-12 gap-2">
-              <div className="col-span-4">
-                <FormSelect label={index === 0 ? "Currency" : ""} value={field.currency} onChange={(val) => handlePriceChange(field.id, "currency", val)}>
-                  {AVAILABLE_CURRENCIES.map(c => <option key={c} value={c}>{c}</option>)}
-                </FormSelect>
-              </div>
-              <div className="col-span-3">
-                <FormInput label={index === 0 ? "Sale Price" : ""} type="number" placeholder="e.g., 10" value={field.sale} onChange={(val) => handlePriceChange(field.id, "sale", val)} />
-              </div>
-              <div className="col-span-3">
-                <FormInput label={index === 0 ? "Cost Price" : ""} type="number" placeholder="e.g., 5" value={field.cost} onChange={(val) => handlePriceChange(field.id, "cost", val)} />
-              </div>
-              <div className="col-span-2 flex items-end pb-2">
-                {priceFields.length > 1 && (
-                  <button type="button" onClick={() => removePriceField(field.id)} className="text-red-500">
-                    <Trash className="h-5 w-5" />
-                  </button>
-                )}
-              </div>
-            </div>
-          ))}
-          <button type="button" onClick={addPriceField} className="flex items-center gap-1 text-sm text-blue-600 hover:text-blue-800">
-            <Plus className="h-4 w-4" /> Add another currency
-          </button>
         </div>
-        <div className="flex justify-end gap-3 pt-4 border-t dark:border-gray-700">
-          <button type="button" onClick={onClose} className="rounded-lg border px-4 py-2 text-sm dark:border-gray-600">Cancel</button>
-          <button type="submit" disabled={isSubmitting} className="rounded-lg bg-blue-600 px-4 py-2 text-sm text-white disabled:opacity-50">
-            {isSubmitting ? <Loader2 className="animate-spin" /> : (isEditMode ? "Save Changes" : "Create Product")}
+
+        {/* --- FOOTER ACTIONS --- */}
+        <div className="mt-6 flex justify-end gap-3 border-t border-gray-100 pt-4 dark:border-gray-700">
+          <button 
+            type="button" 
+            onClick={onClose} 
+            className="rounded-lg border border-gray-300 bg-white px-5 py-2.5 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
+          >
+            Cancel
+          </button>
+          <button 
+            type="submit" 
+            disabled={isSubmitting} 
+            className="flex min-w-[140px] items-center justify-center rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-bold text-white shadow-md shadow-blue-500/20 hover:bg-blue-700 disabled:opacity-50"
+          >
+            {isSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : (isEditMode ? "Save Changes" : "Create Product")}
           </button>
         </div>
       </form>

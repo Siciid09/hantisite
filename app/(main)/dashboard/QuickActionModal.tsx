@@ -1,36 +1,456 @@
 "use client";
-// -----------------------------------------------------------------------------
-// File: app/(main)/dashboard/QuickActionModal.tsx
-//
-// --- LATEST UPDATES (v3.0 - API Fix) ---
-// 1. (CRITICAL FIX) AddIncomeForm now POSTs to `/api/incomes` instead of `/api/debts`.
-// 2. (CRITICAL FIX) AddExpenseForm now POSTs to `/api/expenses` instead of `/api/debts`.
-// 3. (CLEANUP) Removed the `type: "new_income"` field from the payload
-//    as it's no longer needed.
-// 4. (MODERN UI) All previous UI updates and category features are kept.
-// -----------------------------------------------------------------------------
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { useAuth } from "@/app/contexts/AuthContext";
 import { auth } from "@/lib/firebaseConfig";
-import { X as XIcon, Loader2, Plus } from "lucide-react";
+import { 
+  X, Loader2, Plus, DollarSign, Calendar, 
+  Tag, Check, TrendingUp, TrendingDown, ChevronDown, CreditCard
+} from "lucide-react";
 import dayjs from "dayjs";
+import { cn } from "@/lib/utils";
 
-// All currencies
+// --- Constants (Unchanged) ---
 const ALL_CURRENCIES = ["USD", "SLSH", "SOS", "EUR", "KSH", "BIRR"];
-
-// Default categories
 const DEFAULT_INCOME_CATEGORIES = ["Sales", "Services", "Rent", "Other Income"];
-const DEFAULT_EXPENSE_CATEGORIES = [
-  "Office Supplies",
-  "Rent",
-  "Salaries",
-  "Utilities",
-  "Travel",
-  "Other",
-];
+const DEFAULT_EXPENSE_CATEGORIES = ["Office Supplies", "Rent", "Salaries", "Utilities", "Travel", "Other"];
 
-// --- Main Modal Component ---
+const paymentMethodsByCurrency: Record<string, string[]> = {
+  USD: ["CASH", "BANK", "ZAAD", "EDAHAB", "SOMNET", "EVC_PLUS", "SAHAL", "OTHER"],
+  SOS: ["CASH", "BANK", "OTHER"],
+  SLSH: ["CASH", "BANK", "EDAHAB", "ZAAD", "OTHER"],
+  BIRR: ["CASH", "BANK", "E_BIRR", "OTHER"],
+  KSH: ["BANK", "CASH", "M_PESA", "OTHER"],
+  EUR: ["CASH", "BANK", "OTHER"],
+};
+
+// --- 1. LARGER CENTERED MODAL BASE ---
+const ModalBase = ({ title, onClose, children }: { title: string, onClose: () => void, children: React.ReactNode }) => {
+  return (
+    // items-center ensures vertical centering
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+      
+      {/* 1. max-w-3xl: Increased width (was 2xl)
+         2. scale-100: Ensures it renders at full size
+      */}
+      <div className="w-full max-w-3xl bg-white dark:bg-gray-900 rounded-3xl shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200 border border-gray-100 dark:border-gray-800">
+        
+        {/* Larger Header */}
+        <div className="flex justify-between items-center px-8 py-5 border-b border-gray-100 dark:border-gray-800 bg-gray-50/50 dark:bg-gray-900/50">
+          <h3 className="text-2xl font-bold text-gray-900 dark:text-white">{title}</h3>
+          <button 
+            onClick={onClose} 
+            className="rounded-full p-2 bg-white dark:bg-gray-800 text-gray-400 hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-gray-700 dark:hover:text-gray-300 transition-all shadow-sm border border-gray-100 dark:border-gray-700"
+          >
+            <X className="h-6 w-6" />
+          </button>
+        </div>
+
+        {/* Larger Content Area */}
+        <div className="p-8">
+          {children}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// --- 2. Larger Components ---
+const CategoryInput = ({ value, onChange, categories, onAddNewCategory }: any) => {
+  const [isAdding, setIsAdding] = useState(false);
+  const [newCat, setNewCat] = useState("");
+
+  const handleAdd = () => {
+    if (newCat.trim()) {
+      onAddNewCategory(newCat.trim());
+      onChange(newCat.trim()); 
+      setIsAdding(false);
+      setNewCat("");
+    }
+  };
+
+  if (isAdding) {
+    return (
+      <div className="flex gap-2 animate-in fade-in h-[50px]">
+        <input 
+          value={newCat}
+          onChange={(e) => setNewCat(e.target.value)}
+          placeholder="New Category..."
+          className="flex-1 rounded-xl border border-blue-200 bg-blue-50 px-4 text-base focus:outline-none dark:bg-blue-900/20 dark:border-blue-800 dark:text-blue-100"
+          autoFocus
+          onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), handleAdd())}
+        />
+        <button type="button" onClick={handleAdd} className="bg-blue-600 text-white px-4 rounded-xl font-bold hover:bg-blue-700"><Check className="h-5 w-5"/></button>
+        <button type="button" onClick={() => setIsAdding(false)} className="text-gray-400 hover:text-gray-600 px-2"><X className="h-5 w-5"/></button>
+      </div>
+    )
+  }
+
+  return (
+    <div className="relative h-[50px]">
+      <div className="absolute inset-y-0 left-0 flex items-center pl-4 pointer-events-none text-gray-400">
+        <Tag className="h-5 w-5" />
+      </div>
+      <select
+        value={value}
+        onChange={(e) => {
+          if (e.target.value === "ADD_NEW") setIsAdding(true);
+          else onChange(e.target.value);
+        }}
+        className="block w-full h-full appearance-none rounded-xl border border-gray-200 bg-white pl-11 pr-10 text-base text-gray-900 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 dark:border-gray-700 dark:bg-gray-800 dark:text-white cursor-pointer"
+      >
+        {categories.map((c: string) => <option key={c} value={c}>{c}</option>)}
+        <option value="ADD_NEW" className="text-blue-600 font-bold">+ Add New Category</option>
+      </select>
+      <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-3 text-gray-500">
+        <ChevronDown className="h-5 w-5" />
+      </div>
+    </div>
+  );
+};
+
+// --- 3. LARGER Add Income Form ---
+const AddIncomeForm = ({ onClose, onSuccess }: { onClose: () => void; onSuccess: () => void; }) => {
+  const { user } = useAuth();
+  const [amount, setAmount] = useState("");
+  const [currency, setCurrency] = useState("USD");
+  const [description, setDescription] = useState("");
+  const [incomeCategories, setIncomeCategories] = useState(DEFAULT_INCOME_CATEGORIES);
+  const [category, setCategory] = useState(incomeCategories[0]);
+  const [date, setDate] = useState(dayjs().format("YYYY-MM-DD"));
+  const [error, setError] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [paymentMethod, setPaymentMethod] = useState("CASH");
+
+  useEffect(() => {
+    const methods = paymentMethodsByCurrency[currency] || ["CASH", "OTHER"];
+    setPaymentMethod(methods[0]);
+  }, [currency]);
+
+  const handleAddNewCategory = (newCat: string) => {
+    if (!incomeCategories.includes(newCat)) setIncomeCategories(prev => [...prev, newCat]);
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!user) return setError("Please log in.");
+    if (!amount || !category) return setError("Amount and Category required.");
+
+    setIsSubmitting(true);
+    setError(null);
+
+    try {
+      const token = await auth.currentUser?.getIdToken();
+      const res = await fetch("/api/incomes", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          type: "new_income", amount: parseFloat(amount), currency,
+          description: description || `Income on ${date}`,
+          category, paymentMethod, date,
+        }),
+      });
+
+      if (!res.ok) throw new Error((await res.json()).error || "Failed to save.");
+      onSuccess();
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const availableMethods = paymentMethodsByCurrency[currency] || ["CASH", "OTHER"];
+
+  return (
+    <form onSubmit={handleSubmit} className="space-y-8"> {/* Increased vertical spacing */}
+      
+      {error && (
+        <div className="p-3 text-base text-red-600 bg-red-50 border border-red-100 rounded-xl dark:bg-red-900/20 dark:text-red-400 dark:border-red-800">
+          {error}
+        </div>
+      )}
+
+      {/* ROW 1: Amount, Currency, Method (Combined) */}
+      <div className="grid grid-cols-12 gap-4"> {/* Increased gap */}
+        
+        {/* Amount */}
+        <div className="col-span-5">
+          <label className="text-xs font-bold uppercase text-gray-500 mb-2 block tracking-wider">Amount</label>
+          <div className="relative h-[50px]"> {/* Fixed height for alignment */}
+             <div className="absolute inset-y-0 left-0 flex items-center pl-4 pointer-events-none">
+               <DollarSign className="h-5 w-5 text-green-600" />
+             </div>
+             <input
+              type="number"
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+              placeholder="0.00"
+              className="block w-full h-full rounded-xl border border-gray-200 bg-white pl-10 pr-2 text-lg font-bold text-green-700 focus:border-green-500 focus:ring-2 focus:ring-green-500/20 dark:bg-gray-800 dark:border-gray-700 dark:text-green-400"
+              autoFocus
+            />
+          </div>
+        </div>
+
+        {/* Currency */}
+        <div className="col-span-3">
+          <label className="text-xs font-bold uppercase text-gray-500 mb-2 block tracking-wider">Currency</label>
+          <select
+            value={currency}
+            onChange={(e) => setCurrency(e.target.value)}
+            className="block w-full h-[50px] rounded-xl border border-gray-200 bg-gray-50 px-3 text-base font-bold text-gray-700 focus:border-green-500 focus:ring-2 focus:ring-green-500/20 dark:bg-gray-800 dark:border-gray-700 dark:text-white cursor-pointer"
+          >
+            {ALL_CURRENCIES.map(c => <option key={c} value={c}>{c}</option>)}
+          </select>
+        </div>
+
+        {/* Method */}
+        <div className="col-span-4">
+          <label className="text-xs font-bold uppercase text-gray-500 mb-2 block tracking-wider">Method</label>
+          <div className="relative h-[50px]">
+             <select
+              value={paymentMethod}
+              onChange={(e) => setPaymentMethod(e.target.value)}
+              className="block w-full h-full appearance-none rounded-xl border border-gray-200 bg-white pl-4 pr-8 text-base text-gray-900 focus:border-green-500 focus:ring-2 focus:ring-green-500/20 dark:bg-gray-800 dark:border-gray-700 dark:text-white cursor-pointer"
+            >
+              {availableMethods.map((m) => (
+                <option key={m} value={m}>{m.replace(/_/g, " ")}</option>
+              ))}
+            </select>
+            <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-3 text-gray-500">
+              <ChevronDown className="h-4 w-4" />
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* ROW 2: Category & Date */}
+      <div className="grid grid-cols-2 gap-4">
+        <div>
+          <label className="text-xs font-bold uppercase text-gray-500 mb-2 block tracking-wider">Category</label>
+          <CategoryInput 
+            value={category}
+            onChange={setCategory}
+            categories={incomeCategories}
+            onAddNewCategory={handleAddNewCategory}
+          />
+        </div>
+        <div>
+          <label className="text-xs font-bold uppercase text-gray-500 mb-2 block tracking-wider">Date</label>
+          <div className="relative h-[50px]">
+            <div className="absolute inset-y-0 left-0 flex items-center pl-4 pointer-events-none text-gray-400">
+              <Calendar className="h-5 w-5" />
+            </div>
+            <input
+              type="date"
+              value={date}
+              onChange={(e) => setDate(e.target.value)}
+              className="block w-full h-full rounded-xl border border-gray-200 bg-white pl-11 pr-4 text-base text-gray-900 focus:border-green-500 focus:ring-2 focus:ring-green-500/20 dark:bg-gray-800 dark:border-gray-700 dark:text-white"
+            />
+          </div>
+        </div>
+      </div>
+
+      {/* ROW 3: Description */}
+      <div>
+        <label className="text-xs font-bold uppercase text-gray-500 mb-2 block tracking-wider">Description</label>
+        <textarea
+          value={description}
+          onChange={(e) => setDescription(e.target.value)}
+          placeholder="Optional description..."
+          rows={3}
+          className="block w-full rounded-xl border border-gray-200 bg-white p-4 text-base focus:border-green-500 focus:ring-2 focus:ring-green-500/20 dark:bg-gray-800 dark:border-gray-700 dark:text-white resize-none"
+        />
+      </div>
+
+      {/* Footer Actions */}
+      <div className="flex items-center justify-end gap-4 pt-4">
+        <button type="button" onClick={onClose} className="px-6 py-3 text-base font-bold text-gray-600 hover:bg-gray-100 rounded-xl dark:text-gray-400 dark:hover:bg-gray-800 transition-colors">
+          Cancel
+        </button>
+        <button 
+          type="submit" 
+          disabled={isSubmitting}
+          className="flex items-center gap-2 rounded-xl bg-green-600 px-8 py-3 text-base font-bold text-white hover:bg-green-700 disabled:opacity-50 shadow-lg shadow-green-500/30 transition-all hover:scale-[1.02]"
+        >
+          {isSubmitting ? <Loader2 className="h-5 w-5 animate-spin" /> : <><TrendingUp className="h-5 w-5" /> Save Income</>}
+        </button>
+      </div>
+    </form>
+  );
+};
+
+// --- 4. LARGER Add Expense Form ---
+const AddExpenseForm = ({ onClose, onSuccess }: { onClose: () => void; onSuccess: () => void; }) => {
+  const { user } = useAuth();
+  const [amount, setAmount] = useState("");
+  const [currency, setCurrency] = useState("USD");
+  const [description, setDescription] = useState("");
+  const [expenseCategories, setExpenseCategories] = useState(DEFAULT_EXPENSE_CATEGORIES);
+  const [category, setCategory] = useState(expenseCategories[0]);
+  const [date, setDate] = useState(dayjs().format("YYYY-MM-DD"));
+  const [error, setError] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [paymentMethod, setPaymentMethod] = useState("CASH");
+
+  useEffect(() => {
+    const methods = paymentMethodsByCurrency[currency] || ["CASH", "OTHER"];
+    setPaymentMethod(methods[0]);
+  }, [currency]);
+
+  const handleAddNewCategory = (newCat: string) => {
+    if (!expenseCategories.includes(newCat)) setExpenseCategories(prev => [...prev, newCat]);
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!user) return setError("Please log in.");
+    if (!amount || !category) return setError("Amount and Category required.");
+
+    setIsSubmitting(true);
+    setError(null);
+
+    try {
+      const token = await auth.currentUser?.getIdToken();
+      const res = await fetch("/api/expenses", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          type: "new_expense", amount: parseFloat(amount), currency,
+          description: description || `Expense on ${date}`,
+          category, paymentMethod, date,
+        }),
+      });
+
+      if (!res.ok) throw new Error((await res.json()).error || "Failed to save.");
+      onSuccess();
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const availableMethods = paymentMethodsByCurrency[currency] || ["CASH", "OTHER"];
+
+  return (
+    <form onSubmit={handleSubmit} className="space-y-8">
+      {error && (
+        <div className="p-3 text-base text-red-600 bg-red-50 border border-red-100 rounded-xl dark:bg-red-900/20 dark:text-red-400 dark:border-red-800">
+          {error}
+        </div>
+      )}
+
+      {/* ROW 1: Amount, Currency, Method (Combined) */}
+      <div className="grid grid-cols-12 gap-4">
+        
+        {/* Amount */}
+        <div className="col-span-5">
+          <label className="text-xs font-bold uppercase text-gray-500 mb-2 block tracking-wider">Amount</label>
+          <div className="relative h-[50px]">
+             <div className="absolute inset-y-0 left-0 flex items-center pl-4 pointer-events-none">
+               <DollarSign className="h-5 w-5 text-red-600" />
+             </div>
+             <input
+              type="number"
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+              placeholder="0.00"
+              className="block w-full h-full rounded-xl border border-gray-200 bg-white pl-10 pr-2 text-lg font-bold text-red-700 focus:border-red-500 focus:ring-2 focus:ring-red-500/20 dark:bg-gray-800 dark:border-gray-700 dark:text-red-400"
+              autoFocus
+            />
+          </div>
+        </div>
+
+        {/* Currency */}
+        <div className="col-span-3">
+          <label className="text-xs font-bold uppercase text-gray-500 mb-2 block tracking-wider">Currency</label>
+          <select
+            value={currency}
+            onChange={(e) => setCurrency(e.target.value)}
+            className="block w-full h-[50px] rounded-xl border border-gray-200 bg-gray-50 px-3 text-base font-bold text-gray-700 focus:border-red-500 focus:ring-2 focus:ring-red-500/20 dark:bg-gray-800 dark:border-gray-700 dark:text-white cursor-pointer"
+          >
+            {ALL_CURRENCIES.map(c => <option key={c} value={c}>{c}</option>)}
+          </select>
+        </div>
+
+        {/* Method */}
+        <div className="col-span-4">
+          <label className="text-xs font-bold uppercase text-gray-500 mb-2 block tracking-wider">Method</label>
+          <div className="relative h-[50px]">
+             <select
+              value={paymentMethod}
+              onChange={(e) => setPaymentMethod(e.target.value)}
+              className="block w-full h-full appearance-none rounded-xl border border-gray-200 bg-white pl-4 pr-8 text-base text-gray-900 focus:border-red-500 focus:ring-2 focus:ring-red-500/20 dark:bg-gray-800 dark:border-gray-700 dark:text-white cursor-pointer"
+            >
+              {availableMethods.map((m) => (
+                <option key={m} value={m}>{m.replace(/_/g, " ")}</option>
+              ))}
+            </select>
+            <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-3 text-gray-500">
+              <ChevronDown className="h-4 w-4" />
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* ROW 2: Category & Date */}
+      <div className="grid grid-cols-2 gap-4">
+        <div>
+          <label className="text-xs font-bold uppercase text-gray-500 mb-2 block tracking-wider">Expense Type</label>
+          <CategoryInput 
+            value={category}
+            onChange={setCategory}
+            categories={expenseCategories}
+            onAddNewCategory={handleAddNewCategory}
+          />
+        </div>
+        <div>
+          <label className="text-xs font-bold uppercase text-gray-500 mb-2 block tracking-wider">Date</label>
+          <div className="relative h-[50px]">
+            <div className="absolute inset-y-0 left-0 flex items-center pl-4 pointer-events-none text-gray-400">
+              <Calendar className="h-5 w-5" />
+            </div>
+            <input
+              type="date"
+              value={date}
+              onChange={(e) => setDate(e.target.value)}
+              className="block w-full h-full rounded-xl border border-gray-200 bg-white pl-11 pr-4 text-base text-gray-900 focus:border-red-500 focus:ring-2 focus:ring-red-500/20 dark:bg-gray-800 dark:border-gray-700 dark:text-white"
+            />
+          </div>
+        </div>
+      </div>
+
+      {/* ROW 3: Description */}
+      <div>
+        <label className="text-xs font-bold uppercase text-gray-500 mb-2 block tracking-wider">Notes</label>
+        <textarea
+          value={description}
+          onChange={(e) => setDescription(e.target.value)}
+          placeholder="Optional notes..."
+          rows={3}
+          className="block w-full rounded-xl border border-gray-200 bg-white p-4 text-base focus:border-red-500 focus:ring-2 focus:ring-red-500/20 dark:bg-gray-800 dark:border-gray-700 dark:text-white resize-none"
+        />
+      </div>
+
+      {/* Footer Actions */}
+      <div className="flex items-center justify-end gap-4 pt-4">
+        <button type="button" onClick={onClose} className="px-6 py-3 text-base font-bold text-gray-600 hover:bg-gray-100 rounded-xl dark:text-gray-400 dark:hover:bg-gray-800 transition-colors">
+          Cancel
+        </button>
+        <button 
+          type="submit" 
+          disabled={isSubmitting}
+          className="flex items-center gap-2 rounded-xl bg-red-600 px-8 py-3 text-base font-bold text-white hover:bg-red-700 disabled:opacity-50 shadow-lg shadow-red-500/30 transition-all hover:scale-[1.02]"
+        >
+          {isSubmitting ? <Loader2 className="h-5 w-5 animate-spin" /> : <><TrendingDown className="h-5 w-5" /> Record Expense</>}
+        </button>
+      </div>
+    </form>
+  );
+};
+
+// --- Main Wrapper ---
 export const QuickActionModal = ({
   modalType,
   onClose,
@@ -40,504 +460,16 @@ export const QuickActionModal = ({
   onClose: () => void;
   onSuccess: () => void;
 }) => {
-  const title = modalType === "Add Income" ? "Add New Income" : "Add New Expense";
+  const isIncome = modalType === "Add Income";
+  const title = isIncome ? "Register New Income" : "Record New Expense";
 
   return (
     <ModalBase title={title} onClose={onClose}>
-      {modalType === "Add Income" && (
+      {isIncome ? (
         <AddIncomeForm onClose={onClose} onSuccess={onSuccess} />
-      )}
-      {modalType === "Add Expense" && (
+      ) : (
         <AddExpenseForm onClose={onClose} onSuccess={onSuccess} />
       )}
     </ModalBase>
   );
 };
-
-// --- Add Income Form ---
-const AddIncomeForm = ({
-  onClose,
-  onSuccess,
-}: {
-  onClose: () => void;
-  onSuccess: () => void;
-}) => {
-  const { user } = useAuth();
-  const [amount, setAmount] = useState("");
-  const [currency, setCurrency] = useState("USD");
-  const [description, setDescription] = useState("");
-  const [incomeCategories, setIncomeCategories] = useState(
-    DEFAULT_INCOME_CATEGORIES
-  );
-  const [category, setCategory] = useState(incomeCategories[0]); // Default to first
-  const [date, setDate] = useState(dayjs().format("YYYY-MM-DD"));
-  const [error, setError] = useState<string | null>(null);
-  const [isSubmitting, setIsSubmitting] = useState(false);
-
-  const handleAddNewCategory = (newCategory: string) => {
-    if (newCategory.trim() && !incomeCategories.includes(newCategory.trim())) {
-      setIncomeCategories((prev) => [...prev, newCategory.trim()]);
-      setCategory(newCategory.trim());
-    }
-  };
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!user || !auth.currentUser) {
-      setError("You must be logged in.");
-      return;
-    }
-    if (!amount || !category) {
-      setError("Amount and Category are required.");
-      return;
-    }
-
-    setIsSubmitting(true);
-    setError(null);
-
-    try {
-      const token = await auth.currentUser.getIdToken();
-      const payload = {
-        // type: "new_income", // <-- No longer needed
-        amount: parseFloat(amount),
-        currency,
-        description: description || `Quick Add Income on ${date}`,
-        category,
-        date,
-      };
-
-      // --- (FIX) Send to the correct API route ---
-      const res = await fetch("/api/incomes", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify(payload),
-      });
-
-      if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.error || "Failed to save income.");
-      } else {
-         onSuccess();
-      }
-
-    } catch (err: any) {
-      setError(err.message);
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  return (
-    <form onSubmit={handleSubmit} className="mt-6 space-y-5">
-      {error && (
-         <div className="rounded-md bg-red-50 p-3 dark:bg-red-900/20">
-            <p className="text-sm font-medium text-red-700 dark:text-red-300">{error}</p>
-         </div>
-      )}
-      
-      <div className="grid grid-cols-2 gap-4">
-        <FormInput
-          label="Amount"
-          type="number"
-          value={amount}
-          onChange={setAmount}
-          placeholder="0.00"
-          required
-          className="col-span-1"
-        />
-        <FormSelect
-          label="Currency"
-          value={currency}
-          onChange={setCurrency}
-          className="col-span-1"
-        >
-          {ALL_CURRENCIES.map((c) => (
-            <option key={c} value={c}>{c}</option>
-          ))}
-        </FormSelect>
-      </div>
-      <FormInput
-        label="Description (Optional)"
-        value={description}
-        onChange={setDescription}
-        placeholder="e.g., Office rent received"
-      />
-      
-      <CategoryInput
-        label="Category"
-        value={category}
-        onChange={setCategory}
-        categories={incomeCategories}
-        onAddNewCategory={handleAddNewCategory}
-      />
-      
-      <FormInput
-        label="Date"
-        type="date"
-        value={date}
-        onChange={setDate}
-      />
-      
-      <div className="flex justify-end gap-3 pt-4">
-        <button
-          type="button"
-          onClick={onClose}
-          className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
-        >
-          Cancel
-        </button>
-        <button
-          type="submit"
-          disabled={isSubmitting}
-          className="flex w-32 items-center justify-center rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-blue-700 disabled:opacity-50"
-        >
-          {isSubmitting ? (
-            <Loader2 className="h-5 w-5 animate-spin" />
-          ) : (
-            "Save Income"
-          )}
-        </button>
-      </div>
-    </form>
-  );
-};
-
-// --- Add Expense Form ---
-const AddExpenseForm = ({
-  onClose,
-  onSuccess,
-}: {
-  onClose: () => void;
-  onSuccess: () => void;
-}) => {
-  const { user } = useAuth();
-  const [amount, setAmount] = useState("");
-  const [currency, setCurrency] = useState("USD");
-  const [description, setDescription] = useState("");
-  const [expenseCategories, setExpenseCategories] = useState(
-    DEFAULT_EXPENSE_CATEGORIES
-  );
-  const [category, setCategory] = useState(expenseCategories[0]);
-  const [date, setDate] = useState(dayjs().format("YYYY-MM-DD"));
-  const [error, setError] = useState<string | null>(null);
-  const [isSubmitting, setIsSubmitting] = useState(false);
-
-  const handleAddNewCategory = (newCategory: string) => {
-    if (newCategory.trim() && !expenseCategories.includes(newCategory.trim())) {
-      setExpenseCategories((prev) => [...prev, newCategory.trim()]);
-      setCategory(newCategory.trim());
-    }
-  };
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!user || !auth.currentUser) {
-      setError("You must be logged in.");
-      return;
-    }
-    if (!amount || !category) {
-      setError("Amount and Category are required.");
-      return;
-    }
-
-    setIsSubmitting(true);
-    setError(null);
-
-    try {
-      const token = await auth.currentUser.getIdToken();
-      const payload = {
-        // type: "new_expense", // <-- No longer needed
-        amount: parseFloat(amount),
-        currency,
-        description: description || `Quick Add Expense on ${date}`,
-        category,
-        date,
-      };
-
-      // --- (FIX) Send to the correct API route ---
-      const res = await fetch("/api/expenses", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify(payload),
-      });
-
-      if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.error || "Failed to save expense.");
-      } else {
-        onSuccess();
-      }
-
-    } catch (err: any) {
-      setError(err.message);
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  return (
-    <form onSubmit={handleSubmit} className="mt-6 space-y-5">
-      {error && (
-         <div className="rounded-md bg-red-50 p-3 dark:bg-red-900/20">
-            <p className="text-sm font-medium text-red-700 dark:text-red-300">{error}</p>
-         </div>
-      )}
-      
-      <div className="grid grid-cols-2 gap-4">
-        <FormInput
-          label="Amount"
-          type="number"
-          value={amount}
-          onChange={setAmount}
-          placeholder="0.00"
-          required
-          className="col-span-1"
-        />
-        <FormSelect
-          label="Currency"
-          value={currency}
-          onChange={setCurrency}
-          className="col-span-1"
-        >
-          {ALL_CURRENCIES.map((c) => (
-            <option key={c} value={c}>{c}</option>
-          ))}
-        </FormSelect>
-      </div>
-
-      <FormInput
-        label="Description (Optional)"
-        value={description}
-        onChange={setDescription}
-        placeholder="e.g., Printer paper and ink"
-      />
-      
-      <CategoryInput
-        label="Category"
-        value={category}
-        onChange={setCategory}
-        categories={expenseCategories}
-        onAddNewCategory={handleAddNewCategory}
-      />
-
-      <FormInput
-        label="Date"
-        type="date"
-        value={date}
-        onChange={setDate}
-      />
-      
-      <div className="flex justify-end gap-3 pt-4">
-        <button
-          type="button"
-          onClick={onClose}
-          className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
-        >
-          Cancel
-        </button>
-        <button
-          type="submit"
-          disabled={isSubmitting}
-          className="flex w-32 items-center justify-center rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-blue-700 disabled:opacity-50"
-        >
-          {isSubmitting ? (
-            <Loader2 className="h-5 w-5 animate-spin" />
-          ) : (
-            "Save Expense"
-          )}
-        </button>
-      </div>
-    </form>
-  );
-};
-
-// --- (Re-usable components below are unchanged) ---
-
-// --- Reusable Category Input Component ---
-const CategoryInput = ({
-  label,
-  value,
-  onChange,
-  categories,
-  onAddNewCategory,
-}: {
-  label: string;
-  value: string;
-  onChange: (val: string) => void;
-  categories: string[];
-  onAddNewCategory: (newCategory: string) => void;
-}) => {
-  const [showNewInput, setShowNewInput] = useState(false);
-  const [newCategoryName, setNewCategoryName] = useState("");
-
-  const handleAddNew = () => {
-    if (newCategoryName.trim()) {
-      onAddNewCategory(newCategoryName.trim());
-      onChange(newCategoryName.trim());
-      setNewCategoryName("");
-      setShowNewInput(false);
-    }
-  };
-
-  const handleCancelNew = () => {
-    setNewCategoryName("");
-    setShowNewInput(false);
-  };
-
-  return (
-    <div>
-      <label className="mb-1.5 block text-sm font-medium">{label}</label>
-      
-      <div className="flex items-center gap-2">
-        <FormSelect
-          label=""
-          value={value}
-          onChange={onChange}
-          className="flex-1"
-          hideLabel={true}
-        >
-          {categories.map((c) => (
-            <option key={c} value={c}>
-              {c}
-            </option>
-          ))}
-        </FormSelect>
-        <button
-          type="button"
-          onClick={() => setShowNewInput(true)}
-          className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg border border-gray-300 bg-gray-50 text-gray-600 shadow-sm transition-colors hover:bg-gray-100 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
-          title="Add new category"
-        >
-          <Plus className="h-5 w-5" />
-        </button>
-      </div>
-
-      {showNewInput && (
-        <div className="mt-2 flex items-center gap-2 rounded-lg border border-gray-300 bg-gray-50 p-2 dark:border-gray-600 dark:bg-gray-700/50">
-          <input
-            type="text"
-            placeholder="New category name"
-            value={newCategoryName}
-            onChange={(e) => setNewCategoryName(e.target.value)}
-            className="flex-1 rounded-md border-gray-300 p-2 text-sm shadow-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 dark:border-gray-500 dark:bg-gray-600 dark:text-white"
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                e.preventDefault();
-                handleAddNew();
-              }
-            }}
-          />
-          <button
-            type="button"
-            onClick={handleAddNew}
-            className="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white shadow-sm hover:bg-blue-700"
-          >
-            Save
-          </button>
-          <button
-            type="button"
-            onClick={handleCancelNew}
-            className="rounded-md px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-200 dark:text-gray-300 dark:hover:bg-gray-600"
-          >
-            Cancel
-          </button>
-        </div>
-      )}
-    </div>
-  );
-};
-
-
-// --- Reusable UI Components ---
-const ModalBase = ({
-  title,
-  onClose,
-  children,
-}: {
-  title: string;
-  onClose: () => void;
-  children: React.ReactNode;
-}) => (
-  <div 
-    className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/70 p-4 backdrop-blur-sm"
-    onClick={onClose}
-  >
-    <div 
-      className="w-full max-w-lg rounded-xl bg-white p-6 shadow-xl dark:bg-gray-800"
-      onClick={(e) => e.stopPropagation()}
-    >
-      <div className="flex items-center justify-between">
-        <h3 className="text-lg font-semibold">{title}</h3>
-        <button
-          onClick={onClose}
-          className="rounded-full p-1 text-gray-500 transition-colors hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gamma-700"
-        >
-          <XIcon className="h-5 w-5" />
-        </button>
-      </div>
-      {children}
-    </div>
-  </div>
-);
-
-const FormInput = ({
-  label,
-  value,
-  onChange,
-  hideLabel = false,
-  ...props
-}: {
-  label: string;
-  value: string;
-  onChange: (val: string) => void;
-  hideLabel?: boolean;
-  [key: string]: any;
-}) => (
-  <div className={props.className}>
-    {!hideLabel && (
-      <label className="mb-1.5 block text-sm font-medium">{label}</label>
-    )}
-    <input
-      value={value}
-      onChange={(e) => onChange(e.target.value)}
-      className="w-full rounded-lg border border-gray-300 p-2.5 text-sm shadow-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700 dark:text-white dark:placeholder-gray-400 dark:focus:border-blue-500 dark:focus:ring-blue-500"
-      {...props}
-    />
-  </div>
-);
-
-const FormSelect = ({
-  label,
-  value,
-  onChange,
-  children,
-  hideLabel = false,
-  ...props
-}: {
-  label: string;
-  value: string;
-  onChange: (val: string) => void;
-  children: React.ReactNode;
-  hideLabel?: boolean;
-  [key: string]: any;
-}) => (
-  <div className={props.className}>
-     {!hideLabel && (
-      <label className="mb-1.5 block text-sm font-medium">{label}</label>
-     )}
-    <select
-      value={value}
-      onChange={(e) => onChange(e.target.value)}
-      className="w-full rounded-lg border border-gray-300 p-2.5 text-sm shadow-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700 dark:text-white dark:focus:border-blue-500 dark:focus:ring-blue-500"
-      {...props}
-    >
-      {children}
-    </select>
-  </div>
-);

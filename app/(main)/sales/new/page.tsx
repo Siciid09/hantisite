@@ -1,18 +1,4 @@
 // File: app/(main)/sales/new/page.tsx
-//
-// --- COMPLETE FIXES ---
-// 1. (PDF) Removed old 'generateInvoicePdf' (html2pdf.js).
-// 2. (PDF) Added 'PDFDownloadLink' from '@react-pdf/renderer'.
-// 3. (PDF) Added 'getTemplateComponent' from your new 'lib/pdfService.ts'.
-// 4. (PDF) 'handleSaveSale' now saves the sale, then opens a modal with a
-//    <PDFDownloadLink> to render the REAL text, high-quality PDF.
-// 5. (PDF) 'storeInfo' is now passed to the PDF, using your real subscription data.
-// 6. (FIX) Payment methods are now correctly filtered by 'paymentMethodsByCurrency'.
-// 7. (FIX) Customer creation is built-in with the 'CustomerSearch' combobox.
-// 8. (NEW) Added a '+' button to open the 'ProductFormModal'.
-// 9. (FIX) All 'Cannot find name' errors are fixed by adding imports
-//    (like ProductFormModal, NewDateRangePicker, etc.)
-// -----------------------------------------------------------------------------
 
 "use client";
 
@@ -20,35 +6,31 @@ import React, { useState, useEffect, Suspense, useMemo, Fragment } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import useSWR, { useSWRConfig } from "swr";
 import { useAuth } from "@/app/contexts/AuthContext";
-import dayjs from "dayjs";
 import {
-  DollarSign, Receipt, TrendingUp, Plus, Search, ChevronLeft,
-  ChevronRight, X, AlertTriangle, FileText, Save, Trash2,
-  Package, RefreshCw, Download, Printer, Share2, MoreVertical,
-  User, CreditCard, ChevronDown, CheckCircle, Clock, XCircle, Info,
-  PackagePlus, UserPlus, Send, Check, ChevronsUpDown,
-  Loader2, Edit, ChevronUp, CheckSquare, Coins, Calendar as CalendarIconLucide
+  DollarSign, Receipt, Plus, Search, ChevronLeft,
+  ChevronRight, X, Save, Trash2,
+  Download, Printer, ChevronDown, CheckCircle,
+  ChevronsUpDown, Loader2, Calendar as CalendarIconLucide,
+  MapPin, Phone, Check // <--- ADDED Check icon
 } from "lucide-react";
 import { Dialog, Transition, Combobox } from "@headlessui/react";
 import { type DateRange } from "react-day-picker";
 
-// --- (NEW) PDF Imports ---
+// --- PDF Imports ---
 import { PDFDownloadLink } from '@react-pdf/renderer';
-import { getTemplateComponent, ReportType } from '@/lib/pdfService'; // Your new "brain"
+import { getTemplateComponent, ReportType } from '@/lib/pdfService'; 
 
-// --- (NEW) Import Product Modal ---
-// We borrow this from your products page
+// --- Import Product Modal ---
 import { ProductFormModal } from '../../products/ProductFormModal'; 
-// --- HELPERS (Copied from your products/page.tsx and utils.ts) ---
+
+// --- HELPERS ---
 import { type ClassValue, clsx } from "clsx"
 import { twMerge } from "tailwind-merge"
 import { Popover, PopoverContent, PopoverTrigger } from "@/app/components/ui/popover";
 import { Button } from "@/app/components/ui/Button";
 import { 
-  add, addDays, format, startOfWeek, startOfMonth, endOfDay,
-  eachDayOfInterval, endOfMonth, endOfWeek, isSameDay, isSameMonth,
-  isToday, parse, sub,
-  isAfter, isBefore
+  add, format, startOfWeek, startOfMonth, endOfMonth, endOfWeek, 
+  isSameDay, isSameMonth, isToday, sub, isAfter, isBefore, eachDayOfInterval
 } from "date-fns";
 
 export function cn(...inputs: ClassValue[]) {
@@ -94,25 +76,20 @@ const formatCurrency = (amount: number | undefined | null, currency: string): st
   return formatted;
 };
 
-
 // =============================================================================
 // 🛠️ Debounce Hook
 // =============================================================================
 function useDebounce(value: string, delay: number) {
   const [debouncedValue, setDebouncedValue] = useState(value);
   useEffect(() => {
-    const handler = setTimeout(() => {
-      setDebouncedValue(value);
-    }, delay);
-    return () => {
-      clearTimeout(handler);
-    };
+    const handler = setTimeout(() => setDebouncedValue(value), delay);
+    return () => clearTimeout(handler);
   }, [value, delay]);
   return debouncedValue;
 }
 
 // =============================================================================
-// 💰 Currency & Payment Constants (MODIFIED)
+// 💰 Currency & Payment Constants
 // =============================================================================
 const CURRENCIES = ["USD", "SOS", "SLSH", "EUR", "KSH", "BIRR"];
 
@@ -129,7 +106,6 @@ const PAYMENT_PROVIDERS = {
   OTHER: { label: "Other" },
 };
 
-// --- (FIX) This map now correctly filters payment methods ---
 const paymentMethodsByCurrency: { [key: string]: (keyof typeof PAYMENT_PROVIDERS)[] } = {
   USD: ["CASH", "BANK", "ZAAD", "EDAHAB", "SOMNET", "EVC_PLUS", "SAHAL", "OTHER"],
   SOS: ["CASH", "BANK", "OTHER"],
@@ -140,18 +116,7 @@ const paymentMethodsByCurrency: { [key: string]: (keyof typeof PAYMENT_PROVIDERS
 };
 
 // =============================================================================
-// 📝 Main "Add Sale" Page Component
-// =============================================================================
-export default function AddNewSalePage() {
-  return (
-    <Suspense fallback={<LoadingSpinner />}>
-      <PosForm />
-    </Suspense>
-  );
-}
-
-// =============================================================================
-// 🛒 POS Form Type Definitions
+// 📝 Types
 // =============================================================================
 interface LineItem {
   id: string; 
@@ -162,6 +127,7 @@ interface LineItem {
   costPriceUsd: number;
   stock: number;
   discount: string;
+  selectedVariants?: Record<string, string>;
   manualPrice: boolean;
 }
 
@@ -169,6 +135,7 @@ interface Customer {
   id: string;
   name: string;
   phone: string;
+  address?: string; // Added Address
   whatsapp: string;
   notes: string;
   saveToContacts?: boolean;
@@ -188,12 +155,15 @@ interface ProductForPricing {
 }
 
 // =============================================================================
-// 🧑‍💼 CustomerSearch (REBUILT as inline Combobox)
+// 🧑‍💼 CustomerSearch (With Manual Creation Modal)
 // =============================================================================
 const CustomerSearch = ({ customer, onCustomerSelect }: { customer: Customer | null, onCustomerSelect: (customer: Customer) => void }) => {
   const [query, setQuery] = useState(customer?.name || "Walk-in Customer");
   const debouncedQuery = useDebounce(query, 300);
-  const [saveCustomer, setSaveCustomer] = useState(true);
+  
+  // -- New Customer Modal State --
+  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+  const [newCustomerData, setNewCustomerData] = useState({ name: "", phone: "", address: "" });
 
   const { data, error, isLoading } = useSWR(
     (debouncedQuery && debouncedQuery !== customer?.name) ? `/api/sales?view=search_customers&searchQuery=${encodeURIComponent(debouncedQuery)}` : null, 
@@ -203,28 +173,36 @@ const CustomerSearch = ({ customer, onCustomerSelect }: { customer: Customer | n
   const customers: Customer[] = data?.customers || [];
   const showCreateOption = customers.length === 0 && debouncedQuery && !isLoading && debouncedQuery !== "Walk-in Customer";
   
-  const handleSelect = (customer: Customer | string | null) => {
-    if (customer === null) return; 
+  const handleSelect = (selected: Customer | string | null) => {
+    if (selected === null) return; 
     
-    let newCustomer: Customer;
-    if (typeof customer === "string") {
-      newCustomer = {
-        id: `new_${crypto.randomUUID()}`,
-        name: customer,
-        phone: "",
-        whatsapp: "",
-        notes: "New customer added from POS",
-        saveToContacts: saveCustomer,
-      };
+    if (typeof selected === "string") {
+      // Trigger the manual creation modal instead of auto-creating
+      setNewCustomerData({ name: selected, phone: "", address: "" });
+      setIsCreateModalOpen(true);
     } else {
-      newCustomer = customer;
+      onCustomerSelect(selected);
+      setQuery(selected.name);
     }
-    
+  };
+
+  const handleCreateConfirm = () => {
+    const newCustomer: Customer = {
+      id: `new_${crypto.randomUUID()}`,
+      name: newCustomerData.name,
+      phone: newCustomerData.phone,
+      address: newCustomerData.address,
+      whatsapp: "",
+      notes: "New customer added from POS",
+      saveToContacts: true,
+    };
     onCustomerSelect(newCustomer);
     setQuery(newCustomer.name);
+    setIsCreateModalOpen(false);
   };
 
   return (
+    <>
     <Combobox value={customer} onChange={handleSelect}>
       <div className="relative flex-1">
         <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">2. Search or Create Customer</label>
@@ -235,7 +213,7 @@ const CustomerSearch = ({ customer, onCustomerSelect }: { customer: Customer | n
           value={query}
           onFocus={() => { if (query === "Walk-in Customer") setQuery("") }}
           onBlur={() => { 
-            if (!query) {
+            if (!query && !isCreateModalOpen) {
               setQuery("Walk-in Customer");
               onCustomerSelect({ id: "walkin", name: "Walk-in Customer", phone: "", whatsapp: "", notes: "" });
             }
@@ -251,28 +229,18 @@ const CustomerSearch = ({ customer, onCustomerSelect }: { customer: Customer | n
           leaveTo="opacity-0"
         >
           <Combobox.Options className="absolute z-20 mt-1 max-h-60 w-full overflow-auto rounded-md bg-white py-1 text-base shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none dark:bg-gray-800 sm:text-sm">
-            {error && <div className="relative cursor-default select-none py-2 px-4 text-red-500">Error: {error.message}</div>}
-            
             {showCreateOption ? (
-              <>
-                <Combobox.Option value={query} className={({ active }) => `relative cursor-pointer select-none py-2 pl-10 pr-4 ${active ? 'bg-blue-600 text-white' : 'text-gray-900 dark:text-gray-200'}`}>
-                  Create new customer: "{query}"
-                </Combobox.Option>
-                <div 
-                  onClick={(e) => { e.stopPropagation(); setSaveCustomer(!saveCustomer); }}
-                  className="flex items-center gap-2 px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 cursor-pointer"
-                >
-                  {saveCustomer ? <CheckSquare className="h-4 w-4 text-blue-600" /> : <div className="h-4 w-4 rounded border border-gray-400" />}
-                  Save to contacts
-                </div>
-              </>
+              <Combobox.Option value={query} className={({ active }) => `relative cursor-pointer select-none py-2 pl-10 pr-4 ${active ? 'bg-blue-600 text-white' : 'text-gray-900 dark:text-gray-200'}`}>
+                <span className="font-semibold text-green-500 mr-2">+</span> 
+                Create new customer: "{query}"
+              </Combobox.Option>
             ) : (
-              customers.map((customer) => (
-                <Combobox.Option key={customer.id} className={({ active }) => `relative cursor-pointer select-none py-2 pl-10 pr-4 ${active ? 'bg-blue-600 text-white' : 'text-gray-900 dark:text-gray-200'}`} value={customer}>
+              customers.map((cust) => (
+                <Combobox.Option key={cust.id} className={({ active }) => `relative cursor-pointer select-none py-2 pl-10 pr-4 ${active ? 'bg-blue-600 text-white' : 'text-gray-900 dark:text-gray-200'}`} value={cust}>
                   {({ selected, active }) => (
                     <>
-                      <span className={`block truncate ${selected ? 'font-medium' : 'font-normal'}`}>{customer.name}</span>
-                      <span className={`block truncate text-sm ${active ? 'text-blue-100' : 'text-gray-500'}`}>{customer.phone}</span>
+                      <span className={`block truncate ${selected ? 'font-medium' : 'font-normal'}`}>{cust.name}</span>
+                      <span className={`block truncate text-sm ${active ? 'text-blue-100' : 'text-gray-500'}`}>{cust.phone}</span>
                       {selected && <span className={`absolute inset-y-0 left-0 flex items-center pl-3 ${active ? 'text-white' : 'text-blue-600'}`}><Check className="h-5 w-5" aria-hidden="true" /></span>}
                     </>
                   )}
@@ -283,6 +251,39 @@ const CustomerSearch = ({ customer, onCustomerSelect }: { customer: Customer | n
         </Transition>
       </div>
     </Combobox>
+
+    {/* --- QUICK CUSTOMER MODAL --- */}
+    <TransitionedModal isOpen={isCreateModalOpen} onClose={() => setIsCreateModalOpen(false)} size="md">
+        <Dialog.Title className="text-lg font-medium dark:text-white">Create New Customer</Dialog.Title>
+        <div className="mt-4 space-y-4">
+          <FormInput 
+             label="Customer Name"
+             value={newCustomerData.name}
+             onChange={(v: string) => setNewCustomerData({...newCustomerData, name: v})}
+          />
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <FormInput 
+              label="Phone Number"
+              icon={<Phone className="h-4 w-4" />}
+              value={newCustomerData.phone}
+              onChange={(v: string) => setNewCustomerData({...newCustomerData, phone: v})}
+              placeholder="e.g. 252..."
+            />
+            <FormInput 
+              label="Address (Optional)"
+              icon={<MapPin className="h-4 w-4" />}
+              value={newCustomerData.address}
+              onChange={(v: string) => setNewCustomerData({...newCustomerData, address: v})}
+              placeholder="City, District..."
+            />
+          </div>
+        </div>
+        <div className="mt-6 flex justify-end gap-3">
+          <button onClick={() => setIsCreateModalOpen(false)} className="px-4 py-2 border rounded-lg hover:bg-gray-100 dark:border-gray-600 dark:text-white dark:hover:bg-gray-700">Cancel</button>
+          <button onClick={handleCreateConfirm} className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">Save & Select</button>
+        </div>
+    </TransitionedModal>
+    </>
   );
 };
 
@@ -326,10 +327,6 @@ const ProductSearch = ({ onProductSelect, invoiceCurrency }: { onProductSelect: 
           leaveTo="opacity-0"
         >
           <Combobox.Options className="absolute z-10 mt-1 max-h-60 w-full overflow-auto rounded-md bg-white py-1 text-base shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none dark:bg-gray-800 sm:text-sm">
-            {error && <div className="relative cursor-default select-none py-2 px-4 text-red-500">Error: {error.message}</div>}
-            {products.length === 0 && debouncedQuery && !isLoading && (
-              <div className="relative cursor-default select-none py-2 px-4 text-gray-500">No products found.</div>
-            )}
             {products.map((product: any) => (
               <Combobox.Option key={product.id} className={({ active }) => `relative cursor-pointer select-none py-2 pl-4 pr-4 ${active ? 'bg-blue-600 text-white' : 'text-gray-900 dark:text-gray-200'}`} value={product}>
                 <div className="flex justify-between">
@@ -351,20 +348,30 @@ const ProductSearch = ({ onProductSelect, invoiceCurrency }: { onProductSelect: 
   );
 };
 
+// =============================================================================
+// 🛒 Main POS Form
+// =============================================================================
+export default function AddNewSalePage() {
+  return (
+    <Suspense fallback={<LoadingSpinner />}>
+      <PosForm />
+    </Suspense>
+  );
+}
 
-// =============================================================================
-// 🛒 The Main POS Form (REBUILT)
-// =============================================================================
 function PosForm() {
-  // --- (MODIFIED) Get subscription from useAuth ---
   const { user, subscription } = useAuth();
   const router = useRouter();
-  const { mutate } = useSWRConfig(); // For refreshing product list
+  const { mutate } = useSWRConfig();
 
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   
-  // --- Form State ---
+  // Variant Modal State
+  const [variantModal, setVariantModal] = useState<{ isOpen: boolean; product: any | null }>({ isOpen: false, product: null });
+  const [selectedChoices, setSelectedChoices] = useState<Record<string, string>>({});
+
+  // Main Form State
   const [invoiceCurrency, setInvoiceCurrency] = useState("USD");
   const [items, setItems] = useState<LineItem[]>([]);
   const [customer, setCustomer] = useState<Customer | null>({ id: "walkin", name: "Walk-in Customer", phone: "", whatsapp: "", notes: "" });
@@ -373,17 +380,14 @@ function PosForm() {
   
   // Modals
   const [productForPricing, setProductForPricing] = useState<ProductForPricing | null>(null);
-  const [showAddProductModal, setShowAddProductModal] = useState(false); // <-- (NEW)
-  
-  // --- (NEW) PDF Modal State ---
+  const [showAddProductModal, setShowAddProductModal] = useState(false);
   const [saleToPrint, setSaleToPrint] = useState<any | null>(null);
   const [PdfTemplate, setPdfTemplate] = useState<React.ElementType | null>(null);
 
-  // Additional Info
   const [salesperson, setSalesperson] = useState(user?.name || "Current User");
   const [additionalNotes, setAdditionalNotes] = useState("");
   
-  // --- Derived State (Summary Card) ---
+  // Calculations
   const totalAmount = useMemo(() => {
     return items.reduce((sum, item) => {
       const qty = Number(item.quantity) || 0;
@@ -399,15 +403,8 @@ function PosForm() {
     }, 0);
   }, [paymentLines]);
 
-  const debtRemaining = useMemo(() => {
-    return totalAmount - totalPaid;
-  }, [totalAmount, totalPaid]);
-
-  const isOverpaid = useMemo(() => {
-    return totalPaid > totalAmount + 0.01; 
-  }, [totalAmount, totalPaid]);
-  
-  // --- Handlers ---
+  const debtRemaining = totalAmount - totalPaid;
+  const isOverpaid = totalPaid > totalAmount + 0.01; 
   
   const resetForm = () => {
     setItems([]);
@@ -418,30 +415,24 @@ function PosForm() {
     setAdditionalNotes("");
     setError(null);
     setIsSaving(false);
-    // (Do not reset PDF state here, let the modal close it)
   };
 
   const handleProductSelect = (product: any) => {
     if (!product || !product.id) return;
+    if (product.options && product.options.length > 0) {
+      setVariantModal({ isOpen: true, product });
+      setSelectedChoices({});
+      return;
+    }
     const price = product.salePrices?.[invoiceCurrency];
-
     if (price === undefined || price === null || price === 0) {
       setProductForPricing({ product, manualPrice: "" });
     } else {
-      addItemToCart(product, price.toString(), false);
+      addItemToCart(product, price.toString(), false, {});
     }
   };
 
-  const handleManualPriceSubmit = () => {
-    if (!productForPricing) return;
-    const price = productForPricing.manualPrice;
-    if (Number(price) > 0) {
-      addItemToCart(productForPricing.product, price, true);
-      setProductForPricing(null);
-    }
-  };
-
-  const addItemToCart = (product: any, price: string, manualPrice: boolean) => {
+  const addItemToCart = (product: any, price: string, manualPrice: boolean, variants: Record<string, string> = {}) => {
     setItems(prev => [
       ...prev,
       {
@@ -449,11 +440,12 @@ function PosForm() {
         productId: product.id,
         productName: product.name,
         quantity: "1",
-        pricePerUnit: price, 
+        pricePerUnit: price,
         costPriceUsd: product.costPrices?.USD || 0,
         stock: product.quantity,
         discount: "0",
         manualPrice: manualPrice,
+        selectedVariants: variants,
       },
     ]);
   };
@@ -466,16 +458,8 @@ function PosForm() {
     setItems(prev => prev.filter(item => item.id !== id));
   };
   
-  // --- Payment Handlers (Unchanged) ---
   const handleAddPaymentLine = () => {
-    const newPaymentLine: PaymentLine = {
-      id: crypto.randomUUID(),
-      method: '',
-      amount: "",
-      currency: invoiceCurrency,
-      valueInInvoiceCurrency: "",
-    };
-    setPaymentLines(prev => [...prev, newPaymentLine]);
+    setPaymentLines(prev => [...prev, { id: crypto.randomUUID(), method: '', amount: "", currency: invoiceCurrency, valueInInvoiceCurrency: "" }]);
   };
   
   const handleUpdatePaymentLine = (id: string, field: keyof PaymentLine, value: string) => {
@@ -484,18 +468,10 @@ function PosForm() {
       let updatedLine = { ...line, [field]: value };
       if (field === 'currency') {
         updatedLine.method = ""; 
-        if (updatedLine.currency === invoiceCurrency) {
-          updatedLine.valueInInvoiceCurrency = updatedLine.amount;
-        } else {
-          updatedLine.valueInInvoiceCurrency = "";
-        }
+        updatedLine.valueInInvoiceCurrency = updatedLine.currency === invoiceCurrency ? updatedLine.amount : "";
       }
       if (field === 'amount') {
-        if (updatedLine.currency === invoiceCurrency) {
-          updatedLine.valueInInvoiceCurrency = updatedLine.amount;
-        } else {
-          updatedLine.valueInInvoiceCurrency = ""; 
-        }
+        updatedLine.valueInInvoiceCurrency = updatedLine.currency === invoiceCurrency ? updatedLine.amount : "";
       }
       if (field === 'valueInInvoiceCurrency') {
          updatedLine.valueInInvoiceCurrency = value;
@@ -508,55 +484,41 @@ function PosForm() {
     setPaymentLines(prev => prev.filter(line => line.id !== id));
   };
   
-  
-  // --- (MODIFIED) handleSaveSale ---
-  // Now handles the PDF link generation
   const handleSaveSale = async (action: 'save' | 'save_print') => {
     setError(null); 
-    if (isOverpaid) {
-      setError("Overpayment is not allowed. Total paid cannot exceed total amount.");
-      return;
-    }
-    if (items.length === 0) { setError("Please add at least one item."); return; }
-    if (!customer) { setError("Please select or create a customer."); return; }
-    const incompletePayment = paymentLines.some(line => (Number(line.amount) > 0) && !line.method);
-    if (incompletePayment) {
-      setError("Please select a payment method for all added payments.");
-      return;
-    }
+    if (isOverpaid) return setError("Overpayment is not allowed. Total paid cannot exceed total amount.");
+    if (items.length === 0) return setError("Please add at least one item.");
+    if (!customer) return setError("Please select or create a customer.");
+    if (paymentLines.some(line => (Number(line.amount) > 0) && !line.method)) return setError("Please select a payment method for all added payments.");
+    
     setIsSaving(true);
     
-    const itemsPayload = items.map(item => ({
-      productId: item.productId,
-      productName: item.productName,
-      quantity: Number(item.quantity) || 0,
-      discount: Number(item.discount) || 0,
-      pricePerUnit: item.manualPrice ? (Number(item.pricePerUnit) || 0) : null,
-    }));
-    
-    const paymentsPayload = paymentLines
-      .filter(line => (Number(line.amount) || 0) > 0 && line.method)
-      .map(line => ({
-        method: line.method,
-        amount: Number(line.amount) || 0,
-        currency: line.currency,
-        valueInInvoiceCurrency: Number(line.valueInInvoiceCurrency) || 0,
-      }));
-
     const transaction = {
-      customer,
+      customer, // Contains address and phone now
       invoiceCurrency: invoiceCurrency,
-      items: itemsPayload,
-      paymentLines: paymentsPayload,
+      items: items.map(item => ({
+        productId: item.productId,
+        productName: item.productName,
+        quantity: Number(item.quantity) || 0,
+        discount: Number(item.discount) || 0,
+        pricePerUnit: item.manualPrice ? (Number(item.pricePerUnit) || 0) : null,
+        selectedVariants: item.selectedVariants || {}, 
+      })),
+      paymentLines: paymentLines
+        .filter(line => (Number(line.amount) || 0) > 0 && line.method)
+        .map(line => ({
+          method: line.method,
+          amount: Number(line.amount) || 0,
+          currency: line.currency,
+          valueInInvoiceCurrency: Number(line.valueInInvoiceCurrency) || 0,
+        })),
       saleDate: saleDate?.from ? format(saleDate.from, "yyyy-MM-dd") : format(new Date(), "yyyy-MM-dd"),
       salesperson: salesperson,
       notes: additionalNotes,
     };
     
     try {
-      if (!user || !user.firebaseUser) {
-        throw new Error("Authentication error. Please re-login.");
-      }
+      if (!user?.firebaseUser) throw new Error("Authentication error.");
       const token = await user.firebaseUser.getIdToken();
 
       const res = await fetch("/api/sales", {
@@ -566,13 +528,9 @@ function PosForm() {
       });
 
       if (!res.ok) { const err = await res.json(); throw new Error(err.error || "Failed to save sale."); }
-     
       const data = await res.json();
       
       if (action === 'save_print') {
-        // --- (NEW) PDF Generation ---
-        
-        // 1. Get the store info from the AuthContext subscription
         const storeInfo = {
           name: subscription?.storeName || "My Store",
           address: subscription?.storeAddress || "123 Main St",
@@ -581,102 +539,90 @@ function PosForm() {
           planId: subscription?.planId,
         };
         
-        // 2. Get the correct template component from the "brain"
+        // Pass the updated customer object with address if available
+        const printData = {
+            ...data.sale,
+            customer: { ...data.sale.customer, address: customer.address || data.sale.customer.address }
+        }
+
         const TemplateComponent = getTemplateComponent('invoice' as ReportType, subscription);
-        
-        // 3. Set state to show the PDF download modal
-        setPdfTemplate(() => TemplateComponent); // Store the component
-        setSaleToPrint({ data: data.sale, store: storeInfo }); // Store the data
-        
+        setPdfTemplate(() => TemplateComponent); 
+        setSaleToPrint({ data: printData, store: storeInfo }); 
         resetForm(); 
       } else {
         resetForm();
         router.push('/sales?view=history');
       }
-      
     } catch (err: any) {
-      console.error("[HandleSaveSale Error]", err);
+      console.error(err);
       setError(err.message);
     } finally {
       setIsSaving(false);
     }
   };
 
-  // --- Render ---
   return (
     <>
       <form onSubmit={(e) => { e.preventDefault(); handleSaveSale('save'); }}>
         <div className="mb-24 grid grid-cols-1 gap-6 lg:grid-cols-3">
-          {/* --- Left Panel (Customer & Products) --- */}
           <div className="space-y-6 lg:col-span-2">
-            
-            {/* A. INVOICE CURRENCY & CUSTOMER */}
             <Card>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <FormSelect 
                   label="1. Set Invoice Currency"
                   value={invoiceCurrency}
                   onChange={(val: string) => setInvoiceCurrency(val)}
-                  disabled={items.length > 0}
+                  disabled={items.length > 0} // Lock currency if items exist
                 >
                   {CURRENCIES.map(c => <option key={c} value={c}>{c}</option>)}
                 </FormSelect>
-                
                 <CustomerSearch customer={customer} onCustomerSelect={setCustomer} />
               </div>
               {items.length > 0 && <p className="text-xs text-orange-600 mt-2">Invoice currency is locked because items are in the cart.</p>}
             </Card>
             
-            {/* B. PRODUCTS SECTION */}
             <Card>
               <div className="flex items-start gap-2">
                 <ProductSearch onProductSelect={handleProductSelect} invoiceCurrency={invoiceCurrency} />
-                {/* --- (NEW) Add Product Button --- */}
                 <div className="flex-shrink-0">
                    <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">&nbsp;</label>
-                   <button
-                    type="button"
-                    title="Add New Product"
-                    onClick={() => setShowAddProductModal(true)}
-                    className="flex h-[42px] w-[42px] items-center justify-center rounded-lg border border-gray-300 bg-white shadow-sm hover:bg-gray-100 dark:border-gray-600 dark:bg-gray-700"
-                  >
+                   <button type="button" onClick={() => setShowAddProductModal(true)} className="flex h-[42px] w-[42px] items-center justify-center rounded-lg border border-gray-300 bg-white shadow-sm hover:bg-gray-100 dark:border-gray-600 dark:bg-gray-700">
                     <Plus className="h-5 w-5" />
-                  </button>
+                   </button>
                 </div>
               </div>
               
-              {/* Product Table */}
               <div className="mt-4 flow-root">
                 <div className="-mx-4 overflow-x-auto">
                   <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
                     <thead className="bg-gray-50 dark:bg-gray-700/50">
                       <tr>
-                        <th className="py-3 pl-4 text-left text-xs font-medium uppercase text-gray-500 dark:text-gray-400">Product</th>
-                        <th className="px-2 py-3 text-left text-xs font-medium uppercase text-gray-500 dark:text-gray-400">Qty</th>
-                        <th className="px-2 py-3 text-left text-xs font-medium uppercase text-gray-500 dark:text-gray-400">Price</th>
-                        <th className="px-2 py-3 text-left text-xs font-medium uppercase text-gray-500 dark:text-gray-400">Discount (%)</th>
-                        <th className="px-2 py-3 text-left text-xs font-medium uppercase text-gray-500 dark:text-gray-400">Subtotal</th>
-                        <th className="py-3 pr-4 text-right text-xs font-medium uppercase text-gray-500 dark:text-gray-400">Action</th>
+                        <th className="py-3 pl-4 text-left text-xs font-medium uppercase text-gray-500">Product</th>
+                        <th className="px-2 py-3 text-left text-xs font-medium uppercase text-gray-500">Qty</th>
+                        <th className="px-2 py-3 text-left text-xs font-medium uppercase text-gray-500">Price</th>
+                        <th className="px-2 py-3 text-left text-xs font-medium uppercase text-gray-500">Disc %</th>
+                        <th className="px-2 py-3 text-left text-xs font-medium uppercase text-gray-500">Subtotal</th>
+                        <th className="py-3 pr-4 text-right text-xs font-medium uppercase text-gray-500">Action</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
                       {items.length === 0 && (
-                          <tr><td colSpan={6} className="py-10 text-center text-sm text-gray-500 dark:text-gray-400">Add products using the search bar above.</td></tr>
+                          <tr><td colSpan={6} className="py-10 text-center text-sm text-gray-500">Add products using the search bar above.</td></tr>
                       )}
                       {items.map((item) => (
                         <tr key={item.id}>
                           <td className="py-2 pl-4 text-sm font-medium dark:text-white">
                             {item.productName}
-                            {item.manualPrice && <span title="Price entered manually" className="ml-1 text-orange-400">*</span>}
+                            {item.manualPrice && <span className="ml-1 text-orange-400">*</span>}
                           </td>
                           <td className="px-2 py-2 w-20">
-                            <FormInput type="number" value={item.quantity} onChange={(val: string) => handleUpdateItem(item.id, 'quantity', val)} className="w-full" />
+                            <FormInput type="number" value={item.quantity} onChange={(val: string) => handleUpdateItem(item.id, 'quantity', val)} />
                           </td>
                           <td className="px-2 py-2 w-28">
-                            <FormInput type="number" value={item.pricePerUnit} onChange={(val: string) => handleUpdateItem(item.id, 'pricePerUnit', val)} className="w-full" />
+                            <FormInput type="number" value={item.pricePerUnit} onChange={(val: string) => handleUpdateItem(item.id, 'pricePerUnit', val)} />
                           </td>
                           <td className="px-2 py-2 w-20">
-                            <FormInput type="number" value={item.discount} onChange={(val: string) => handleUpdateItem(item.id, 'discount', val)} className="w-full" />
+                            <FormInput type="number" value={item.discount} onChange={(val: string) => handleUpdateItem(item.id, 'discount', val)} />
                           </td>
                           <td className="px-2 py-2 text-sm dark:text-white">{formatCurrency((Number(item.quantity) || 0) * (Number(item.pricePerUnit) || 0) * (1 - (Number(item.discount) || 0) / 100), invoiceCurrency)}</td>
                           <td className="py-2 pr-4 text-right">
@@ -690,259 +636,154 @@ function PosForm() {
               </div>
             </Card>
 
-            {/* D. ADDITIONAL INFO SECTION */}
             <Card>
               <h3 className="mb-4 text-lg font-semibold dark:text-white">5. Additional Info</h3>
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <FormInput 
-                  label="Salesperson" 
-                  type="text" 
-                  value={salesperson} 
-                  readOnly 
-                  className="[&_input]:bg-gray-100 dark:[&_input]:bg-gray-700/50" 
-                />
-                
+                <FormInput label="Salesperson" value={salesperson} readOnly className="[&_input]:bg-gray-100 dark:[&_input]:bg-gray-700/50" />
                 <div>
                   <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">Sale Date</label>
-                  <NewDateRangePicker
-                    date={saleDate}
-                    onApply={(newDate) => setSaleDate(newDate)}
-                    singleDateMode={true}
-                  />
+                  <NewDateRangePicker date={saleDate} onApply={(newDate) => setSaleDate(newDate)} singleDateMode={true} />
                 </div>
-                
                 <div className="sm:col-span-2">
-                  <FormInput label="Additional Notes" value={additionalNotes} onChange={setAdditionalNotes} placeholder="e.g., Warranty details, special instructions" />
+                  <FormInput label="Additional Notes" value={additionalNotes} onChange={setAdditionalNotes} placeholder="Details..." />
                 </div>
               </div>
             </Card>
           </div>
 
-          {/* --- Right Panel (Payment & Summary) --- */}
           <div className="space-y-6 lg:col-span-1 lg:sticky top-24 h-fit">
-            
-            {/* C. PAYMENT SECTION (REBUILT FOR SMART METHODS) */}
             <Card>
               <h3 className="mb-4 text-lg font-semibold dark:text-white">4. Payment Details</h3>
-              
               <div className="space-y-4">
                 {paymentLines.map((line, index) => {
-                  // --- (FIX) Get the list of valid methods for this line's currency ---
                   const validMethods = paymentMethodsByCurrency[line.currency] || [];
-                  
                   return (
                     <div key={line.id} className="space-y-3 rounded-lg border border-gray-300 p-3 dark:border-gray-600">
                       <div className="flex justify-between items-center">
                         <h4 className="font-medium dark:text-white">Payment #{index + 1}</h4>
                         <button type="button" onClick={() => handleRemovePaymentLine(line.id)} className="text-red-500 hover:text-red-700"><X className="h-4 w-4" /></button>
                       </div>
-
-                      {/* --- (FIX) Smart Method Dropdown --- */}
-                      <FormSelect 
-                        label="Method"
-                        value={line.method}
-                        onChange={(val: string) => handleUpdatePaymentLine(line.id, 'method', val)}
-                      >
+                      <FormSelect label="Method" value={line.method} onChange={(val: string) => handleUpdatePaymentLine(line.id, 'method', val)}>
                         <option value="" disabled>Select a method</option>
-                        {validMethods.map(methodKey => (
-                          <option key={methodKey} value={methodKey}>
-                            {PAYMENT_PROVIDERS[methodKey].label}
-                          </option>
-                        ))}
+                        {validMethods.map(methodKey => <option key={methodKey} value={methodKey}>{PAYMENT_PROVIDERS[methodKey].label}</option>)}
                       </FormSelect>
-                      
                       <div className="grid grid-cols-2 gap-2">
-                        <FormInput
-                          label="Amount"
-                          type="number"
-                          placeholder="0.00"
-                          value={line.amount}
-                          onChange={(val: string) => handleUpdatePaymentLine(line.id, 'amount', val)}
-                        />
-                        <FormSelect 
-                          label="Currency"
-                          value={line.currency}
-                          onChange={(val: string) => handleUpdatePaymentLine(line.id, 'currency', val)}
-                        >
+                        <FormInput label="Amount" type="number" value={line.amount} onChange={(val: string) => handleUpdatePaymentLine(line.id, 'amount', val)} />
+                        <FormSelect label="Currency" value={line.currency} onChange={(val: string) => handleUpdatePaymentLine(line.id, 'currency', val)}>
                           {CURRENCIES.map(c => <option key={c} value={c}>{c}</option>)}
                         </FormSelect>
                       </div>
-                      
                       {line.currency !== invoiceCurrency && (
                         <div className="border-t border-dashed border-blue-400 pt-3">
-                          <FormInput
-                            label={`Value in ${invoiceCurrency}`}
-                            type="number"
-                            placeholder="0.00"
-                            value={line.valueInInvoiceCurrency}
-                            onChange={(val: string) => handleUpdatePaymentLine(line.id, 'valueInInvoiceCurrency', val)}
-                            className="[&_input]:border-blue-500 [&_input]:ring-1 [&_input]:ring-blue-200"
-                          />
+                          <FormInput label={`Value in ${invoiceCurrency}`} type="number" value={line.valueInInvoiceCurrency} onChange={(val: string) => handleUpdatePaymentLine(line.id, 'valueInInvoiceCurrency', val)} className="[&_input]:border-blue-500" />
                         </div>
                       )}
                     </div>
                   );
                 })}
-                
-                <button 
-                  type="button" 
-                  onClick={handleAddPaymentLine} 
-                  className="flex w-full items-center justify-center gap-2 rounded-lg border border-dashed border-gray-400 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-500 dark:text-gray-300 dark:hover:bg-gray-700"
-                >
-                  <Plus className="h-4 w-4" />
-                  Add Payment
+                <button type="button" onClick={handleAddPaymentLine} className="flex w-full items-center justify-center gap-2 rounded-lg border border-dashed border-gray-400 px-4 py-2 text-sm font-medium hover:bg-gray-50 dark:hover:bg-gray-700">
+                  <Plus className="h-4 w-4" /> Add Payment
                 </button>
               </div>
             </Card>
             
-            {/* D. SUMMARY CARD (REBUILT) */}
             <Card>
               <h3 className="mb-3 text-lg font-semibold dark:text-white">Summary</h3>
               <div className="space-y-2 pt-2">
                 <TotalRow label="Total Amount" value={formatCurrency(totalAmount, invoiceCurrency)} isBold={true} />
-                
-                <TotalRow 
-                  label="Total Paid" 
-                  value={formatCurrency(totalPaid, invoiceCurrency)} 
-                  isDebt={isOverpaid}
-                />
-                
-                <div className="pl-4">
-                  {paymentLines.filter(l => Number(l.amount) > 0).map(l => (
-                    <p key={l.id} className="text-sm text-gray-500 dark:text-gray-400">
-                      - {formatCurrency(Number(l.amount), l.currency)}
-                    </p>
-                  ))}
-                </div>
-                
+                <TotalRow label="Total Paid" value={formatCurrency(totalPaid, invoiceCurrency)} isDebt={isOverpaid} />
                 <hr className="my-2 dark:border-gray-600" />
-
-                <TotalRow 
-                  label={isOverpaid ? `Change Due` : `Debt Remaining`}
-                  value={formatCurrency(isOverpaid ? totalPaid - totalAmount : debtRemaining, invoiceCurrency)}
-                  isDebt={!isOverpaid && debtRemaining > 0}
-                  isBold={true} 
-                  className="text-2xl"
-                />
+                <TotalRow label={isOverpaid ? `Change Due` : `Debt Remaining`} value={formatCurrency(isOverpaid ? totalPaid - totalAmount : debtRemaining, invoiceCurrency)} isDebt={!isOverpaid && debtRemaining > 0} isBold={true} className="text-2xl" />
               </div>
             </Card>
           </div>
         </div>
 
-        {/* G. BOTTOM ACTION BAR (MODIFIED) */}
         <div className="sticky bottom-0 left-0 right-0 z-10 mt-6 border-t border-gray-200 bg-white p-4 shadow-lg dark:border-gray-700 dark:bg-gray-800">
-          {isOverpaid && <p className="mb-2 text-center text-sm text-red-600">Overpayment is not allowed. Please adjust payment amounts.</p>}
+          {isOverpaid && <p className="mb-2 text-center text-sm text-red-600">Overpayment is not allowed.</p>}
           {error && <p className="mb-2 text-center text-sm text-red-600">{error}</p>}
-          
           <div className="mx-auto flex max-w-7xl flex-col gap-2 sm:flex-row">
-            <button
-              type="submit"
-              title="Save this sale"
-              disabled={isSaving || items.length === 0 || !customer || isOverpaid}
-              className="flex-2 flex items-center justify-center gap-2 rounded-lg bg-blue-600 px-5 py-3 text-base font-medium text-white shadow-sm hover:bg-blue-700 disabled:opacity-50"
-            >
+            <button type="submit" disabled={isSaving || items.length === 0 || !customer || isOverpaid} className="flex-2 flex items-center justify-center gap-2 rounded-lg bg-blue-600 px-5 py-3 text-base font-medium text-white shadow-sm hover:bg-blue-700 disabled:opacity-50">
               {isSaving ? <Loader2 className="h-5 w-5 animate-spin" /> : <Save className="h-5 w-5" />}
               {isSaving ? "Saving..." : `Save Sale (${formatCurrency(totalAmount, invoiceCurrency)})`}
             </button>
-            <button
-              type="button"
-              title="Save and open print dialog"
-              onClick={() => handleSaveSale('save_print')}
-              disabled={isSaving || items.length === 0 || !customer || isOverpaid}
-              className="flex-1 flex items-center justify-center gap-2 rounded-lg bg-gray-600 px-4 py-2 text-sm font-medium text-white hover:bg-gray-700 disabled:opacity-50"
-            >
-              <Printer className="h-4 w-4" />
-              Save & Print
+            <button type="button" onClick={() => handleSaveSale('save_print')} disabled={isSaving || items.length === 0 || !customer || isOverpaid} className="flex-1 flex items-center justify-center gap-2 rounded-lg bg-gray-600 px-4 py-2 text-sm font-medium text-white hover:bg-gray-700 disabled:opacity-50">
+              <Printer className="h-4 w-4" /> Save & Print
             </button>
-            <button
-              type="button"
-              title="Clear the form"
-              onClick={resetForm}
-              disabled={isSaving}
-              className="flex-1 flex items-center justify-center gap-2 rounded-lg border border-red-500 px-4 py-2 text-sm font-medium text-red-500 hover:bg-red-50 disabled:opacity-50 dark:border-red-600 dark:text-red-500 dark:hover:bg-red-900/50"
-            >
-              <X className="h-4 w-4" />
-              Cancel
+            <button type="button" onClick={resetForm} disabled={isSaving} className="flex-1 flex items-center justify-center gap-2 rounded-lg border border-red-500 px-4 py-2 text-sm font-medium text-red-500 hover:bg-red-50 disabled:opacity-50 dark:hover:bg-red-900/50">
+              <X className="h-4 w-4" /> Cancel
             </button>
           </div>
         </div>
       </form>
 
-      {/* --- (NEW) Add Product Modal --- */}
+      {/* --- Add Product Modal --- */}
       {showAddProductModal && (
         <ProductFormModal
           productToEdit={null}
-          onClose={() => {
-            setShowAddProductModal(false);
-            // Refresh product list after adding
-            mutate((key: any) => typeof key === 'string' && key.startsWith('/api/products?tab=products'), undefined, { revalidate: true });
-          }}
+          onClose={() => { setShowAddProductModal(false); mutate((key: any) => typeof key === 'string' && key.startsWith('/api/products'), undefined, { revalidate: true }); }}
           storeId={subscription?.storeId || user?.storeId || ""}
         />
       )}
 
-      {/* --- (NEW) PDF Download Modal --- */}
+      {/* --- PDF Download Modal --- */}
       {saleToPrint && PdfTemplate && (
         <TransitionedModal isOpen={true} onClose={() => setSaleToPrint(null)} size="md">
-          <Dialog.Title className="text-lg font-medium dark:text-white">
-            <CheckCircle className="h-6 w-6 text-green-500 inline-block mr-2" />
-            Sale Saved Successfully!
-          </Dialog.Title>
+          <Dialog.Title className="text-lg font-medium dark:text-white"><CheckCircle className="h-6 w-6 text-green-500 inline-block mr-2" /> Sale Saved Successfully!</Dialog.Title>
           <div className="mt-4 space-y-4">
-            <p className="text-sm text-gray-500 dark:text-gray-400">
-              Your sale ({saleToPrint.data.invoiceId}) has been saved.
-              You can now download the PDF invoice.
-            </p>
+            <p className="text-sm text-gray-500 dark:text-gray-400">Your sale ({saleToPrint.data.invoiceId}) has been saved. Download PDF below.</p>
             <PDFDownloadLink
               document={React.createElement(PdfTemplate, { data: saleToPrint.data, store: saleToPrint.store })}
               fileName={`${saleToPrint.data.invoiceId || 'invoice'}.pdf`}
-              className="w-full flex justify-center items-center gap-2 rounded-lg bg-red-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-red-800 disabled:opacity-50"
+              className="w-full flex justify-center items-center gap-2 rounded-lg bg-red-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-red-800"
             >
-              {({ loading }) => 
-                loading ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <>
-                    <Download className="h-4 w-4" />
-                    Download PDF Now
-                  </>
-                )
-              }
+              {({ loading }) => loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <><Download className="h-4 w-4" /> Download PDF Now</>}
             </PDFDownloadLink>
           </div>
-          <div className="mt-6 flex justify-end">
-            <button
-              type="button"
-              className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
-              onClick={() => setSaleToPrint(null)}
-            >
-              Close
-            </button>
-          </div>
+          <div className="mt-6 flex justify-end"><button type="button" className="rounded-lg border px-4 py-2" onClick={() => setSaleToPrint(null)}>Close</button></div>
         </TransitionedModal>
       )}
 
-      {/* NEW: Missing Price Modal */}
+      {/* --- Missing Price Modal --- */}
       <TransitionedModal isOpen={!!productForPricing} onClose={() => setProductForPricing(null)}>
-        <Dialog.Title className="text-lg font-medium dark:text-white">
-          Price Not Found
-        </Dialog.Title>
+        <Dialog.Title className="text-lg font-medium dark:text-white">Price Not Found</Dialog.Title>
         <div className="mt-4 space-y-4">
-          <p className="text-sm text-gray-500 dark:text-gray-400">
-            The price for "{productForPricing?.product.name}" is not set in {invoiceCurrency}.
-            Please enter the price for this sale.
-          </p>
-          <FormInput 
-            label={`Price in ${invoiceCurrency}`}
-            type="number"
-            value={productForPricing?.manualPrice || ""}
-            onChange={(val: string) => setProductForPricing(prev => prev ? ({ ...prev, manualPrice: val }) : null)}
-            placeholder="0.00" 
-          />
+          <p className="text-sm text-gray-500">Price for "{productForPricing?.product.name}" is missing in {invoiceCurrency}.</p>
+          <FormInput label={`Price in ${invoiceCurrency}`} type="number" value={productForPricing?.manualPrice || ""} onChange={(val: string) => setProductForPricing(prev => prev ? ({ ...prev, manualPrice: val }) : null)} placeholder="0.00" />
         </div>
         <div className="mt-6 flex justify-end gap-3">
-          <button type="button" className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700" onClick={() => setProductForPricing(null)}>Cancel</button>
-          <button type="button" className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-blue-700" onClick={handleManualPriceSubmit}>Add to Cart</button>
+          <button type="button" className="rounded-lg border px-4 py-2" onClick={() => setProductForPricing(null)}>Cancel</button>
+          <button type="button" className="rounded-lg bg-blue-600 px-4 py-2 text-white" onClick={() => { if(Number(productForPricing?.manualPrice)>0){ addItemToCart(productForPricing?.product, productForPricing!.manualPrice, true, {}); setProductForPricing(null); } }}>Add to Cart</button>
+        </div>
+      </TransitionedModal>
+
+      {/* --- Variant Modal --- */}
+      <TransitionedModal isOpen={variantModal.isOpen} onClose={() => setVariantModal({ isOpen: false, product: null })} size="md">
+        <Dialog.Title className="text-lg font-medium dark:text-white">Select Options</Dialog.Title>
+        <div className="mt-4 space-y-4">
+          {variantModal.product?.options?.map((opt: any, idx: number) => (
+            <div key={idx}>
+              <label className="block text-sm font-medium mb-1">{opt.name}</label>
+              <select className="w-full rounded-lg border p-2.5 dark:bg-gray-700" value={selectedChoices[opt.name] || ""} onChange={(e) => setSelectedChoices(prev => ({ ...prev, [opt.name]: e.target.value }))}>
+                <option value="">Not Included</option>
+                {opt.values.map((val: string) => <option key={val} value={val}>{val}</option>)}
+              </select>
+            </div>
+          ))}
+        </div>
+        <div className="mt-6 flex justify-end gap-3">
+          <button type="button" onClick={() => setVariantModal({ isOpen: false, product: null })} className="rounded-lg border px-4 py-2">Cancel</button>
+          <button type="button" onClick={() => {
+              const product = variantModal.product;
+              const price = product.salePrices?.[invoiceCurrency];
+              if (price === undefined || price === null || price === 0) {
+                 setVariantModal({ isOpen: false, product: null });
+                 setProductForPricing({ product, manualPrice: "" });
+              } else {
+                 addItemToCart(product, price.toString(), false, selectedChoices);
+                 setVariantModal({ isOpen: false, product: null });
+              }
+            }} className="rounded-lg bg-blue-600 px-4 py-2 text-white">Confirm & Add</button>
         </div>
       </TransitionedModal>
     </>
@@ -950,26 +791,26 @@ function PosForm() {
 }
 
 // =============================================================================
-// 🌀 Helper Components (Forms, Modals, Loaders)
+// 🌀 Helpers & UI Components
 // =============================================================================
-const LoadingSpinner = () => (
-  <div className="flex h-screen w-full items-center justify-center">
-    <div className="h-12 w-12 animate-spin rounded-full border-4 border-blue-500 border-t-transparent" />
-  </div>
-);
-
+const LoadingSpinner = () => <div className="flex h-screen w-full items-center justify-center"><div className="h-12 w-12 animate-spin rounded-full border-4 border-blue-500 border-t-transparent" /></div>;
 const Card = ({ children, className = "" }: { children: React.ReactNode; className?: string }) => <div className={`rounded-xl border border-gray-200 bg-white p-4 shadow-sm dark:border-gray-700 dark:bg-gray-800 ${className}`}>{children}</div>;
 
-const FormInput = React.forwardRef(({ label, type = "text", className = "", onChange, ...props }: any, ref) => (
+// --- FormInput with Scroll Safety ---
+const FormInput = React.forwardRef(({ label, type = "text", className = "", onChange, icon, ...props }: any, ref) => (
   <div className={className}>
     {label && <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">{label}</label>}
-    <input 
-      type={type} 
-      ref={ref} 
-      {...props} 
-      onChange={onChange ? (e) => onChange(e.target.value) : undefined}
-      className="w-full rounded-lg border border-gray-300 bg-white p-2.5 text-gray-900 shadow-sm focus:border-blue-500 focus:ring-blue-500 disabled:bg-gray-100 dark:border-gray-600 dark:bg-gray-700 dark:text-white dark:disabled:bg-gray-700/50" 
-    />
+    <div className="relative">
+      {icon && <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none text-gray-400">{icon}</div>}
+      <input 
+        type={type} 
+        ref={ref} 
+        {...props} 
+        onChange={onChange ? (e) => onChange(e.target.value) : undefined}
+        onWheel={(e) => type === 'number' && (e.target as HTMLInputElement).blur()} // SCROLL SAFETY FIX
+        className={`w-full rounded-lg border border-gray-300 bg-white p-2.5 text-gray-900 shadow-sm focus:border-blue-500 focus:ring-blue-500 disabled:bg-gray-100 dark:border-gray-600 dark:bg-gray-700 dark:text-white ${icon ? 'pl-10' : ''}`}
+      />
+    </div>
   </div>
 ));
 FormInput.displayName = "FormInput";
@@ -977,74 +818,34 @@ FormInput.displayName = "FormInput";
 const FormSelect = ({ label, value, onChange, children, className = "", ...props }: any) => (
   <div className={className}>
     {label && <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">{label}</label>}
-    <select value={value} onChange={(e) => onChange(e.target.value)} {...props} className="w-full rounded-lg border border-gray-300 bg-white p-2.5 text-gray-900 shadow-sm focus:border-blue-500 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700 dark:text-white">
+    <select value={value} onChange={(e) => onChange(e.target.value)} {...props} className="w-full rounded-lg border border-gray-300 bg-white p-2.5 text-gray-900 shadow-sm focus:border-blue-500 focus:ring-blue-500 disabled:bg-gray-100 disabled:text-gray-500 dark:border-gray-600 dark:bg-gray-700 dark:text-white">
       {children}
     </select>
   </div>
 );
 
-const TotalRow = ({ label, value, isDebt = false, isBold = false, className = "" }: { label: string, value: string, isDebt?: boolean, isBold?: boolean, className?: string }) => (
+const TotalRow = ({ label, value, isDebt = false, isBold = false, className = "" }: any) => (
   <div className={`flex justify-between text-sm ${isBold ? 'font-semibold' : ''} ${isDebt ? 'text-red-600 dark:text-red-500' : 'text-gray-900 dark:text-white'} ${className}`}>
     <span className="text-gray-600 dark:text-gray-300">{label}:</span>
     <span className={isBold ? 'text-lg' : ''}>{value}</span>
   </div>
 );
 
-const TransitionedModal = ({
-  isOpen,
-  onClose,
-  children,
-  size = 'md' 
-}: {
-  isOpen: boolean;
-  onClose: () => void;
-  children: React.ReactNode;
-  size?: 'md' | 'lg' | 'xl'; 
-}) => {
-  const sizeClasses: Record<string, string> = {
-    md: 'max-w-md',
-    lg: 'max-w-3xl',
-    xl: 'max-w-5xl',
-  };
-  
+const TransitionedModal = ({ isOpen, onClose, children, size = 'md' }: any) => {
+  const sizeClasses: Record<string, string> = { md: 'max-w-md', lg: 'max-w-3xl', xl: 'max-w-5xl' };
   return (
     <Transition appear show={isOpen} as={Fragment}>
       <Dialog as="div" className="relative z-50" onClose={onClose}>
-        <Transition.Child
-          as={Fragment}
-          enter="ease-out duration-300"
-          enterFrom="opacity-0"
-          enterTo="opacity-100"
-          leave="ease-in duration-200"
-          leaveFrom="opacity-100"
-          leaveTo="opacity-0"
-        >
-          <div className="fixed inset-0 bg-black/60 dark:bg-black/80" />
-        </Transition.Child>
-
-        <div className="fixed inset-0 overflow-y-auto">
-          <div className="flex min-h-full items-center justify-center p-4 text-center">
-            <Transition.Child
-              as={Fragment}
-              enter="ease-out duration-300"
-              enterFrom="opacity-0 scale-95"
-              enterTo="opacity-100 scale-100"
-              leave="ease-in duration-200"
-              leaveFrom="opacity-100 scale-100"
-              leaveTo="opacity-0 scale-95"
-            >
-              <Dialog.Panel className={`w-full ${sizeClasses[size]} transform overflow-hidden rounded-2xl bg-white p-6 text-left align-middle shadow-xl transition-all dark:bg-gray-800`}>
-                {children}
-              </Dialog.Panel>
-            </Transition.Child>
-          </div>
-        </div>
+        <div className="fixed inset-0 bg-black/60 dark:bg-black/80" />
+        <div className="fixed inset-0 overflow-y-auto"><div className="flex min-h-full items-center justify-center p-4 text-center">
+          <Dialog.Panel className={`w-full ${sizeClasses[size]} transform overflow-hidden rounded-2xl bg-white p-6 text-left align-middle shadow-xl transition-all dark:bg-gray-800`}>{children}</Dialog.Panel>
+        </div></div>
       </Dialog>
     </Transition>
   );
 }
 
-// --- NEW Modern Date Picker (from products/page.tsx) ---
+// --- FULLY RESTORED DATE PICKER (No Truncation) ---
 function NewDateRangePicker({
   date,
   onApply,
@@ -1083,8 +884,8 @@ function NewDateRangePicker({
   const handleDayClick = (day: Date) => {
     if (singleDateMode) {
       setSelectedDate({ from: day, to: day });
-      onApply({ from: day, to: day }); // Apply immediately
-      setIsOpen(false); // Close popup
+      onApply({ from: day, to: day }); 
+      setIsOpen(false); 
     } else {
       const { from, to } = selectedDate || {};
       if (!from) {
@@ -1093,7 +894,7 @@ function NewDateRangePicker({
         if (isAfter(day, from)) {
           setSelectedDate({ from, to: day });
         } else {
-          setSelectedDate({ from: day, to: from }); // Swap
+          setSelectedDate({ from: day, to: from }); 
         }
       } else if (from && to) {
         setSelectedDate({ from: day, to: undefined });

@@ -28,12 +28,12 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, LineChart, Line,
 } from "recharts";
 import {
-  DollarSign, Receipt, Users, Plus, Search, ChevronLeft,
-  ChevronRight, X, AlertOctagon, CheckCircle, Loader2,
+  DollarSign, History, Receipt, Users, Plus, Search, ChevronLeft,
+  ChevronRight, X, MessageCircle, AlertOctagon, CheckCircle, Loader2,
   Phone, MessageSquare, Trash2, Calendar, CreditCard,
   Tag, ChevronsUpDown, ArrowDown, ArrowUp, Eye,UserPlus,UserCheck,
   FileDown, HandCoins, SlidersHorizontal, AlertCircle, Check,
-  Download, 
+  Download, CheckCircle2,User, 
   Printer, // <-- (NEW) IMPORT
   Calendar as CalendarIconLucide, // <-- (NEW) IMPORT
   ChevronDown, // <-- (NEW) IMPORT
@@ -1102,62 +1102,167 @@ const ViewDebtModal = ({ debt, onClose, onPay }: any) => {
   const history = debt.paymentHistory || [];
   const isLoading = false;
   const error = null;
-  return (
-    <ModalBase title="Debt Details" onClose={onClose}>
-      <div className="space-y-4">
-        <div>
-          <h4 className="text-sm font-semibold uppercase text-gray-500 dark:text-gray-400">Customer</h4>
-          <p className="text-lg font-medium text-gray-900 dark:text-white">{debt.clientName}</p>
-          <p className="text-gray-600 dark:text-gray-400">{debt.clientPhone}</p>
-          <p className="text-gray-600 dark:text-gray-400">{debt.clientWhatsapp}</p>
-        </div>
-        <div>
-          <h4 className="text-sm font-semibold uppercase text-gray-500 dark:text-gray-400">Debt Info</h4>
-          <p className={`text-3xl font-bold ${debt.isPaid ? 'text-green-600' : 'text-red-600'}`}>
-            {formatCurrency(debt.amountDue, debt.currency)}
-          </p>
-          <p className="text-gray-600 dark:text-gray-400">Reason: {debt.reason}</p>
-          <p className="text-gray-600 dark:text-gray-400">Date: {dayjs(debt.createdAt).format("DD MMM YYYY")}</p>
-          <p className="text-gray-600 dark:text-gray-400">Sale ID: {debt.relatedSaleId || 'N/A'}</p>
-        </div>
-        <div>
-          <h4 className="text-sm font-semibold uppercase text-gray-500 dark:text-gray-400">Payment History</h4>
-          <div className="mt-2 max-h-40 space-y-2 overflow-y-auto rounded-lg border p-3 dark:border-gray-700">
-            {isLoading && <Loader2 className="h-4 w-4 animate-spin" />}
-            {error && <p className="text-sm text-red-500">Could not load history.</p>}
-            {!isLoading && !error && history.length === 0 && (
-              <p className="text-sm text-gray-500">No payment history found.</p>
+return (
+    <ModalBase title="Debt Record" onClose={onClose}>
+      <div className="px-1 pb-6">
+        
+        {/* --- HERO SECTION: Status & Amount --- */}
+        <div className={`mt-4 rounded-2xl border p-6 text-center ${
+          debt.isPaid 
+            ? 'border-green-100 bg-green-50 dark:border-green-900/30 dark:bg-green-900/10' 
+            : 'border-red-100 bg-red-50 dark:border-red-900/30 dark:bg-red-900/10'
+        }`}>
+          <div className="mb-2 flex justify-center">
+            {debt.isPaid ? (
+              <div className="flex items-center gap-2 rounded-full bg-green-100 px-3 py-1 text-sm font-bold text-green-700 dark:bg-green-900/30 dark:text-green-400">
+                <CheckCircle2 className="h-4 w-4" /> PAID IN FULL
+              </div>
+            ) : (
+              <div className="flex items-center gap-2 rounded-full bg-red-100 px-3 py-1 text-sm font-bold text-red-700 dark:bg-red-900/30 dark:text-red-400">
+                <AlertCircle className="h-4 w-4" /> PAYMENT OVERDUE
+              </div>
             )}
+          </div>
+          
+          <p className="text-xs font-medium uppercase tracking-widest text-gray-500 dark:text-gray-400">
+            Outstanding Balance
+          </p>
+          <h2 className={`mt-1 text-4xl font-black tracking-tight ${
+            debt.isPaid 
+              ? 'text-green-700 dark:text-green-400' 
+              : 'text-red-600 dark:text-red-400'
+          }`}>
+            {formatCurrency(debt.amountDue, debt.currency)}
+          </h2>
+        </div>
+
+        {/* --- INFO GRID --- */}
+        <div className="mt-6 grid grid-cols-1 gap-6 sm:grid-cols-2">
+          
+          {/* Customer Card */}
+          <div className="space-y-3">
+            <h4 className="flex items-center gap-2 text-xs font-bold uppercase text-gray-500">
+              <User className="h-3.5 w-3.5" /> Customer Details
+            </h4>
+            <div className="rounded-xl border border-gray-100 bg-white p-4 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+              <p className="text-base font-bold text-gray-900 dark:text-white">
+                {debt.clientName || 'Unknown Client'}
+              </p>
+              <div className="mt-2 space-y-1.5">
+                {debt.clientPhone && (
+                  <div className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-300">
+                    <Phone className="h-3.5 w-3.5 text-gray-400" />
+                    {debt.clientPhone}
+                  </div>
+                )}
+                {debt.clientWhatsapp && (
+                  <div className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-300">
+                    <MessageCircle className="h-3.5 w-3.5 text-green-500" />
+                    {debt.clientWhatsapp}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Context Card */}
+          <div className="space-y-3">
+            <h4 className="flex items-center gap-2 text-xs font-bold uppercase text-gray-500">
+              <Receipt className="h-3.5 w-3.5" /> Debt Context
+            </h4>
+            <div className="rounded-xl border border-gray-100 bg-white p-4 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+              <div className="space-y-3">
+                <div className="flex justify-between">
+                  <span className="text-sm text-gray-500">Created Date</span>
+                  <span className="flex items-center gap-1.5 text-sm font-medium text-gray-900 dark:text-white">
+                    <Calendar className="h-3.5 w-3.5 text-gray-400" />
+                    {dayjs(debt.createdAt).format("DD MMM YYYY")}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-sm text-gray-500">Reason</span>
+                  <span className="text-sm font-medium text-gray-900 dark:text-white max-w-[140px] truncate text-right">
+                    {debt.reason || 'N/A'}
+                  </span>
+                </div>
+                <div className="flex justify-between border-t border-gray-50 pt-2 dark:border-gray-700">
+                  <span className="text-sm text-gray-500">Related Sale</span>
+                  <span className="font-mono text-sm font-medium text-blue-600 dark:text-blue-400">
+                    #{debt.relatedSaleId ? debt.relatedSaleId.slice(0,6) : 'N/A'}
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* --- PAYMENT HISTORY --- */}
+        <div className="mt-8">
+          <h4 className="mb-3 flex items-center gap-2 text-xs font-bold uppercase text-gray-500">
+            <History className="h-3.5 w-3.5" /> Payment History
+          </h4>
+          
+          <div className="overflow-hidden rounded-xl border border-gray-200 dark:border-gray-700">
+            {isLoading && (
+              <div className="flex justify-center py-6"><Loader2 className="h-5 w-5 animate-spin text-gray-400" /></div>
+            )}
+            
+            {error && (
+              <div className="py-4 text-center text-sm text-red-500">Failed to load history.</div>
+            )}
+            
+            {!isLoading && !error && history.length === 0 && (
+              <div className="bg-gray-50 py-6 text-center dark:bg-gray-800/50">
+                <p className="text-sm italic text-gray-400">No payments recorded yet.</p>
+              </div>
+            )}
+
             {!isLoading && !error && history.length > 0 && (
-              <table className="min-w-full text-sm">
-                <tbody>
-                  {history.map((payment: any, index: number) => (
-                    <tr key={index} className="border-b last:border-b-0 dark:border-gray-700">
-                      <td className="py-2">
-                        <p className="font-medium">{formatCurrency(payment.amount, debt.currency)}</p>
-                        <p className="text-xs text-gray-500">{payment.method || 'N/A'}</p>
-                      </td>
-                      <td className="py-2 text-right text-gray-500">
-                        {dayjs(payment.date.toDate ? payment.date.toDate() : payment.date).format("DD MMM YYYY")}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+              <div className="divide-y divide-gray-100 dark:divide-gray-700">
+                {history.map((payment: any, index: number) => (
+                  <div key={index} className="flex items-center justify-between bg-white px-4 py-3 hover:bg-gray-50 dark:bg-gray-800 dark:hover:bg-gray-700/50">
+                    <div className="flex items-center gap-3">
+                      <div className="flex h-8 w-8 items-center justify-center rounded-full bg-green-50 text-green-600 dark:bg-green-900/20 dark:text-green-400">
+                        <CheckCircle2 className="h-4 w-4" />
+                      </div>
+                      <div>
+                        <p className="font-bold text-gray-900 dark:text-white">
+                          {formatCurrency(payment.amount, debt.currency)}
+                        </p>
+                        <p className="text-xs text-gray-500 capitalize">{payment.method || 'Cash'}</p>
+                      </div>
+                    </div>
+                    <div className="text-right text-xs text-gray-500">
+                      {dayjs(payment.date.toDate ? payment.date.toDate() : payment.date).format("DD MMM YYYY")}
+                    </div>
+                  </div>
+                ))}
+              </div>
             )}
           </div>
         </div>
-        <div className="flex justify-end gap-3 pt-4">
-          <button type="button" onClick={onClose} className="rounded-lg border bg-white px-4 py-2 text-sm font-medium hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-800 dark:hover:bg-gray-700">Close</button>
+
+        {/* --- ACTIONS --- */}
+        <div className="mt-8 flex justify-end gap-3 border-t border-gray-100 pt-5 dark:border-gray-700">
+          <button 
+            type="button" 
+            onClick={onClose} 
+            className="rounded-lg border border-gray-300 bg-white px-5 py-2.5 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
+          >
+            Close
+          </button>
+          
           {!debt.isPaid && (
             <button
+              type="button"
               onClick={() => {
                 onClose(); 
                 onPay(debt); 
               }}
-              className="flex min-w-[80px] items-center justify-center rounded-lg bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-700"
+              className="flex items-center gap-2 rounded-lg bg-green-600 px-5 py-2.5 text-sm font-medium text-white shadow-md shadow-green-500/20 hover:bg-green-700 active:scale-[0.98]"
             >
-              <CreditCard className="h-4 w-4" /> &nbsp; Record Payment
+              <CreditCard className="h-4 w-4" />
+              Record Payment
             </button>
           )}
         </div>

@@ -1,21 +1,22 @@
+// File: app/(auth)/login/page.tsx
 "use client";
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { auth } from '@/lib/firebaseConfig'; // Your REAL auth import
-import { signInWithEmailAndPassword, sendPasswordResetEmail } from 'firebase/auth'; // Your REAL Firebase functions
-import { Mail, Lock, Loader2, ShieldCheck } from 'lucide-react'; // Your REAL icons
-import { FaWhatsapp } from 'react-icons/fa'; // Your REAL icon
-
-// This is a placeholder for your logo. 
-// You can replace this with an <Image> component from Next.js.
-import Image from "next/image"; // ✅ Make sure to import at top of file
+import { auth } from '@/lib/firebaseConfig'; 
+import { signInWithEmailAndPassword, sendPasswordResetEmail } from 'firebase/auth'; 
+import { Mail, Lock, Loader2 } from 'lucide-react'; 
+import { FaWhatsapp } from 'react-icons/fa'; 
+import Image from "next/image"; 
+// Import the hook to check global state
+// Adjust path if your contexts folder is elsewhere (e.g. ../../contexts/AuthContext)
+import { useAuth } from '@/app/contexts/AuthContext'; 
 
 const Logo = () => (
   <div className="flex items-center space-x-2">
     <div className="w-12 h-12 bg-white rounded-lg flex items-center justify-center shadow-md p-1">
       <Image
-        src="/logo1.png"       // ✅ Path to your logo in public folder
+        src="/logo1.png"       
         alt="Hantikaab Logo"
         width={40}
         height={40}
@@ -27,17 +28,25 @@ const Logo = () => (
   </div>
 );
 
-
 const LoginPage = () => {
+  const { user } = useAuth(); // Get global user state
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [resetSent, setResetSent] = useState(false);
   
-  const router = useRouter(); // Your REAL Next.js router
+  const router = useRouter(); 
 
-  // Core login function - using your REAL backend
+  // --- AUTOMATIC REDIRECT ---
+  // This waits until AuthContext has finished creating the cookie
+  // and setting the user object.
+  useEffect(() => {
+    if (user) {
+      router.push('/dashboard');
+    }
+  }, [user, router]);
+
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
@@ -45,11 +54,15 @@ const LoginPage = () => {
     setResetSent(false);
 
     try {
-      // Backend function is here (using REAL Firebase auth)
+      // We strictly just sign in here.
+      // The AuthContext listener will detect this, create the cookie,
+      // and then update the 'user' state, triggering the useEffect above.
       await signInWithEmailAndPassword(auth, email, password);
-      // Successful login
-      router.push('/dashboard'); 
+      
+      // NOTE: Do NOT router.push here. It causes the race condition.
+      
     } catch (err: any) {
+      setIsLoading(false); // Only stop loading on error
       // Handle errors
       if (err.code === 'auth/user-not-found' || err.code === 'auth/wrong-password' || err.code === 'auth/invalid-credential') {
         setError('Invalid email or password. Please try again.');
@@ -57,12 +70,9 @@ const LoginPage = () => {
         setError('An unexpected error occurred. Please try again later.');
       }
       console.error("Login error:", err);
-    } finally {
-      setIsLoading(false);
     }
   };
 
-  // New "Forgot Password" function - using your REAL backend
   const handleForgotPassword = async () => {
     if (!email) {
       setError('Please enter your email in the field above to reset your password.');
@@ -70,10 +80,10 @@ const LoginPage = () => {
     }
     setError(null);
     setResetSent(false);
-    setIsLoading(true); // Use same loading state
+    setIsLoading(true); 
 
     try {
-      await sendPasswordResetEmail(auth, email); // Using REAL Firebase auth
+      await sendPasswordResetEmail(auth, email); 
       setResetSent(true);
       setError(null);
     } catch (err: any) {
@@ -87,7 +97,6 @@ const LoginPage = () => {
       setIsLoading(false);
     }
   };
-
 
   return (
     <div className="min-h-screen bg-gray-100 dark:bg-gray-900 grid md:grid-cols-2">
@@ -115,22 +124,21 @@ const LoginPage = () => {
         <div className="max-w-md w-full space-y-8">
           
          {/* Mobile-only Logo */}
-<div className="md:hidden flex justify-center">
-  <div className="flex items-center space-x-2">
-    <div className="w-12 h-12 bg-white rounded-lg flex items-center justify-center shadow-md p-1">
-      <Image
-        src="/logo1.png"       // ✅ Path to your logo1 in public folder
-        alt="Hantikaab Logo"
-        width={40}
-        height={40}
-        className="object-contain"
-        priority
-      />
-    </div>
-    <span className="text-3xl font-bold text-gray-900 dark:text-white">HantiKaab</span>
-  </div>
-</div>
-
+        <div className="md:hidden flex justify-center">
+          <div className="flex items-center space-x-2">
+            <div className="w-12 h-12 bg-white rounded-lg flex items-center justify-center shadow-md p-1">
+              <Image
+                src="/logo1.png"     
+                alt="Hantikaab Logo"
+                width={40}
+                height={40}
+                className="object-contain"
+                priority
+              />
+            </div>
+            <span className="text-3xl font-bold text-gray-900 dark:text-white">HantiKaab</span>
+          </div>
+        </div>
 
           <div>
             <h2 className="text-3xl font-extrabold text-center text-gray-900 dark:text-white">
@@ -205,7 +213,7 @@ const LoginPage = () => {
             <div className="flex items-center justify-end">
               <div className="text-sm">
                 <button
-                  type="button" // Important: type="button" to prevent form submission
+                  type="button"
                   onClick={handleForgotPassword}
                   disabled={isLoading}
                   className="font-medium text-blue-600 hover:text-blue-500 dark:text-blue-400 dark:hover:text-blue-300 focus:outline-none focus:underline"

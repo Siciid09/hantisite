@@ -1,8 +1,8 @@
 // File: app/api/dashboard/types.ts
-// (FIX) Ku dar 4-ta qaybood ee cusub si aad u xalliso ciladda TypeScript
+// (FIXED) Added 'accountBalances' to resolve the TypeScript error.
 
 export interface DashboardSummary {
-  // 8-dii hore
+  // --- Standard KPIs ---
   todaysSales: number;
   totalIncomes: number; // This is 'Total Revenue'
   totalExpenses: number;
@@ -12,18 +12,42 @@ export interface DashboardSummary {
   lowStockCount: number;
   totalProducts: number;
 
-  // --- (NEW) 4-ta cusub ---
+  // --- Liability/Asset KPIs ---
   outstandingInvoices: number; // Total unpaid from customers
   totalPayables: number; // Total owed to suppliers
-  cashBalance: number; // Net cash flow for the period
+  cashBalance: number; // Legacy field (can be kept for safety)
   profitMargin: number; // Percentage
-  // --- (END NEW) ---
 
-  // Xogta kale (charts iyo lists)
-  incomeExpenseTrend: { date: string; income: number; expense: number }[];
-  expenseBreakdown: { name: string; value: number }[];
-  salesByPaymentType: { name: string; value: number }[];
-  topSellingProducts: { name: string; unitsSold: number; revenue: number }[];
+  // --- (NEW) Dynamic Account Balances ---
+  // This fixes the error: "Property 'accountBalances' does not exist..."
+  accountBalances: { 
+    name: string; 
+    value: number; 
+  }[];
+
+  // --- Charts & Lists ---
+  incomeExpenseTrend: { 
+    date: string; 
+    income: number; 
+    expense: number; 
+  }[];
+  
+  expenseBreakdown: { 
+    name: string; 
+    value: number; 
+  }[];
+  
+  salesByPaymentType: { 
+    name: string; 
+    value: number; 
+  }[];
+  
+  topSellingProducts: { 
+    name: string; 
+    unitsSold: number; 
+    revenue: number; 
+  }[];
+  
   recentSales: {
     id: string;
     customerName: string;
@@ -31,17 +55,25 @@ export interface DashboardSummary {
     status: string;
     createdAt: string;
   }[];
-  stockOverview: { name: string; quantity: number; id: string }[];
+  
+  stockOverview: { 
+    id: string; 
+    name: string; 
+    quantity: number; 
+  }[];
+  
   activityFeed: {
     id: string;
     description: string;
     userName: string;
     timestamp: string;
   }[];
+  
   performanceComparison: {
     salesChangePercent: number;
     profitChangePercent: number;
   };
+  
   smartInsight: string;
   timestamp: string;
 }
