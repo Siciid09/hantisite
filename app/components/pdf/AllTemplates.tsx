@@ -283,7 +283,10 @@ const styles = StyleSheet.create({
     marginTop: 20,
   },
   totalsBox: {
-    width: '40%',
+    width: '40%', // Used for generic reports
+  },
+  totalsBoxInvoice: {
+    width: '100%', // When inside the 2-column layout, take full width of the column
   },
   totalsRow: {
     flexDirection: 'row',
@@ -302,13 +305,13 @@ const styles = StyleSheet.create({
   
   // --- Modern/Premium Totals ---
   totalsBoxModern: {
-    width: '40%',
+    width: '100%',
     backgroundColor: '#FFFFFF',
     padding: 10,
     borderRadius: 6,
   },
   totalsBoxPremium: {
-    width: '40%',
+    width: '100%',
   },
 });
 
@@ -330,12 +333,12 @@ const renderVariants = (selectedVariants: any) => {
 const PaymentBreakdown = ({ lines, currency }: { lines: any[], currency: string }) => {
   if (!lines || lines.length === 0) return null;
   return (
-    <View style={{ marginTop: 10, marginBottom: 10, width: '55%' }}>
-      <Text style={{ fontSize: 8, fontWeight: 'bold', color: '#374151', marginBottom: 2 }}>
+    <View style={{ marginTop: 5 }}>
+      <Text style={{ fontSize: 9, fontWeight: 'bold', color: '#374151', marginBottom: 4 }}>
         Payment Details:
       </Text>
       {lines.map((line: any, i: number) => (
-        <Text key={i} style={{ fontSize: 8, color: '#4B5563' }}>
+        <Text key={i} style={{ fontSize: 8, color: '#4B5563', marginBottom: 1 }}>
           • {line.method ? line.method.replace(/_/g, ' ') : 'Payment'}: {formatCurrency(line.amount, line.currency)}
           {line.currency !== currency && ` (approx ${formatCurrency(line.valueInInvoiceCurrency, currency)})`}
         </Text>
@@ -367,8 +370,9 @@ const PdfHeader = ({ store, recipient }: { store: any, recipient?: any }) => {
         <View style={styles.recipientInfo}>
           <Text style={styles.recipientTitle}>{recipient.title || 'BILL TO'}</Text>
           <Text style={styles.recipientName}>{recipient.name || 'Customer'}</Text>
-          <Text style={styles.storeDetails}>{recipient.phone}</Text>
-          <Text style={styles.storeDetails}>{recipient.address}</Text>
+          {/* Use optional chaining or empty string checks to prevent crashes */}
+          <Text style={styles.storeDetails}>{recipient.phone || ''}</Text>
+          <Text style={styles.storeDetails}>{recipient.address || ''}</Text>
         </View>
       )}
     </View>
@@ -419,28 +423,41 @@ const PremiumFooter = () => (
   </View>
 );
 
-// --- Reusable Totals Section ---
-const InvoiceTotals = ({ sale, style = 'default' }: { sale: any, style?: 'default' | 'modern' | 'premium' }) => {
+// --- Helper Component: Just the Totals Box content (No Container) ---
+// This is used inside the Invoice columns to ensure layout separation
+const InvoiceTotalsBox = ({ sale, style = 'default' }: { sale: any, style?: 'default' | 'modern' | 'premium' }) => {
   const currency = sale.invoiceCurrency;
   const isModern = style === 'modern';
   const isPremium = style === 'premium';
-  
+
+  const boxStyle = isModern ? styles.totalsBoxModern : (isPremium ? styles.totalsBoxPremium : styles.totalsBoxInvoice);
+
+  return (
+    <View style={boxStyle}>
+      <View style={styles.totalsRow}>
+        <Text>Subtotal</Text>
+        <Text style={styles.textRight}>{formatCurrency(sale.totalAmount, currency)}</Text>
+      </View>
+      <View style={styles.totalsRow}>
+        <Text style={styles.textGreen}>Total Paid</Text>
+        <Text style={{...styles.textRight, ...styles.textGreen}}>{formatCurrency(sale.totalPaid, currency)}</Text>
+      </View>
+      <View style={styles.totalsRowBold}>
+        <Text>Amount Due</Text>
+        <Text style={{...styles.textRight, ...styles.textRed}}>{formatCurrency(sale.debtAmount, currency)}</Text>
+      </View>
+    </View>
+  );
+};
+
+// --- Legacy Component: Wrapper for other reports ---
+// Keeps the 'totalsContainer' logic for non-invoice reports (Purchase etc)
+const InvoiceTotals = ({ sale, style = 'default' }: { sale: any, style?: 'default' | 'modern' | 'premium' }) => {
   return (
     <View style={styles.totalsContainer}>
-      <View style={isModern ? styles.totalsBoxModern : (isPremium ? styles.totalsBoxPremium : styles.totalsBox)}>
-        <View style={styles.totalsRow}>
-          <Text>Subtotal</Text>
-          <Text style={styles.textRight}>{formatCurrency(sale.totalAmount, currency)}</Text>
-        </View>
-        <View style={styles.totalsRow}>
-          <Text style={styles.textGreen}>Total Paid</Text>
-          <Text style={{...styles.textRight, ...styles.textGreen}}>{formatCurrency(sale.totalPaid, currency)}</Text>
-        </View>
-        <View style={styles.totalsRowBold}>
-          <Text>Amount Due</Text>
-          <Text style={{...styles.textRight, ...styles.textRed}}>{formatCurrency(sale.debtAmount, currency)}</Text>
-        </View>
-      </View>
+       <View style={{ width: '40%' }}>
+          <InvoiceTotalsBox sale={sale} style={style} />
+       </View>
     </View>
   );
 };
@@ -455,9 +472,10 @@ export const InvoiceDefault = ({ data: sale, store }: DocProps) => (
       <PdfHeader 
         store={store} 
         recipient={{ 
-            name: sale.customerName, 
-            phone: sale.customerPhone, 
-            address: sale.customer?.address || sale.customerAddress, // Handles both data structures
+            // --- FIX: Check nested customer object for phone/address ---
+            name: sale.customer?.name || sale.customerName || 'Walk-in Customer',
+            phone: sale.customer?.phone || sale.customerPhone || '',
+            address: sale.customer?.address || sale.customerAddress || '',
             title: 'BILL TO' 
         }} 
       />
@@ -483,10 +501,19 @@ export const InvoiceDefault = ({ data: sale, store }: DocProps) => (
           ))}
         </View>
 
-        <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 20 }}>
-           <PaymentBreakdown lines={sale.paymentLines} currency={sale.invoiceCurrency} />
-           <InvoiceTotals sale={sale} style="default" />
+        {/* --- FIX: Strict 2-Column Layout for Separation --- */}
+        <View style={{ flexDirection: 'row', marginTop: 20, alignItems: 'flex-start' }}>
+           {/* Left Column: Payments (60%) */}
+           <View style={{ width: '60%', paddingRight: 20 }}>
+               <PaymentBreakdown lines={sale.paymentLines} currency={sale.invoiceCurrency} />
+           </View>
+           
+           {/* Right Column: Totals (40%) */}
+           <View style={{ width: '40%' }}>
+               <InvoiceTotalsBox sale={sale} style="default" />
+           </View>
         </View>
+
       </View>
       <PdfFooter />
     </Page>
@@ -505,9 +532,10 @@ export const InvoiceModern = ({ data: sale, store }: DocProps) => (
         <PdfHeader 
             store={store} 
             recipient={{ 
-                name: sale.customerName, 
-                phone: sale.customerPhone, 
-                address: sale.customer?.address || sale.customerAddress,
+                // --- FIX: Check nested customer object ---
+                name: sale.customer?.name || sale.customerName || 'Walk-in Customer',
+                phone: sale.customer?.phone || sale.customerPhone || '',
+                address: sale.customer?.address || sale.customerAddress || '',
                 title: 'BILL TO' 
             }} 
         />
@@ -530,9 +558,15 @@ export const InvoiceModern = ({ data: sale, store }: DocProps) => (
             </View>
           ))}
         </View>
-        <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 20 }}>
-           <PaymentBreakdown lines={sale.paymentLines} currency={sale.invoiceCurrency} />
-           <InvoiceTotals sale={sale} style="modern" />
+        
+        {/* --- FIX: Strict 2-Column Layout --- */}
+        <View style={{ flexDirection: 'row', marginTop: 20, alignItems: 'flex-start' }}>
+           <View style={{ width: '60%', paddingRight: 20 }}>
+               <PaymentBreakdown lines={sale.paymentLines} currency={sale.invoiceCurrency} />
+           </View>
+           <View style={{ width: '40%' }}>
+               <InvoiceTotalsBox sale={sale} style="modern" />
+           </View>
         </View>
       </View>
       <ModernFooter storeName={store.name} />
@@ -552,9 +586,10 @@ export const InvoicePremium = ({ data: sale, store }: DocProps) => (
         <PdfHeader 
             store={store} 
             recipient={{ 
-                name: sale.customerName, 
-                phone: sale.customerPhone, 
-                address: sale.customer?.address || sale.customerAddress,
+                // --- FIX: Check nested customer object ---
+                name: sale.customer?.name || sale.customerName || 'Walk-in Customer',
+                phone: sale.customer?.phone || sale.customerPhone || '',
+                address: sale.customer?.address || sale.customerAddress || '',
                 title: 'BILL TO' 
             }} 
         />
@@ -577,9 +612,15 @@ export const InvoicePremium = ({ data: sale, store }: DocProps) => (
             </View>
           ))}
         </View>
-        <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 20 }}>
-           <PaymentBreakdown lines={sale.paymentLines} currency={sale.invoiceCurrency} />
-           <InvoiceTotals sale={sale} style="premium" />
+        
+        {/* --- FIX: Strict 2-Column Layout --- */}
+        <View style={{ flexDirection: 'row', marginTop: 20, alignItems: 'flex-start' }}>
+           <View style={{ width: '60%', paddingRight: 20 }}>
+               <PaymentBreakdown lines={sale.paymentLines} currency={sale.invoiceCurrency} />
+           </View>
+           <View style={{ width: '40%' }}>
+               <InvoiceTotalsBox sale={sale} style="premium" />
+           </View>
         </View>
       </View>
       <PremiumFooter />
