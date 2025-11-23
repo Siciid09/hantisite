@@ -1,22 +1,3 @@
-// File: app/api/returns/route.ts
-//
-// --- FINAL VERSION (FIXED) ---
-// 1. (FIX) POST route rewritten to use a Firestore Transaction.
-// 2. (FIX) Blocks refunds if sale.status is 'refunded' or 'voided'.
-// 3. (FIX) Blocks refunds if sale.paymentStatus is 'unpaid'.
-// 4. (FIX) Blocks if refundAmount > saleData.totalPaid (server-side check).
-// 5. (FIX) Updates original sale:
-//    - Deducts refundAmount from sale.totalPaid.
-//    - Recalculates sale.debtAmount.
-//    - Sets sale.status to 'refunded'.
-//    - *** SETS sale.paymentStatus to 'refunded' (This fixes the dashboard KPI). ***
-// 6. (FIX) Updates any related open Debit by ADDING the refundAmount to
-//    the amountDue (increasing the debt).
-// 7. (FIX) Creates an Expense document for the refund cash-out.
-// 8. (FIX) Restocks product quantities.
-// 9. (FIX) Defines 'newReturnRef' *before* its use in 'relatedReturnIds'.
-// -----------------------------------------------------------------------------
-
 import { NextResponse, NextRequest } from "next/server";
 import { firestoreAdmin, authAdmin } from "@/lib/firebaseAdmin";
 import { FieldValue, Timestamp, Query } from "firebase-admin/firestore";
@@ -40,7 +21,7 @@ const ReturnSchema = z.object({
 });
 
 
-// --- Helper: checkAuth (Unchanged) ---
+// --- Helper: checkAuth ---
 async function checkAuth(
   request: NextRequest,
   allowedRoles: ('admin' | 'manager' | 'user')[]
@@ -66,7 +47,6 @@ async function checkAuth(
   if (!storeId) throw new Error("Unauthorized: User has no store.");
   
   if (!role || !allowedRoles.includes(role)) {
-    console.warn(`[Auth] User ${uid} (Role: ${role}) tried to access a resource restricted to roles: [${allowedRoles.join(', ')}]`);
     throw new Error("Forbidden: You do not have permission to perform this action.");
   }
   
@@ -80,7 +60,7 @@ async function checkAuth(
 
 
 // =============================================================================
-// 🚀 POST - Create New Return (REBUILT WITH TRANSACTION)
+// 🚀 POST - Create New Return (FIXED: Debt Subtraction + Response Format)
 // =============================================================================
 export async function POST(request: NextRequest) {
   if (!authAdmin || !firestoreAdmin) {
@@ -92,7 +72,7 @@ export async function POST(request: NextRequest) {
   const db = firestoreAdmin;
 
   try {
-    // 1. Authentication & Authorization (Admin/Manager)
+    // 1. Authentication
     const { uid, storeId, userName } = await checkAuth(request, ['admin', 'manager']);
 
     // 2. Parse and Validate Body
@@ -110,37 +90,34 @@ export async function POST(request: NextRequest) {
       refundMethod,
     } = validation.data;
     
-    // 3. Start Firestore Transaction (Ensures Atomicity)
+    // 3. Start Transaction
     const newReturn = await db.runTransaction(async (transaction) => {
       const originalSaleRef = db.collection("sales").doc(originalSaleId);
 
-      // --- 4. READ PHASE ---
-      // a. Get the original Sale
+      // --- READ PHASE ---
       const saleDoc = await transaction.get(originalSaleRef);
       if (!saleDoc.exists || saleDoc.data()?.storeId !== storeId) {
         throw new Error("Original sale not found or does not belong to your store.");
       }
       const saleData = saleDoc.data() as any;
       
-      // b. CRITICAL CHECKS
       if (saleData.status === 'refunded' || saleData.status === 'voided') {
-         throw new Error("This sale has already been refunded or voided. Cannot refund again.");
+         throw new Error("This sale has already been refunded or voided.");
       }
       if (saleData.paymentStatus === 'unpaid') {
-         throw new Error("Cannot issue a refund for an 'unpaid' sale. Please cancel the sale instead.");
+         throw new Error("Cannot issue a refund for an 'unpaid' sale.");
       }
       if (saleData.totalPaid < refundAmount) {
-         throw new Error(`Refund amount (${refundAmount}) exceeds the total amount paid (${saleData.totalPaid}).`);
+         throw new Error(`Refund amount (${refundAmount}) exceeds the total amount paid.`);
       }
 
-      // c. Find outstanding Debit (if any)
+      // Find outstanding Debt
       const debitQuery = db.collection("debits")
           .where("relatedSaleId", "==", originalSaleId)
-          .where("isPaid", "==", false)
-          .where("status", "in", ["unpaid", "partial"]); // Only active debts
+          .where("isPaid", "==", false);
       const debitSnapshot = await transaction.get(debitQuery);
       
-      // d. Find Product Refs (for restocking)
+      // Find Product Refs
       const productRefsToFetch = [];
       for (const item of itemsToReturn) {
          if (item.productId && !item.productId.startsWith("manual_")) {
@@ -151,38 +128,31 @@ export async function POST(request: NextRequest) {
          }
       }
       
-      // --- 5. WRITE PHASE (The Fixes) ---
+      // --- WRITE PHASE ---
       const createdAt = Timestamp.now();
 
-      // a. Calculate new sale totals and status
+      // a. Update Original Sale
       const newTotalPaid = saleData.totalPaid - refundAmount;
       const newDebtAmount = saleData.totalAmount - newTotalPaid;
-      
-      // *** FIX: Define newSaleStatus for use below ***
-      const newSaleStatus = 'refunded';
-      
-      // *** FIX: Define newReturnRef *before* it is referenced ***
       const newReturnRef = db.collection("returns").doc();
 
-      // b. Update the original sale document (Deducting from paid amount)
       transaction.update(originalSaleRef, {
         totalPaid: newTotalPaid,
         debtAmount: newDebtAmount,
-        paymentStatus: 'refunded', // <-- *** THE KPI FIX ***
-        status: newSaleStatus,     // <-- *** FIXES 'Cannot find name' ERROR ***
+        paymentStatus: 'refunded',
+        status: 'refunded',
         lastUpdated: createdAt,
-        relatedReturnIds: FieldValue.arrayUnion(newReturnRef.id), // <-- *** FIXES ReferenceError ***
+        relatedReturnIds: FieldValue.arrayUnion(newReturnRef.id),
       });
 
-      // c. Restock the returned items
+      // b. Restock items
       for (const { ref, item } of productRefsToFetch) {
         transaction.update(ref, {
-          quantity: FieldValue.increment(item.quantity || 0), // Add back
+          quantity: FieldValue.increment(item.quantity || 0),
         });
       }
       
-      // d. Create the Return Document
-      // (Ref was already created above)
+      // c. Create Return Document
       const newReturnData = {
         id: newReturnRef.id,
         storeId,
@@ -202,7 +172,7 @@ export async function POST(request: NextRequest) {
       };
       transaction.set(newReturnRef, newReturnData);
 
-      // e. Create Expense Document (for the cash paid out)
+      // d. Create Expense (if actual cash was given back)
       if (refundAmount > 0) {
         const expenseRef = db.collection("expenses").doc();
         transaction.set(expenseRef, {
@@ -219,22 +189,29 @@ export async function POST(request: NextRequest) {
         });
       }
       
-      // f. Update any outstanding Debit (Increasing the debt)
+      // e. Update Debt (FIXED: Subtract debt, don't add)
       if (debitSnapshot.docs.length > 0) {
         const debitDoc = debitSnapshot.docs[0];
-        // The refund increases the outstanding debt amount
+        const currentData = debitDoc.data();
+        
+        // Logic: Returning an item reduces the total sale value, which should reduce debt.
+        // We reduce the debt by the refund value (assuming the refund value is applied to the debt).
+        const currentDue = currentData.amountDue || 0;
+        const newDue = currentDue - refundAmount;
+        
         transaction.update(debitDoc.ref, {
-          amountDue: FieldValue.increment(refundAmount),
-          status: 'unpaid', // Force status to unpaid as debt has increased
+          amountDue: FieldValue.increment(-refundAmount), // SUBTRACT
+          status: newDue <= 0.01 ? 'paid' : 'partial', // Update status based on result
+          isPaid: newDue <= 0.01,
           lastUpdated: createdAt,
         });
       }
       
       return newReturnData;
-    }); // End of Transaction
+    }); 
 
-    // 6. Return the successfully created return record
-    return NextResponse.json({ success: true, return: newReturn }, { status: 201 });
+    // FIX: Key name must be 'data' to match frontend (savedReturn.data)
+    return NextResponse.json({ success: true, data: newReturn }, { status: 201 });
 
   } catch (error: any) {
     console.error("[Returns API POST] Error:", error.stack || error.message);
@@ -243,7 +220,7 @@ export async function POST(request: NextRequest) {
 }
 
 // =============================================================================
-// 📊 GET - Fetch Returns Data (Unchanged - Already Correct)
+// 📊 GET - Fetch Returns Data (RESTORED)
 // =============================================================================
 export async function GET(request: NextRequest) {
   if (!authAdmin || !firestoreAdmin) {

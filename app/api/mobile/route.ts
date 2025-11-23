@@ -1,75 +1,46 @@
-// File: app/api/mobile/route.ts
-//
-// --- FINAL COMPLETE VERSION ---
-// 1. FIX: "Method Not Allowed" -> This file handles the mobile API route directly.
-// 2. FIX: "Something Went Wrong" -> Forces .orderBy("createdAt", "desc") to match your Firebase Index.
-// 3. FIX: "TS2454" -> Fixes the customerRef variable scope issue.
-// -----------------------------------------------------------------------------
-
 import { NextResponse, NextRequest } from "next/server";
 import { firestoreAdmin, authAdmin } from "@/lib/firebaseAdmin";
 import { FieldValue, Timestamp, Query } from "firebase-admin/firestore";
 import dayjs from "dayjs";
 
-// =============================================================================
-// 🛡️ Helper: Authentication & Authorization
-// =============================================================================
+// --- Helper: Authentication ---
 async function checkAuth(
   request: NextRequest,
   allowedRoles: ('admin' | 'manager' | 'user')[]
 ) {
-  if (!authAdmin) {
-    throw new Error("Auth Admin is not initialized.");
-  }
-  if (!firestoreAdmin) {
-    throw new Error("Firestore Admin is not initialized.");
-  }
+  if (!authAdmin) throw new Error("Auth Admin is not initialized.");
+  if (!firestoreAdmin) throw new Error("Firestore Admin is not initialized.");
 
   const authHeader = request.headers.get("Authorization");
   const token = authHeader?.split("Bearer ")[1];
   
-  if (!token) {
-    throw new Error("Unauthorized: No token provided.");
-  }
+  if (!token) throw new Error("Unauthorized: No token provided.");
   
   const decodedToken = await authAdmin.verifyIdToken(token);
   const uid = decodedToken.uid;
   const userDoc = await firestoreAdmin.collection("users").doc(uid).get();
 
-  if (!userDoc.exists) {
-    throw new Error("Unauthorized: User data not found.");
-  }
+  if (!userDoc.exists) throw new Error("Unauthorized: User data not found.");
   
   const userData = userDoc.data();
   const storeId = userData?.storeId;
   const role = userData?.role; 
   
-  if (!storeId) {
-    throw new Error("Unauthorized: User has no store.");
-  }
+  if (!storeId) throw new Error("Unauthorized: User has no store.");
   
   if (!role || !allowedRoles.includes(role)) {
-    console.warn(`[Auth] User ${uid} (Role: ${role}) tried to access a restricted resource.`);
     throw new Error("Forbidden: You do not have permission to perform this action.");
   }
   
-  return { 
-    uid, 
-    storeId, 
-    role, 
-    userName: userData?.name || "System User" 
-  };
+  return { uid, storeId, role, userName: userData?.name || "System User" };
 }
 
 // =============================================================================
-// 🚀 POST - Create New Sale (Fully Corrected)
+// 🚀 POST - Create New Sale (Synced with Web Logic)
 // =============================================================================
 export async function POST(request: NextRequest) {
   if (!authAdmin || !firestoreAdmin) {
-    return NextResponse.json(
-      { error: "Internal server error: Admin SDK not configured." },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "Internal server error: Admin SDK not configured." }, { status: 500 });
   }
 
   const db = firestoreAdmin;
@@ -97,6 +68,7 @@ export async function POST(request: NextRequest) {
     
     const createdAt = saleDate ? Timestamp.fromDate(dayjs(saleDate).toDate()) : Timestamp.now();
     let newCustomerId = customer.id;
+    let isNewCustomer = false;
 
     // 4. Start Transaction
     const newSale = await db.runTransaction(async (transaction) => {
@@ -105,7 +77,30 @@ export async function POST(request: NextRequest) {
       const processedItems = [];
       const productUpdates = []; 
       
-      // --- 5. READ PHASE: Fetch Products ---
+      // --- DUPLICATE CUSTOMER CHECK (Synced from Web) ---
+      if (newCustomerId.startsWith("new_") && customer.phone) {
+        const existingQuery = db.collection("customers")
+          .where("storeId", "==", storeId)
+          .where("phone", "==", customer.phone)
+          .limit(1);
+          
+        const existingSnap = await transaction.get(existingQuery);
+        
+        if (!existingSnap.empty) {
+          const existingDoc = existingSnap.docs[0];
+          newCustomerId = existingDoc.id;
+          transaction.set(existingDoc.ref, {
+             name: customer.name,
+             updatedAt: FieldValue.serverTimestamp()
+          }, { merge: true });
+        } else {
+          isNewCustomer = true;
+        }
+      } else if (newCustomerId.startsWith("new_")) {
+        isNewCustomer = true;
+      }
+
+      // --- READ PRODUCTS ---
       const productRefsToFetch = [];
       const manualItems = [];
 
@@ -120,12 +115,11 @@ export async function POST(request: NextRequest) {
         }
       }
       
-      // Batch read all products
       const productDocs = await Promise.all(
         productRefsToFetch.map(p => transaction.get(p.ref))
       );
 
-      // --- 6. PROCESS PHASE: Calculations ---
+      // --- PROCESS PHASE ---
       for (let i = 0; i < productDocs.length; i++) {
         const productDoc = productDocs[i];
         const { ref, item } = productRefsToFetch[i]; 
@@ -145,7 +139,7 @@ export async function POST(request: NextRequest) {
         let pricePerUnit = productData?.salePrices?.[invoiceCurrency];
         if (pricePerUnit === undefined || pricePerUnit === null || pricePerUnit === 0) {
           if (item.pricePerUnit) {
-            pricePerUnit = item.pricePerUnit; // Use manual override if allowed
+            pricePerUnit = item.pricePerUnit; 
           } else {
             throw new Error(`Price for ${productData?.name} in ${invoiceCurrency} is not set.`);
           }
@@ -184,23 +178,25 @@ export async function POST(request: NextRequest) {
         });
       }
       
-      // --- 7. PAYMENT CALCULATIONS ---
+      // --- PAYMENT CALCULATIONS ---
       const totalPaid = paymentLines.reduce((sum: number, p: any) => sum + (p.valueInInvoiceCurrency || 0), 0);
       
-      if (totalPaid > totalAmount + 0.01) {
-        throw new Error(`Overpayment is not allowed. Total paid (${totalPaid}) exceeds total amount (${totalAmount}).`);
+      if (totalPaid > totalAmount + 0.05) {
+        throw new Error(`Overpayment detected. Total paid (${totalPaid}) exceeds total amount (${totalAmount}).`);
       }
       
       const debtAmount = totalAmount - totalPaid;
-      const paymentStatus = debtAmount <= 0.01 ? 'paid' : (totalPaid > 0 ? 'partial' : 'unpaid');
+      const safeDebtAmount = debtAmount < 0.05 ? 0 : debtAmount;
+      const paymentStatus = safeDebtAmount <= 0 ? 'paid' : (totalPaid > 0 ? 'partial' : 'unpaid');
 
-      // --- 8. WRITE PHASE: Customer Updates ---
+      // --- WRITE PHASE: Customer Updates ---
+      let customerRef;
+
       if (customer.id === "walkin") {
         newCustomerId = "walkin";
-        // Do not update KPIs for walk-in
-      } else if (customer.id.startsWith("new_")) {
+      } else if (isNewCustomer) {
         // -- Create NEW Customer --
-        const customerRef = db.collection("customers").doc();
+        customerRef = db.collection("customers").doc();
         newCustomerId = customerRef.id;
         
         transaction.set(customerRef, {
@@ -217,15 +213,15 @@ export async function POST(request: NextRequest) {
         transaction.update(customerRef, {
           [`totalSpent.${invoiceCurrency}`]: FieldValue.increment(totalAmount)
         });
-        if (debtAmount > 0) {
+        if (safeDebtAmount > 0) {
           transaction.update(customerRef, {
-            [`totalOwed.${invoiceCurrency}`]: FieldValue.increment(debtAmount)
+            [`totalOwed.${invoiceCurrency}`]: FieldValue.increment(safeDebtAmount)
           });
         }
 
       } else {
         // -- Update EXISTING Customer --
-        const customerRef = db.collection("customers").doc(newCustomerId);
+        customerRef = db.collection("customers").doc(newCustomerId);
         
         if (customer.saveToContacts) {
           transaction.set(customerRef, {
@@ -239,14 +235,14 @@ export async function POST(request: NextRequest) {
         transaction.update(customerRef, {
           [`totalSpent.${invoiceCurrency}`]: FieldValue.increment(totalAmount)
         });
-        if (debtAmount > 0) {
+        if (safeDebtAmount > 0) {
           transaction.update(customerRef, {
-            [`totalOwed.${invoiceCurrency}`]: FieldValue.increment(debtAmount)
+            [`totalOwed.${invoiceCurrency}`]: FieldValue.increment(safeDebtAmount)
           });
         }
       }
 
-      // --- 9. WRITE PHASE: Save Sale ---
+      // --- WRITE PHASE: Save Sale ---
       const productIds = processedItems.map(item => item.productId);
       const newSaleRef = db.collection("sales").doc();
       
@@ -264,7 +260,7 @@ export async function POST(request: NextRequest) {
         totalCostUsd,
         paymentLines: paymentLines,
         totalPaid: totalPaid,
-        debtAmount: debtAmount,
+        debtAmount: safeDebtAmount,
         paymentStatus,
         notes: notes || null,
         createdAt: createdAt,
@@ -273,14 +269,14 @@ export async function POST(request: NextRequest) {
       
       transaction.set(newSaleRef, newSaleData);
 
-      // --- 10. WRITE PHASE: Update Stock ---
+      // --- WRITE PHASE: Update Stock ---
       for (const update of productUpdates) {
         transaction.update(update.ref, { 
           quantity: FieldValue.increment(update.change) 
         });
       }
       
-      // --- 11. WRITE PHASE: Incomes & Debts ---
+      // --- WRITE PHASE: Incomes ---
       for (const payment of paymentLines) {
         if (payment.amount > 0) {
           const incomeRef = db.collection("incomes").doc();
@@ -298,7 +294,8 @@ export async function POST(request: NextRequest) {
         }
       }
 
-      if (debtAmount > 0) {
+      // --- WRITE PHASE: Debts ---
+      if (safeDebtAmount > 0) {
         const debitRef = db.collection("debits").doc();
         transaction.set(debitRef, {
           storeId,
@@ -309,8 +306,8 @@ export async function POST(request: NextRequest) {
           relatedSaleId: newSaleRef.id,
           invoiceId: newSaleData.invoiceId,
           reason: `Debt for ${newSaleData.invoiceId}`,
-          totalAmount: debtAmount,
-          amountDue: debtAmount,
+          totalAmount: safeDebtAmount,
+          amountDue: safeDebtAmount,
           totalPaid: 0,
           currency: invoiceCurrency,
           isPaid: false,
@@ -327,7 +324,7 @@ export async function POST(request: NextRequest) {
 
   } catch (error: any) {
     console.error("[Sales API POST] Error:", error.stack || error.message);
-    if (error.message.startsWith("Overpayment detected")) {
+    if (error.message.includes("Overpayment detected")) {
       return NextResponse.json({ error: error.message }, { status: 400 });
     }
     return NextResponse.json({ error: error.message }, { status: 500 });
@@ -335,7 +332,7 @@ export async function POST(request: NextRequest) {
 }
 
 // =============================================================================
-// 📊 GET - Fetch Sales Data (FIXED FOR "SOMETHING WENT WRONG" ERROR)
+// 📊 GET - Fetch Sales Data (FIXED: OrderBy + Dashboard Logic Restored)
 // =============================================================================
 export async function GET(request: NextRequest) {
   try {
@@ -387,17 +384,14 @@ export async function GET(request: NextRequest) {
       .where("createdAt", ">=", startDate)
       .where("createdAt", "<=", endDate);
 
-    // --- 4. MOBILE FIX: Payment Status Logic ---
-    // This matches your index requirements exactly.
+    // --- 4. Payment Status Logic ---
     if (status && status !== 'all') {
       baseQuery = baseQuery.where("paymentStatus", "==", status);
     } else {
       baseQuery = baseQuery.where("paymentStatus", "in", ["paid", "unpaid", "partial"]);
     }
 
-    // --- 5. CRITICAL SORT FIX ---
-    // We MUST apply this immediately. This forces Firestore to use the Descending index.
-    // If we don't do this here, the .count() query below defaults to Ascending and CRASHES.
+    // --- 5. CRITICAL SORT FIX: Use Descending Order ---
     baseQuery = baseQuery.orderBy("createdAt", "desc");
 
     // --- 6. Run Queries ---
@@ -405,10 +399,9 @@ export async function GET(request: NextRequest) {
       .limit(limit)
       .offset((page - 1) * limit);
 
-    // Run Count and List queries in parallel
     const [listSnapshot, countSnapshot] = await Promise.all([
       paginatedQuery.get(),
-      baseQuery.count().get() // Safe now because of the sort fix
+      baseQuery.count().get() 
     ]);
 
     const salesList = listSnapshot.docs.map((doc) => ({
@@ -424,7 +417,7 @@ export async function GET(request: NextRequest) {
       totalResults: totalMatchingSales,
     };
 
-    // --- 7. Dashboard Calculations ---
+    // --- 7. Dashboard Calculations (RESTORED) ---
     if (view === "dashboard") {
       const allDocsSnapshot = await baseQuery.get();
 
@@ -492,7 +485,6 @@ export async function GET(request: NextRequest) {
   } catch (error: any) {
     console.error("[Sales API GET] Error:", error.stack || error.message);
     
-    // Return helpful error if index is missing
     if (error.message.includes("requires an index")) {
          return NextResponse.json(
            { 
