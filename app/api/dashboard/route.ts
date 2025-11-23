@@ -8,7 +8,7 @@ import dayjs from "dayjs";
 
 import { type DashboardSummary } from "../types";
 
-// --- FIX 1: MATCH CONSTANTS WITH FINANCE/SALES (UPPERCASE) ---
+// --- CONSTANTS ---
 const PAYMENT_METHODS: Record<string, string[]> = {
   USD: ["CASH", "BANK", "ZAAD", "EDAHAB", "SOMNET", "EVC_PLUS", "SAHAL", "OTHER"],
   SLSH: ["CASH", "BANK", "ZAAD", "EDAHAB", "OTHER"],
@@ -56,7 +56,7 @@ async function getAggregateSum(
   }
 }
 
-// Calculates REVENUE (Total Sales Value, regardless of payment status)
+// Calculates REVENUE (Total Sales Value for KPI only)
 async function getSalesSum(
   storeId: string,
   currency: string,
@@ -84,46 +84,9 @@ async function getSalesSum(
   }
 }
 
-// --- Helper to sum payments actually collected inside Sales ---
-async function getSalesPaymentsSum(
-  storeId: string,
-  currency: string,
-  paymentMethod: string
-): Promise<number> {
-  if (!firestoreAdmin) return 0;
-  
-  const collRef = firestoreAdmin.collection("sales");
-  const q = collRef
-    .where("storeId", "==", storeId)
-    .where("invoiceCurrency", "==", currency); 
-
-  try {
-    const querySnapshot = await q.get();
-    let totalCollected = 0.0;
-
-    querySnapshot.forEach((doc) => {
-      const data = doc.data();
-      const lines = data.paymentLines || [];
-      if (Array.isArray(lines)) {
-        lines.forEach((line: any) => {
-          // --- FIX 2: ROBUST STRING MATCHING (UPPERCASE COMPARE) ---
-          const lineMethod = (line.method || "").toUpperCase();
-          const targetMethod = paymentMethod.toUpperCase();
-          
-          if (lineMethod === targetMethod) {
-            totalCollected += (Number(line.valueInInvoiceCurrency) || 0);
-          }
-        });
-      }
-    });
-    return totalCollected;
-  } catch (error: any) {
-    console.warn(`Warning for getSalesPaymentsSum: ${error.message}`);
-    return 0;
-  }
-}
-
-// --- Running Balance Logic ---
+// --- [UPDATED] Running Balance Logic ---
+// logic strictly matches Finance API: (Incomes - Expenses)
+// We removed the code that looked at the 'sales' collection to avoid double counting.
 async function getRunningBalance(
   storeId: string,
   currency: string,
@@ -132,18 +95,15 @@ async function getRunningBalance(
   if (!firestoreAdmin) throw new Error("Firestore Admin not initialized.");
   
   try {
-    const [salesCollected, incomeSnap, expenseSnap] = await Promise.all([
-      // 1. Money from Sales
-      getSalesPaymentsSum(storeId, currency, paymentMethod),
-
-      // 2. Money from Manual Incomes
+    const [incomeSnap, expenseSnap] = await Promise.all([
+      // 1. All Money In (Incomes collection is the Source of Truth)
       firestoreAdmin.collection("incomes")
         .where("storeId", "==", storeId)
         .where("currency", "==", currency)
         .where("paymentMethod", "==", paymentMethod)
         .get(),
 
-      // 3. Money spent (Expenses)
+      // 2. All Money Out (Expenses)
       firestoreAdmin.collection("expenses")
         .where("storeId", "==", storeId)
         .where("currency", "==", currency)
@@ -151,14 +111,14 @@ async function getRunningBalance(
         .get()
     ]);
 
-    let totalManualIncome = 0;
-    incomeSnap.forEach(doc => totalManualIncome += getNumericField(doc.data(), "amount"));
+    let totalIncome = 0;
+    incomeSnap.forEach(doc => totalIncome += getNumericField(doc.data(), "amount"));
 
     let totalExpense = 0;
     expenseSnap.forEach(doc => totalExpense += getNumericField(doc.data(), "amount"));
 
     // Final Balance Calculation
-    return (salesCollected + totalManualIncome) - totalExpense;
+    return totalIncome - totalExpense;
 
   } catch (error: any) {
     console.warn(`Warning for getRunningBalance (${paymentMethod}): ${error.message}`);
