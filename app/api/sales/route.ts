@@ -1,24 +1,13 @@
-// File: app/api/sales/route.ts
-//
-// --- LATEST FIXES ---
-// 1. (FIX) Stale Dashboard: Added clearReportsCache() to force dashboard refresh.
-// 2. (FIX) Duplicate Customers: Checks for existing phone number before creating new customer.
-// 3. (FIX) Overpayment Bug: Validates totalPaid <= totalAmount.
-// 4. (FIX) Ledger Entries: Explicitly logs paymentMethod in incomes.
-// -----------------------------------------------------------------------------
-
 import { NextResponse, NextRequest } from "next/server";
 import { firestoreAdmin, authAdmin } from "@/lib/firebaseAdmin";
 import { FieldValue, Timestamp, Query } from "firebase-admin/firestore";
 import dayjs from "dayjs";
 
 // --- Helper: Clear Reports Cache ---
-// Forces the dashboard to recalculate numbers on the next load
 async function clearReportsCache(storeId: string) {
   try {
     const db = firestoreAdmin;
     await db.collection("reports_cache").doc(storeId).delete();
-    console.log(`[Cache] Cleared reports_cache for ${storeId}`);
   } catch (error) {
     console.warn(`[Cache] Failed to clear cache for ${storeId}`, error);
   }
@@ -48,7 +37,6 @@ async function checkAuth(
   if (!storeId) throw new Error("Unauthorized: User has no store.");
   
   if (!role || !allowedRoles.includes(role)) {
-    console.warn(`[Auth] User ${uid} (Role: ${role}) tried to access a resource restricted to roles: [${allowedRoles.join(', ')}]`);
     throw new Error("Forbidden: You do not have permission to perform this action.");
   }
   
@@ -61,35 +49,32 @@ async function checkAuth(
 }
 
 // =============================================================================
-// 🚀 POST - Create New Sale
+// 🚀 POST - Create New Sale (UPDATED FOR ADDRESS)
 // =============================================================================
 export async function POST(request: NextRequest) {
   if (!authAdmin || !firestoreAdmin) {
-    return NextResponse.json(
-      { error: "Internal server error: Admin SDK not configured." },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "Internal server error: Admin SDK not configured." }, { status: 500 });
   }
 
   const db = firestoreAdmin;
   
   try {
-    // 1. Authenticate and Authorize
+    // 1. Authenticate
     const { storeId, uid, userName } = await checkAuth(request, ['admin', 'manager', 'user']);
 
-    // 2. Parse Raw Data from Client
+    // 2. Parse Raw Data
     const body = await request.json();
     const {
-      customer, // { id, name, phone, ... }
-      invoiceCurrency, // "BIRR"
-      items: rawItems, // [{ productId, quantity, discount, pricePerUnit (if manual) }]
-      paymentLines, // [{ method, amount, currency, valueInInvoiceCurrency }]
-      saleDate, // "2025-11-05"
+      customer, // { id, name, phone, address, ... } <--- NOW INCLUDES ADDRESS
+      invoiceCurrency,
+      items: rawItems,
+      paymentLines,
+      saleDate,
       salesperson,
       notes,
     } = body;
     
-    // 3. Basic Validation
+    // 3. Validation
     if (!invoiceCurrency || !rawItems || rawItems.length === 0 || !customer) {
       return NextResponse.json({ error: "Invalid data. Missing required fields." }, { status: 400 });
     }
@@ -98,17 +83,15 @@ export async function POST(request: NextRequest) {
     let newCustomerId = customer.id;
     let isNewCustomer = false;
 
-    // 4. Run as a single, atomic transaction
+    // 4. Run Transaction
     const newSale = await db.runTransaction(async (transaction) => {
       let totalAmount = 0;
       let totalCostUsd = 0;
       const processedItems = [];
-      const productUpdates = []; // Will store { ref, change }
+      const productUpdates = [];
       
       // --- 5. DUPLICATE CUSTOMER CHECK ---
       if (newCustomerId.startsWith("new_") && customer.phone) {
-        // Query if a customer with this phone already exists in this store
-        // Note: Firestore transactions require reads before writes.
         const existingQuery = db.collection("customers")
           .where("storeId", "==", storeId)
           .where("phone", "==", customer.phone)
@@ -120,9 +103,12 @@ export async function POST(request: NextRequest) {
           // Found existing customer! Reuse ID.
           const existingDoc = existingSnap.docs[0];
           newCustomerId = existingDoc.id;
-          // Update name if provided, but keep existing record
+          
+          // Update name/address if provided
           transaction.set(existingDoc.ref, {
-             name: customer.name, // Update name just in case
+             name: customer.name,
+             // Update address if provided in the new form
+             ...(customer.address ? { address: customer.address } : {}),
              updatedAt: FieldValue.serverTimestamp()
           }, { merge: true });
         } else {
@@ -150,7 +136,7 @@ export async function POST(request: NextRequest) {
         productRefsToFetch.map(p => transaction.get(p.ref))
       );
 
-      // --- 7. PROCESS & VALIDATE (In-Memory) ---
+      // --- 7. PROCESS & VALIDATE ---
       for (let i = 0; i < productDocs.length; i++) {
         const productDoc = productDocs[i];
         const { ref, item } = productRefsToFetch[i]; 
@@ -207,26 +193,22 @@ export async function POST(request: NextRequest) {
       
       // --- 8. WRITE PHASE ---
       
-      // b. Calculate Payment Totals & Validate
       const totalPaid = paymentLines.reduce((sum: number, p: any) => sum + (p.valueInInvoiceCurrency || 0), 0);
       
-      // FIX: Overpayment Guard
-      if (totalPaid > totalAmount + 0.05) { // 0.05 buffer for floating point weirdness
+      if (totalPaid > totalAmount + 0.05) { 
         throw new Error(`Overpayment detected. Total paid (${totalPaid}) exceeds total amount (${totalAmount}).`);
       }
       
       const debtAmount = totalAmount - totalPaid;
-      // If debt is tiny (floating point error), consider it 0
       const safeDebtAmount = debtAmount < 0.05 ? 0 : debtAmount;
       const paymentStatus = safeDebtAmount <= 0 ? 'paid' : (totalPaid > 0 ? 'partial' : 'unpaid');
 
-      // a. Handle Customer & Update KPIs
       let customerRef: FirebaseFirestore.DocumentReference;
 
       if (customer.id === "walkin") {
         newCustomerId = "walkin";
       } else if (isNewCustomer) {
-        // Create new customer
+        // --- CREATE NEW CUSTOMER (WITH ADDRESS) ---
         customerRef = db.collection("customers").doc();
         newCustomerId = customerRef.id;
         
@@ -234,6 +216,7 @@ export async function POST(request: NextRequest) {
           storeId: storeId,
           name: customer.name,
           phone: customer.phone || null,
+          address: customer.address || null, // <--- SAVING ADDRESS HERE
           whatsapp: customer.whatsapp || null,
           notes: customer.notes || null,
           createdAt: FieldValue.serverTimestamp(),
@@ -252,19 +235,19 @@ export async function POST(request: NextRequest) {
         }
 
       } else {
-        // Use existing customer (either passed in or found via phone check)
+        // --- UPDATE EXISTING CUSTOMER (WITH ADDRESS) ---
         customerRef = db.collection("customers").doc(newCustomerId);
         
         if (customer.saveToContacts) {
           transaction.set(customerRef, {
             name: customer.name,
             phone: customer.phone || null,
+            address: customer.address || null, // <--- SAVING ADDRESS HERE
             whatsapp: customer.whatsapp || null,
             notes: customer.notes || null,
           }, { merge: true });
         }
         
-        // Update KPIs for the EXISTING customer
         transaction.update(customerRef, {
           [`totalSpent.${invoiceCurrency}`]: FieldValue.increment(totalAmount)
         });
@@ -275,7 +258,6 @@ export async function POST(request: NextRequest) {
         }
       }
 
-      // Create a simple array of product IDs for querying
       const productIds = processedItems.map(item => item.productId);
 
       // c. Prepare Sale Document
@@ -287,6 +269,8 @@ export async function POST(request: NextRequest) {
         salesperson: salesperson || userName,
         customerId: newCustomerId,
         customerName: customer.name,
+        // Save address in sale snapshot too for immutable history
+        customerAddress: customer.address || null, 
         items: processedItems,
         productIds: productIds,
         invoiceCurrency,
@@ -301,7 +285,6 @@ export async function POST(request: NextRequest) {
         invoiceId: `INV-${Date.now().toString().slice(-6)}`,
       };
       
-      // d. Save the Sale
       transaction.set(newSaleRef, newSaleData);
 
       // e. Decrement Stock
@@ -311,7 +294,7 @@ export async function POST(request: NextRequest) {
         });
       }
       
-      // f. Create Income Documents (FIX: Explicit paymentMethod)
+      // f. Create Income Documents
       for (const payment of paymentLines) {
         if (payment.amount > 0) {
           const incomeRef = db.collection("incomes").doc();
@@ -321,7 +304,7 @@ export async function POST(request: NextRequest) {
             relatedSaleId: newSaleRef.id,
             amount: payment.amount,
             currency: payment.currency,
-            paymentMethod: payment.method || "Cash", // Explicitly log method
+            paymentMethod: payment.method || "Cash",
             category: "Sales",
             notes: `Payment for Invoice ${newSaleData.invoiceId}`,
             createdAt: createdAt,
@@ -337,7 +320,6 @@ export async function POST(request: NextRequest) {
           customerId: newCustomerId,
           clientName: customer.name, 
           clientPhone: customer.phone || null,
-          clientWhatsapp: customer.whatsapp || customer.phone || null,
           relatedSaleId: newSaleRef.id,
           invoiceId: newSaleData.invoiceId,
           reason: `Debt for ${newSaleData.invoiceId}`,
@@ -353,13 +335,11 @@ export async function POST(request: NextRequest) {
       }
       
       return newSaleData;
-    }); // End of Transaction
+    }); 
 
-    // 5. CACHE CLEARING (Post-Transaction)
-    // Fixes "Stale Dashboard" by forcing recalculation
+    // 5. CACHE CLEARING
     await clearReportsCache(storeId);
 
-    // 6. Return the successfully created sale
     return NextResponse.json({ success: true, sale: newSale }, { status: 201 });
 
   } catch (error: any) {
@@ -381,7 +361,7 @@ export async function GET(request: NextRequest) {
     const view = searchParams.get("view");
     const currency = searchParams.get("currency") || "USD";
 
-    // --- Handle Search Views ---
+    // --- Search Views ---
     const searchQuery = searchParams.get("searchQuery");
     if (view === "search_products") {
       if (!searchQuery) return NextResponse.json({ products: [] });
@@ -408,18 +388,15 @@ export async function GET(request: NextRequest) {
       const customers = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       return NextResponse.json({ customers });
     }
-    // --- End of Search ---
 
-    // Date filters
+    // --- Standard List View ---
     const startDate = dayjs(searchParams.get("startDate") || dayjs().startOf("month")).startOf("day").toDate();
     const endDate = dayjs(searchParams.get("endDate") || dayjs().endOf("month")).endOf("day").toDate();
     
-    // Pagination
     const page = parseInt(searchParams.get("page") || "1");
     const limit = 10;
     const status = searchParams.get("status");
 
-    // Build base query
     let baseQuery: Query = firestoreAdmin
       .collection("sales")
       .where("storeId", "==", storeId)
@@ -433,7 +410,6 @@ export async function GET(request: NextRequest) {
       baseQuery = baseQuery.where("paymentStatus", "not-in", ["voided", "refunded"]);
     }
 
-    // Get paginated list
     const paginatedQuery = baseQuery
       .orderBy("createdAt", "desc")
       .limit(limit)
@@ -457,7 +433,6 @@ export async function GET(request: NextRequest) {
       totalResults: totalMatchingSales,
     };
 
-    // --- Data specifically for Dashboard View ---
     if (view === "dashboard") {
       const allDocsSnapshot = await baseQuery.get();
 
@@ -515,15 +490,13 @@ export async function GET(request: NextRequest) {
       });
     }
 
-    // --- Data for History / Invoices (just the list) ---
     return NextResponse.json({
       view: view,
       salesList,
       pagination,
     });
 
-  } catch (error: any)
-{
+  } catch (error: any) {
     console.error("[Sales API GET] Error:", error.stack || error.message);
     if (error.message.includes("requires an index")) {
          return NextResponse.json(

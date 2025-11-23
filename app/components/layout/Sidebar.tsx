@@ -2,7 +2,7 @@
 
 import React, { useState } from "react";
 import Link from "next/link";
-import Image from "next/image"; // ✅ For logo
+import Image from "next/image"; 
 import { usePathname, useRouter } from "next/navigation";
 import {
   BiChevronRight,
@@ -20,6 +20,10 @@ import {
   BiCog,
   BiHelpCircle,
   BiWallet,
+  // ✅ Added new icons here
+  BiDownload,
+  BiVideo, 
+  BiBook,
 } from "react-icons/bi";
 import { X } from "lucide-react";
 import { auth } from "@/lib/firebaseConfig";
@@ -39,6 +43,10 @@ const menuItems = [
   { name: "System & Settings", icon: BiCog, href: "/settings", targetId: "settings" },
   { name: "Support & Profile", icon: BiHelpCircle, href: "/support", targetId: "support" },
   { name: "Debts", icon: BiWallet, href: "/debts", targetId: "debts" },
+  // ✅ New Items Added Below
+  { name: "Download App", icon: BiDownload, href: "/download", targetId: "download" },
+  { name: "Tutorials", icon: BiVideo, href: "/tutorial", targetId: "tutorial" },
+  { name: "Documentation", icon: BiBook, href: "/documentation", targetId: "documentation" },
 ];
 
 interface SidebarProps {

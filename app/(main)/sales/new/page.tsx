@@ -11,7 +11,7 @@ import {
   ChevronRight, X, Save, Trash2,
   Download, Printer, ChevronDown, CheckCircle,
   ChevronsUpDown, Loader2, Calendar as CalendarIconLucide,
-  MapPin, Phone, Check // <--- ADDED Check icon
+  MapPin, Phone, Check // Kept original UI icons
 } from "lucide-react";
 import { Dialog, Transition, Combobox } from "@headlessui/react";
 import { type DateRange } from "react-day-picker";
@@ -484,17 +484,17 @@ function PosForm() {
     setPaymentLines(prev => prev.filter(line => line.id !== id));
   };
   
-  const handleSaveSale = async (action: 'save' | 'save_print') => {
+ const handleSaveSale = async (action: 'save' | 'save_print') => {
     setError(null); 
-    if (isOverpaid) return setError("Overpayment is not allowed. Total paid cannot exceed total amount.");
+    if (isOverpaid) return setError("Overpayment is not allowed.");
     if (items.length === 0) return setError("Please add at least one item.");
     if (!customer) return setError("Please select or create a customer.");
-    if (paymentLines.some(line => (Number(line.amount) > 0) && !line.method)) return setError("Please select a payment method for all added payments.");
+    if (paymentLines.some(line => (Number(line.amount) > 0) && !line.method)) return setError("Please select a payment method.");
     
     setIsSaving(true);
     
     const transaction = {
-      customer, // Contains address and phone now
+      customer, 
       invoiceCurrency: invoiceCurrency,
       items: items.map(item => ({
         productId: item.productId,
@@ -539,11 +539,18 @@ function PosForm() {
           planId: subscription?.planId,
         };
         
-        // Pass the updated customer object with address if available
+        // --- (FIX) FORCE DATA MERGE ---
+        // We merged the text-based logic here to ensure data is read correctly for PDF
         const printData = {
             ...data.sale,
-            customer: { ...data.sale.customer, address: customer.address || data.sale.customer.address }
-        }
+            customer: { 
+                ...data.sale.customer, 
+                // Prefer local state because it definitely has the details we just entered
+                name: customer.name || data.sale.customer?.name,
+                phone: customer.phone || data.sale.customer?.phone || "",
+                address: customer.address || data.sale.customer?.address || ""
+            }
+        };
 
         const TemplateComponent = getTemplateComponent('invoice' as ReportType, subscription);
         setPdfTemplate(() => TemplateComponent); 

@@ -319,6 +319,34 @@ const styles = StyleSheet.create({
 // New Helper Functions
 // ===================================================================
 
+// --- Helper: Smart Data Finder for Customer Details ---
+// This fixes the issue where phone/address are hidden in different fields
+const getCustomerDetails = (sale: any) => {
+  const custObj = sale.customer || {};
+  
+  const name = custObj.name || sale.customerName || sale.customer_name || 'Walk-in Customer';
+  
+  // Check 3 different places for phone
+  const phone = 
+    custObj.phone || 
+    sale.customerPhone || 
+    sale.customer_phone || 
+    sale.phone || 
+    '';
+
+  // Check 5 different places for address
+  const address = 
+    custObj.address || 
+    sale.customerAddress || 
+    sale.customer_address || 
+    sale.shippingAddress || 
+    sale.billingAddress || 
+    sale.address || 
+    '';
+
+  return { name, phone, address };
+};
+
 // --- Helper: Render Variants under Product Name ---
 const renderVariants = (selectedVariants: any) => {
   if (!selectedVariants || Object.keys(selectedVariants).length === 0) return null;
@@ -369,10 +397,9 @@ const PdfHeader = ({ store, recipient }: { store: any, recipient?: any }) => {
       {recipient && (
         <View style={styles.recipientInfo}>
           <Text style={styles.recipientTitle}>{recipient.title || 'BILL TO'}</Text>
-          <Text style={styles.recipientName}>{recipient.name || 'Customer'}</Text>
-          {/* Use optional chaining or empty string checks to prevent crashes */}
-          <Text style={styles.storeDetails}>{recipient.phone || ''}</Text>
-          <Text style={styles.storeDetails}>{recipient.address || ''}</Text>
+          <Text style={styles.recipientName}>{recipient.name}</Text>
+          {recipient.phone ? <Text style={styles.storeDetails}>{recipient.phone}</Text> : null}
+          {recipient.address ? <Text style={styles.storeDetails}>{recipient.address}</Text> : null}
         </View>
       )}
     </View>
@@ -466,167 +493,175 @@ const InvoiceTotals = ({ sale, style = 'default' }: { sale: any, style?: 'defaul
 // 1. INVOICE TEMPLATES
 // ===================================================================
 
-export const InvoiceDefault = ({ data: sale, store }: DocProps) => (
-  <Document>
-    <Page size="A4" style={styles.page}>
-      <PdfHeader 
-        store={store} 
-        recipient={{ 
-            // --- FIX: Check nested customer object for phone/address ---
-            name: sale.customer?.name || sale.customerName || 'Walk-in Customer',
-            phone: sale.customer?.phone || sale.customerPhone || '',
-            address: sale.customer?.address || sale.customerAddress || '',
-            title: 'BILL TO' 
-        }} 
-      />
-      <View>
-        <Text style={{...styles.h1, color: '#0B61FF', textAlign: 'center', marginBottom: 20 }}>INVOICE</Text>
-        <View style={styles.table}>
-          <View style={styles.tableHeader}>
-            <Text style={{...styles.tableColHeader, flex: 3}}>Description</Text>
-            <Text style={{...styles.tableColHeader, flex: 1, ...styles.textCenter}}>Qty</Text>
-            <Text style={{...styles.tableColHeader, flex: 1, ...styles.textRight}}>Unit Price</Text>
-            <Text style={{...styles.tableColHeader, flex: 1, ...styles.textRight, borderRightWidth: 0}}>Amount</Text>
-          </View>
-          {sale.items.map((item: any, i: number) => (
-            <View key={i} style={styles.tableRow}>
-              <View style={{...styles.tableCell, flex: 3}}>
-                <Text>{item.productName}</Text>
-                {renderVariants(item.selectedVariants)}
-              </View>
-              <Text style={{...styles.tableCell, flex: 1, ...styles.textCenter}}>{item.quantity}</Text>
-              <Text style={{...styles.tableCell, flex: 1, ...styles.textRight}}>{formatCurrency(item.pricePerUnit, sale.invoiceCurrency)}</Text>
-              <Text style={{...styles.tableCell, flex: 1, ...styles.textRight, borderRightWidth: 0}}>{formatCurrency(item.subtotal || (item.quantity * item.pricePerUnit), sale.invoiceCurrency)}</Text>
-            </View>
-          ))}
-        </View>
+export const InvoiceDefault = ({ data: sale, store }: DocProps) => {
+  // Use the Smart Data Finder
+  const customer = getCustomerDetails(sale);
 
-        {/* --- FIX: Strict 2-Column Layout for Separation --- */}
-        <View style={{ flexDirection: 'row', marginTop: 20, alignItems: 'flex-start' }}>
-           {/* Left Column: Payments (60%) */}
-           <View style={{ width: '60%', paddingRight: 20 }}>
-               <PaymentBreakdown lines={sale.paymentLines} currency={sale.invoiceCurrency} />
-           </View>
-           
-           {/* Right Column: Totals (40%) */}
-           <View style={{ width: '40%' }}>
-               <InvoiceTotalsBox sale={sale} style="default" />
-           </View>
-        </View>
-
-      </View>
-      <PdfFooter />
-    </Page>
-  </Document>
-);
-
-export const InvoiceModern = ({ data: sale, store }: DocProps) => (
-  <Document>
-    <Page size="A4" style={styles.pageModern}>
-      <View style={styles.headerModern}>
-        <Text style={styles.storeName}>{store.name}</Text>
-        <Text style={styles.headerModernTitle}>INVOICE</Text>
-      </View>
-      <View style={styles.headerModernStripe} />
-      <View style={{ padding: 40 }}>
+  return (
+    <Document>
+      <Page size="A4" style={styles.page}>
         <PdfHeader 
-            store={store} 
-            recipient={{ 
-                // --- FIX: Check nested customer object ---
-                name: sale.customer?.name || sale.customerName || 'Walk-in Customer',
-                phone: sale.customer?.phone || sale.customerPhone || '',
-                address: sale.customer?.address || sale.customerAddress || '',
-                title: 'BILL TO' 
-            }} 
+          store={store} 
+          recipient={{ 
+              name: customer.name,
+              phone: customer.phone,
+              address: customer.address,
+              title: 'BILL TO' 
+          }} 
         />
-        <View style={styles.tableModern}>
-          <View style={styles.tableModernHeader}>
-            <Text style={{...styles.tableModernColHeader, flex: 3}}>Description</Text>
-            <Text style={{...styles.tableModernColHeader, flex: 1, ...styles.textCenter}}>Qty</Text>
-            <Text style={{...styles.tableModernColHeader, flex: 1, ...styles.textRight}}>Unit Price</Text>
-            <Text style={{...styles.tableModernColHeader, flex: 1, ...styles.textRight}}>Amount</Text>
-          </View>
-          {sale.items.map((item: any, i: number) => (
-            <View key={i} style={styles.tableModernRow}>
-              <View style={{...styles.tableModernCell, flex: 3}}>
-                <Text>{item.productName}</Text>
-                {renderVariants(item.selectedVariants)}
-              </View>
-              <Text style={{...styles.tableModernCell, flex: 1, ...styles.textCenter}}>{item.quantity}</Text>
-              <Text style={{...styles.tableModernCell, flex: 1, ...styles.textRight}}>{formatCurrency(item.pricePerUnit, sale.invoiceCurrency)}</Text>
-              <Text style={{...styles.tableModernCell, flex: 1, ...styles.textRight}}>{formatCurrency(item.subtotal || (item.quantity * item.pricePerUnit), sale.invoiceCurrency)}</Text>
+        <View>
+          <Text style={{...styles.h1, color: '#0B61FF', textAlign: 'center', marginBottom: 20 }}>INVOICE</Text>
+          <View style={styles.table}>
+            <View style={styles.tableHeader}>
+              <Text style={{...styles.tableColHeader, flex: 3}}>Description</Text>
+              <Text style={{...styles.tableColHeader, flex: 1, ...styles.textCenter}}>Qty</Text>
+              <Text style={{...styles.tableColHeader, flex: 1, ...styles.textRight}}>Unit Price</Text>
+              <Text style={{...styles.tableColHeader, flex: 1, ...styles.textRight, borderRightWidth: 0}}>Amount</Text>
             </View>
-          ))}
-        </View>
-        
-        {/* --- FIX: Strict 2-Column Layout --- */}
-        <View style={{ flexDirection: 'row', marginTop: 20, alignItems: 'flex-start' }}>
-           <View style={{ width: '60%', paddingRight: 20 }}>
-               <PaymentBreakdown lines={sale.paymentLines} currency={sale.invoiceCurrency} />
-           </View>
-           <View style={{ width: '40%' }}>
-               <InvoiceTotalsBox sale={sale} style="modern" />
-           </View>
-        </View>
-      </View>
-      <ModernFooter storeName={store.name} />
-    </Page>
-  </Document>
-);
+            {sale.items.map((item: any, i: number) => (
+              <View key={i} style={styles.tableRow}>
+                <View style={{...styles.tableCell, flex: 3}}>
+                  <Text>{item.productName}</Text>
+                  {renderVariants(item.selectedVariants)}
+                </View>
+                <Text style={{...styles.tableCell, flex: 1, ...styles.textCenter}}>{item.quantity}</Text>
+                <Text style={{...styles.tableCell, flex: 1, ...styles.textRight}}>{formatCurrency(item.pricePerUnit, sale.invoiceCurrency)}</Text>
+                <Text style={{...styles.tableCell, flex: 1, ...styles.textRight, borderRightWidth: 0}}>{formatCurrency(item.subtotal || (item.quantity * item.pricePerUnit), sale.invoiceCurrency)}</Text>
+              </View>
+            ))}
+          </View>
 
-export const InvoicePremium = ({ data: sale, store }: DocProps) => (
-  <Document>
-    <Page size="A4" style={styles.pagePremium}>
-      <View style={styles.headerPremium}>
-        <Text style={[styles.storeName, styles.fontSerif, {color: '#FFFFFF'}]}>{store.name}</Text>
-        <Text style={[styles.headerPremiumTitle, styles.fontSerif]}>INVOICE</Text>
-      </View>
-      <View style={styles.headerPremiumStripe} />
-      <View style={{ padding: 40, flexGrow: 1 }}>
-        <PdfHeader 
-            store={store} 
-            recipient={{ 
-                // --- FIX: Check nested customer object ---
-                name: sale.customer?.name || sale.customerName || 'Walk-in Customer',
-                phone: sale.customer?.phone || sale.customerPhone || '',
-                address: sale.customer?.address || sale.customerAddress || '',
-                title: 'BILL TO' 
-            }} 
-        />
-        <View style={styles.tablePremium}>
-          <View style={styles.tablePremiumHeader}>
-            <Text style={{...styles.tablePremiumColHeader, flex: 3}}>Description</Text>
-            <Text style={{...styles.tablePremiumColHeader, flex: 1, ...styles.textCenter}}>Qty</Text>
-            <Text style={{...styles.tablePremiumColHeader, flex: 1, ...styles.textRight}}>Unit Price</Text>
-            <Text style={{...styles.tablePremiumColHeader, flex: 1, ...styles.textRight}}>Amount</Text>
-          </View>
-          {sale.items.map((item: any, i: number) => (
-            <View key={i} style={styles.tablePremiumRow}>
-              <View style={{...styles.tablePremiumCell, flex: 3}}>
-                <Text>{item.productName}</Text>
-                {renderVariants(item.selectedVariants)}
-              </View>
-              <Text style={{...styles.tablePremiumCell, flex: 1, ...styles.textCenter}}>{item.quantity}</Text>
-              <Text style={{...styles.tablePremiumCell, flex: 1, ...styles.textRight}}>{formatCurrency(item.pricePerUnit, sale.invoiceCurrency)}</Text>
-              <Text style={{...styles.tablePremiumCell, flex: 1, ...styles.textRight}}>{formatCurrency(item.subtotal || (item.quantity * item.pricePerUnit), sale.invoiceCurrency)}</Text>
+          {/* --- FIX: Strict 2-Column Layout for Separation --- */}
+          <View style={{ flexDirection: 'row', marginTop: 20, alignItems: 'flex-start' }}>
+            {/* Left Column: Payments (60%) */}
+            <View style={{ width: '60%', paddingRight: 20 }}>
+                <PaymentBreakdown lines={sale.paymentLines} currency={sale.invoiceCurrency} />
             </View>
-          ))}
+            
+            {/* Right Column: Totals (40%) */}
+            <View style={{ width: '40%' }}>
+                <InvoiceTotalsBox sale={sale} style="default" />
+            </View>
+          </View>
+
         </View>
-        
-        {/* --- FIX: Strict 2-Column Layout --- */}
-        <View style={{ flexDirection: 'row', marginTop: 20, alignItems: 'flex-start' }}>
-           <View style={{ width: '60%', paddingRight: 20 }}>
-               <PaymentBreakdown lines={sale.paymentLines} currency={sale.invoiceCurrency} />
-           </View>
-           <View style={{ width: '40%' }}>
-               <InvoiceTotalsBox sale={sale} style="premium" />
-           </View>
+        <PdfFooter />
+      </Page>
+    </Document>
+  );
+};
+
+export const InvoiceModern = ({ data: sale, store }: DocProps) => {
+  const customer = getCustomerDetails(sale);
+
+  return (
+    <Document>
+      <Page size="A4" style={styles.pageModern}>
+        <View style={styles.headerModern}>
+          <Text style={styles.storeName}>{store.name}</Text>
+          <Text style={styles.headerModernTitle}>INVOICE</Text>
         </View>
-      </View>
-      <PremiumFooter />
-    </Page>
-  </Document>
-);
+        <View style={styles.headerModernStripe} />
+        <View style={{ padding: 40 }}>
+          <PdfHeader 
+              store={store} 
+              recipient={{ 
+                  name: customer.name,
+                  phone: customer.phone,
+                  address: customer.address,
+                  title: 'BILL TO' 
+              }} 
+          />
+          <View style={styles.tableModern}>
+            <View style={styles.tableModernHeader}>
+              <Text style={{...styles.tableModernColHeader, flex: 3}}>Description</Text>
+              <Text style={{...styles.tableModernColHeader, flex: 1, ...styles.textCenter}}>Qty</Text>
+              <Text style={{...styles.tableModernColHeader, flex: 1, ...styles.textRight}}>Unit Price</Text>
+              <Text style={{...styles.tableModernColHeader, flex: 1, ...styles.textRight}}>Amount</Text>
+            </View>
+            {sale.items.map((item: any, i: number) => (
+              <View key={i} style={styles.tableModernRow}>
+                <View style={{...styles.tableModernCell, flex: 3}}>
+                  <Text>{item.productName}</Text>
+                  {renderVariants(item.selectedVariants)}
+                </View>
+                <Text style={{...styles.tableModernCell, flex: 1, ...styles.textCenter}}>{item.quantity}</Text>
+                <Text style={{...styles.tableModernCell, flex: 1, ...styles.textRight}}>{formatCurrency(item.pricePerUnit, sale.invoiceCurrency)}</Text>
+                <Text style={{...styles.tableModernCell, flex: 1, ...styles.textRight}}>{formatCurrency(item.subtotal || (item.quantity * item.pricePerUnit), sale.invoiceCurrency)}</Text>
+              </View>
+            ))}
+          </View>
+          
+          <View style={{ flexDirection: 'row', marginTop: 20, alignItems: 'flex-start' }}>
+            <View style={{ width: '60%', paddingRight: 20 }}>
+                <PaymentBreakdown lines={sale.paymentLines} currency={sale.invoiceCurrency} />
+            </View>
+            <View style={{ width: '40%' }}>
+                <InvoiceTotalsBox sale={sale} style="modern" />
+            </View>
+          </View>
+        </View>
+        <ModernFooter storeName={store.name} />
+      </Page>
+    </Document>
+  );
+};
+
+export const InvoicePremium = ({ data: sale, store }: DocProps) => {
+  const customer = getCustomerDetails(sale);
+
+  return (
+    <Document>
+      <Page size="A4" style={styles.pagePremium}>
+        <View style={styles.headerPremium}>
+          <Text style={[styles.storeName, styles.fontSerif, {color: '#FFFFFF'}]}>{store.name}</Text>
+          <Text style={[styles.headerPremiumTitle, styles.fontSerif]}>INVOICE</Text>
+        </View>
+        <View style={styles.headerPremiumStripe} />
+        <View style={{ padding: 40, flexGrow: 1 }}>
+          <PdfHeader 
+              store={store} 
+              recipient={{ 
+                  name: customer.name,
+                  phone: customer.phone,
+                  address: customer.address,
+                  title: 'BILL TO' 
+              }} 
+          />
+          <View style={styles.tablePremium}>
+            <View style={styles.tablePremiumHeader}>
+              <Text style={{...styles.tablePremiumColHeader, flex: 3}}>Description</Text>
+              <Text style={{...styles.tablePremiumColHeader, flex: 1, ...styles.textCenter}}>Qty</Text>
+              <Text style={{...styles.tablePremiumColHeader, flex: 1, ...styles.textRight}}>Unit Price</Text>
+              <Text style={{...styles.tablePremiumColHeader, flex: 1, ...styles.textRight}}>Amount</Text>
+            </View>
+            {sale.items.map((item: any, i: number) => (
+              <View key={i} style={styles.tablePremiumRow}>
+                <View style={{...styles.tablePremiumCell, flex: 3}}>
+                  <Text>{item.productName}</Text>
+                  {renderVariants(item.selectedVariants)}
+                </View>
+                <Text style={{...styles.tablePremiumCell, flex: 1, ...styles.textCenter}}>{item.quantity}</Text>
+                <Text style={{...styles.tablePremiumCell, flex: 1, ...styles.textRight}}>{formatCurrency(item.pricePerUnit, sale.invoiceCurrency)}</Text>
+                <Text style={{...styles.tablePremiumCell, flex: 1, ...styles.textRight}}>{formatCurrency(item.subtotal || (item.quantity * item.pricePerUnit), sale.invoiceCurrency)}</Text>
+              </View>
+            ))}
+          </View>
+          
+          <View style={{ flexDirection: 'row', marginTop: 20, alignItems: 'flex-start' }}>
+            <View style={{ width: '60%', paddingRight: 20 }}>
+                <PaymentBreakdown lines={sale.paymentLines} currency={sale.invoiceCurrency} />
+            </View>
+            <View style={{ width: '40%' }}>
+                <InvoiceTotalsBox sale={sale} style="premium" />
+            </View>
+          </View>
+        </View>
+        <PremiumFooter />
+      </Page>
+    </Document>
+  );
+};
 
 // ===================================================================
 // 2. PRODUCT REPORT TEMPLATES

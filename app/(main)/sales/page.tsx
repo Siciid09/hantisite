@@ -1,22 +1,11 @@
 // File: app/(main)/sales/page.tsx
-//
-// --- FINAL VERSION (with NEW PDF SYSTEM MERGED + FIX) ---
-// 1. (REMOVED) Old PDF import.
-// 2. (NEW) Added imports for @react-pdf/renderer, lucide, and the new pdfService.
-// 3. (NEW) Added state for 'saleToPrint' and 'PdfTemplate'.
-// 4. (NEW) Updated useAuth to get 'subscription' info.
-// 5. (FIX) 'handlePrintSale' is now rewritten to open the new PDF modal.
-// 6. (NEW) Added the PDF Download Modal JSX.
-// 7. (FIX) Added `handlePrintReturn` handler and passed it to `SalesReturns`
-//    to fix the 'onPrint is not a function' error.
-// -----------------------------------------------------------------------------
 
 "use client";
 
 import React, { useState, useEffect, Suspense, useMemo, Fragment } from "react";
 import { useSearchParams } from "next/navigation";
 import useSWR from "swr";
-import { useAuth } from "@/app/contexts/AuthContext"; // Corrected path
+import { useAuth } from "@/app/contexts/AuthContext"; 
 import dayjs from "dayjs";
 import {
   AdvancedFilterBar,
@@ -32,19 +21,16 @@ import {
   TransitionedModal 
 } from "./components";
 import { Dialog } from "@headlessui/react";
-import { Download, Loader2, FileText } from "lucide-react"; // <-- (NEW) Imports for PDF Modal
+import { Download, Loader2, FileText } from "lucide-react"; 
 
-// --- (NEW) Correct imports for the NEW High-Quality PDF system ---
+// --- PDF Imports ---
 import { PDFDownloadLink } from "@react-pdf/renderer";
 import { getTemplateComponent, ReportType } from "@/lib/pdfService";
-// --- (REMOVED) Old PDF import ---
-// import { generateInvoicePdf } from "@/lib/pdfService"; 
 
 // =============================================================================
 // 📝 Main Sales Page Component
 // =============================================================================
 function SalesPage() {
-  // --- (NEW) Get subscription from Auth ---
   const { user, loading: authLoading, subscription } = useAuth();
   const searchParams = useSearchParams();
   const view = searchParams.get("view") || "dashboard";
@@ -73,14 +59,13 @@ function SalesPage() {
   const [isCreateInvoiceModalOpen, setIsCreateInvoiceModalOpen] = useState(false);
   const [saleToReturn, setSaleToReturn] = useState<any | null>(null);
 
-  // --- (NEW) PDF Modal State ---
+  // --- PDF Modal State ---
   const [saleToPrint, setSaleToPrint] = useState<any | null>(null);
   const [PdfTemplate, setPdfTemplate] = useState<React.ElementType | null>(null);
   
-  // --- (NEW) PDF state for single RETURN ---
+  // --- PDF state for single RETURN ---
   const [returnToPrint, setReturnToPrint] = useState<any | null>(null);
   const [ReturnPdfTemplate, setReturnPdfTemplate] = useState<React.ElementType | null>(null);
-
 
   // --- SWR Data Fetching (Only for 'returns' view) ---
   const returnsQueryString = useMemo(() => {
@@ -103,7 +88,6 @@ function SalesPage() {
     fetcher
   );
   
-  
   // --- Handlers ---
   
   const handleApplyFilters = (newFilters: any) => {
@@ -115,7 +99,7 @@ function SalesPage() {
     setIsViewModalOpen(true);
   };
 
-  // --- (FIX) Replaced with new PDF Modal logic ---
+  // --- (FIX) FORCE DATA DISCOVERY FOR HISTORY ---
   const handlePrintSale = (sale: any) => {
     const storeInfo = {
       name: subscription?.storeName || "My Store",
@@ -125,18 +109,24 @@ function SalesPage() {
       planId: subscription?.planId,   
     };
     
+    // Check nested, then flat camelCase, then flat snake_case
+    const fullSaleData = {
+        ...sale,
+        customer: {
+            ...sale.customer,
+            name: sale.customer?.name || sale.customerName || sale.customer_name || "Walk-in Customer",
+            phone: sale.customer?.phone || sale.customerPhone || sale.customer_phone || sale.phone || "",
+            address: sale.customer?.address || sale.customerAddress || sale.customer_address || sale.address || "",
+        }
+    };
+
     const TemplateComponent = getTemplateComponent('invoice' as ReportType, subscription);
     
     setPdfTemplate(() => TemplateComponent); 
-    setSaleToPrint({ data: sale, store: storeInfo }); 
+    setSaleToPrint({ data: fullSaleData, store: storeInfo }); 
   };
   
-  // --- (NEW) Handler for printing a single return ---
   const handlePrintReturn = (ret: any) => {
-    // NOTE: This assumes 'ret' (the return object) has the FULL data
-    // including the 'itemsReturned' array. If it doesn't, you must
-    // first fetch the full data for the return, then call this logic.
-    
     const storeInfo = {
       name: subscription?.storeName || "My Store",
       address: subscription?.storeAddress || "123 Main St",
@@ -151,7 +141,6 @@ function SalesPage() {
     setReturnToPrint({ data: ret, store: storeInfo }); 
   };
   
-  // Handlers for the "New Return" modal
   const handleOpenReturnModal = (sale: any | null = null) => {
     setSaleToReturn(sale); 
     setIsNewReturnModalOpen(true);
@@ -200,10 +189,10 @@ function SalesPage() {
             data={returnsApiData}
             isLoading={returnsApiIsLoading}
             currency={filters.currency}
-            onPageChange={() => {}} // Pagination is now handled in container
+            onPageChange={() => {}} 
             onNewReturn={() => handleOpenReturnModal(null)} 
             onViewReturn={(ret: any) => console.log("View Return:", ret)}
-            onPrintReturn={handlePrintReturn} // <-- (FIX) Add the missing prop
+            onPrintReturn={handlePrintReturn} 
           />
         </>
       )}
@@ -241,7 +230,7 @@ function SalesPage() {
         globalFilters={filters}
       />
 
-      {/* --- (NEW) PDF Download Modal for INVOICES --- */}
+      {/* --- PDF Download Modal for INVOICES --- */}
       {saleToPrint && PdfTemplate && (
         <TransitionedModal isOpen={true} onClose={() => setSaleToPrint(null)} size="md">
           <Dialog.Title as="h3" className="text-lg font-medium leading-6 text-gray-900 dark:text-white flex items-center">
@@ -253,7 +242,6 @@ function SalesPage() {
               Your invoice ({saleToPrint.data.invoiceId}) is ready.
             </p>
             
-            {/* This component from @react-pdf/renderer generates the PDF */}
             <PDFDownloadLink
               document={React.createElement(PdfTemplate, { data: saleToPrint.data, store: saleToPrint.store })}
               fileName={`${saleToPrint.data.invoiceId || 'invoice'}.pdf`}
@@ -283,7 +271,7 @@ function SalesPage() {
         </TransitionedModal>
       )}
       
-      {/* --- (NEW) PDF Download Modal for REFUNDS --- */}
+      {/* --- PDF Download Modal for REFUNDS --- */}
       {returnToPrint && ReturnPdfTemplate && (
         <TransitionedModal isOpen={true} onClose={() => setReturnToPrint(null)} size="md">
           <Dialog.Title as="h3" className="text-lg font-medium leading-6 text-gray-900 dark:text-white flex items-center">

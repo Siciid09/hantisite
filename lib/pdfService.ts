@@ -2,11 +2,12 @@
 
 import * as Templates from '@/app/components/pdf/AllTemplates';
 
-// Define the shape of the settings/subscription object
+// --- Interface Definition ---
+// FIX: We added 'subscriptionType' because that is what your database uses.
 interface PdfSettings {
   planId?: string;
+  subscriptionType?: string; 
   invoiceTemplate?: string;
-  //
 }
 
 // Define the types of reports we can generate
@@ -21,8 +22,8 @@ export type ReportType =
   | 'main_business' 
   | 'debts_credits' 
   | 'customer_supplier'
-  | 'inventory_summary' // <-- (NEW) Add this new report type
-  | 'sales_summary'; // <-- (NEW) Added this new report type
+  | 'inventory_summary'
+  | 'sales_summary';
 
 // --- Master Template Map ---
 const templateMap = {
@@ -31,19 +32,16 @@ const templateMap = {
     modern: Templates.InvoiceModern,
     premium: Templates.InvoicePremium
   },
-  // --- (NEW) Added this entry for the Sales Report page ---
   'sales_summary': {
     default: Templates.SalesSummaryReportDefault,
-    modern: Templates.SalesSummaryReportDefault, // You can create Modern/Premium versions later
+    modern: Templates.SalesSummaryReportDefault, 
     premium: Templates.SalesSummaryReportDefault,
   },
-  // --- (NEW) Add this new entry ---
   'inventory_summary': {
     default: Templates.InventorySummaryReportDefault,
-    modern: Templates.InventorySummaryReportDefault, // You can make Modern/Premium later
+    modern: Templates.InventorySummaryReportDefault,
     premium: Templates.InventorySummaryReportDefault,
   },
-  // --- End of new entry ---
   'product_report': {
     default: Templates.ProductReportDefault,
     modern: Templates.ProductReportModern,
@@ -102,27 +100,34 @@ const templateMap = {
  * and returns the correct React component for the PDF.
  */
 export const getTemplateComponent = (reportType: ReportType, settings: PdfSettings) => {
-  // 1. Get the set of 3 templates
+  // 1. Get the set of 3 templates for this report type
   const templateSet = templateMap[reportType];
+  
+  // Safety check: if type doesn't exist, fallback to invoice default to prevent crash
   if (!templateSet) {
     console.error(`No templates found for type: ${reportType}`);
-    return templateMap['invoice'].default; // Fallback
+    return templateMap['invoice'].default; 
   }
 
   // 2. Get user's plan
-  // and chosen template
-  const planId = settings?.planId?.toLowerCase() || 'trial';
+  // FIX: This line is the magic. It checks 'planId' OR 'subscriptionType'
+  // If both are missing, it defaults to 'trial'
+  const rawPlan = settings?.planId || settings?.subscriptionType || 'trial';
+  const planId = rawPlan.toLowerCase();
+  
+  // Get chosen template (defaults to 'default')
   const chosenTemplate = settings?.invoiceTemplate || 'default';
 
   // 3. Check permissions
-  // 'business' or higher can use 'premium'
+
+  // Rule: 'business' or higher can use 'premium'
   if (chosenTemplate === 'premium') {
     if (['business', 'pro', 'unlimited', 'lifetime'].includes(planId)) {
       return templateSet.premium;
     }
   }
   
-  // 'standard' or higher can use 'modern'
+  // Rule: 'standard' or higher can use 'modern'
   if (chosenTemplate === 'modern') {
     if (['standard', 'business', 'pro', 'unlimited', 'lifetime'].includes(planId)) {
       return templateSet.modern;
@@ -130,5 +135,7 @@ export const getTemplateComponent = (reportType: ReportType, settings: PdfSettin
   }
 
   // 4. Fallback to default
+  // If they selected a template they aren't allowed to use, 
+  // or if they selected 'default', we return the default template.
   return templateSet.default;
 };
