@@ -313,6 +313,38 @@ const styles = StyleSheet.create({
 });
 
 // ===================================================================
+// New Helper Functions
+// ===================================================================
+
+// --- Helper: Render Variants under Product Name ---
+const renderVariants = (selectedVariants: any) => {
+  if (!selectedVariants || Object.keys(selectedVariants).length === 0) return null;
+  return (
+    <Text style={{ fontSize: 8, color: '#6B7280', marginTop: 2 }}>
+      {Object.entries(selectedVariants).map(([key, val]) => `${key}: ${val}`).join(' | ')}
+    </Text>
+  );
+};
+
+// --- Helper: Render Payment Breakdown ---
+const PaymentBreakdown = ({ lines, currency }: { lines: any[], currency: string }) => {
+  if (!lines || lines.length === 0) return null;
+  return (
+    <View style={{ marginTop: 10, marginBottom: 10, width: '55%' }}>
+      <Text style={{ fontSize: 8, fontWeight: 'bold', color: '#374151', marginBottom: 2 }}>
+        Payment Details:
+      </Text>
+      {lines.map((line: any, i: number) => (
+        <Text key={i} style={{ fontSize: 8, color: '#4B5563' }}>
+          • {line.method ? line.method.replace(/_/g, ' ') : 'Payment'}: {formatCurrency(line.amount, line.currency)}
+          {line.currency !== currency && ` (approx ${formatCurrency(line.valueInInvoiceCurrency, currency)})`}
+        </Text>
+      ))}
+    </View>
+  );
+};
+
+// ===================================================================
 // Reusable Layout Components
 // ===================================================================
 
@@ -422,7 +454,12 @@ export const InvoiceDefault = ({ data: sale, store }: DocProps) => (
     <Page size="A4" style={styles.page}>
       <PdfHeader 
         store={store} 
-        recipient={{ name: sale.customerName, phone: sale.customerPhone, title: 'BILL TO' }} 
+        recipient={{ 
+            name: sale.customerName, 
+            phone: sale.customerPhone, 
+            address: sale.customer?.address || sale.customerAddress, // Handles both data structures
+            title: 'BILL TO' 
+        }} 
       />
       <View>
         <Text style={{...styles.h1, color: '#0B61FF', textAlign: 'center', marginBottom: 20 }}>INVOICE</Text>
@@ -435,14 +472,21 @@ export const InvoiceDefault = ({ data: sale, store }: DocProps) => (
           </View>
           {sale.items.map((item: any, i: number) => (
             <View key={i} style={styles.tableRow}>
-              <Text style={{...styles.tableCell, flex: 3}}>{item.productName}</Text>
+              <View style={{...styles.tableCell, flex: 3}}>
+                <Text>{item.productName}</Text>
+                {renderVariants(item.selectedVariants)}
+              </View>
               <Text style={{...styles.tableCell, flex: 1, ...styles.textCenter}}>{item.quantity}</Text>
               <Text style={{...styles.tableCell, flex: 1, ...styles.textRight}}>{formatCurrency(item.pricePerUnit, sale.invoiceCurrency)}</Text>
               <Text style={{...styles.tableCell, flex: 1, ...styles.textRight, borderRightWidth: 0}}>{formatCurrency(item.subtotal || (item.quantity * item.pricePerUnit), sale.invoiceCurrency)}</Text>
             </View>
           ))}
         </View>
-        <InvoiceTotals sale={sale} style="default" />
+
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 20 }}>
+           <PaymentBreakdown lines={sale.paymentLines} currency={sale.invoiceCurrency} />
+           <InvoiceTotals sale={sale} style="default" />
+        </View>
       </View>
       <PdfFooter />
     </Page>
@@ -458,7 +502,15 @@ export const InvoiceModern = ({ data: sale, store }: DocProps) => (
       </View>
       <View style={styles.headerModernStripe} />
       <View style={{ padding: 40 }}>
-        <PdfHeader store={store} recipient={{ name: sale.customerName, phone: sale.customerPhone, title: 'BILL TO' }} />
+        <PdfHeader 
+            store={store} 
+            recipient={{ 
+                name: sale.customerName, 
+                phone: sale.customerPhone, 
+                address: sale.customer?.address || sale.customerAddress,
+                title: 'BILL TO' 
+            }} 
+        />
         <View style={styles.tableModern}>
           <View style={styles.tableModernHeader}>
             <Text style={{...styles.tableModernColHeader, flex: 3}}>Description</Text>
@@ -468,14 +520,20 @@ export const InvoiceModern = ({ data: sale, store }: DocProps) => (
           </View>
           {sale.items.map((item: any, i: number) => (
             <View key={i} style={styles.tableModernRow}>
-              <Text style={{...styles.tableModernCell, flex: 3}}>{item.productName}</Text>
+              <View style={{...styles.tableModernCell, flex: 3}}>
+                <Text>{item.productName}</Text>
+                {renderVariants(item.selectedVariants)}
+              </View>
               <Text style={{...styles.tableModernCell, flex: 1, ...styles.textCenter}}>{item.quantity}</Text>
               <Text style={{...styles.tableModernCell, flex: 1, ...styles.textRight}}>{formatCurrency(item.pricePerUnit, sale.invoiceCurrency)}</Text>
               <Text style={{...styles.tableModernCell, flex: 1, ...styles.textRight}}>{formatCurrency(item.subtotal || (item.quantity * item.pricePerUnit), sale.invoiceCurrency)}</Text>
             </View>
           ))}
         </View>
-        <InvoiceTotals sale={sale} style="modern" />
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 20 }}>
+           <PaymentBreakdown lines={sale.paymentLines} currency={sale.invoiceCurrency} />
+           <InvoiceTotals sale={sale} style="modern" />
+        </View>
       </View>
       <ModernFooter storeName={store.name} />
     </Page>
@@ -491,7 +549,15 @@ export const InvoicePremium = ({ data: sale, store }: DocProps) => (
       </View>
       <View style={styles.headerPremiumStripe} />
       <View style={{ padding: 40, flexGrow: 1 }}>
-        <PdfHeader store={store} recipient={{ name: sale.customerName, phone: sale.customerPhone, title: 'BILL TO' }} />
+        <PdfHeader 
+            store={store} 
+            recipient={{ 
+                name: sale.customerName, 
+                phone: sale.customerPhone, 
+                address: sale.customer?.address || sale.customerAddress,
+                title: 'BILL TO' 
+            }} 
+        />
         <View style={styles.tablePremium}>
           <View style={styles.tablePremiumHeader}>
             <Text style={{...styles.tablePremiumColHeader, flex: 3}}>Description</Text>
@@ -501,14 +567,20 @@ export const InvoicePremium = ({ data: sale, store }: DocProps) => (
           </View>
           {sale.items.map((item: any, i: number) => (
             <View key={i} style={styles.tablePremiumRow}>
-              <Text style={{...styles.tablePremiumCell, flex: 3}}>{item.productName}</Text>
+              <View style={{...styles.tablePremiumCell, flex: 3}}>
+                <Text>{item.productName}</Text>
+                {renderVariants(item.selectedVariants)}
+              </View>
               <Text style={{...styles.tablePremiumCell, flex: 1, ...styles.textCenter}}>{item.quantity}</Text>
               <Text style={{...styles.tablePremiumCell, flex: 1, ...styles.textRight}}>{formatCurrency(item.pricePerUnit, sale.invoiceCurrency)}</Text>
               <Text style={{...styles.tablePremiumCell, flex: 1, ...styles.textRight}}>{formatCurrency(item.subtotal || (item.quantity * item.pricePerUnit), sale.invoiceCurrency)}</Text>
             </View>
           ))}
         </View>
-        <InvoiceTotals sale={sale} style="premium" />
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 20 }}>
+           <PaymentBreakdown lines={sale.paymentLines} currency={sale.invoiceCurrency} />
+           <InvoiceTotals sale={sale} style="premium" />
+        </View>
       </View>
       <PremiumFooter />
     </Page>
@@ -1218,11 +1290,7 @@ export const CustomerSupplierPremium = ({ data, store }: DocProps) => (
       <PremiumFooter />
     </Page>
   </Document>
-  
 );
-// File: AllTemplates.tsx
-
-// ... (at the end of the file, before the final '}')
 
 // ===================================================================
 // 11. SALES SUMMARY REPORT (NEW)
@@ -1377,9 +1445,6 @@ export const PurchaseReportPremium = ({ data, store }: DocProps) => (
     </Page>
   </Document>
 );
-// File: app/components/pdf/AllTemplates.tsx
-
-// ... (at the very end of the file, after SalesSummaryReportDefault)
 
 // ===================================================================
 // 12. INVENTORY SUMMARY REPORT (NEW)
