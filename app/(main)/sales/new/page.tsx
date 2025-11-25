@@ -11,7 +11,7 @@ import {
   ChevronRight, X, Save, Trash2,
   Download, Printer, ChevronDown, CheckCircle,
   ChevronsUpDown, Loader2, Calendar as CalendarIconLucide,
-  MapPin, Phone, Check, FileText, ClipboardList, Clock, ArrowRight, AlertCircle
+  MapPin, Phone, Check, FileText, ClipboardList, Clock, ArrowRight, AlertCircle, FileBox
 } from "lucide-react";
 import { Dialog, Transition, Combobox } from "@headlessui/react";
 import { type DateRange } from "react-day-picker";
@@ -49,7 +49,7 @@ const fetcher = async (url: string) => {
     headers: { Authorization: `Bearer ${token}` },
   });
   if (!res.ok) {
-    const errorBody = await res.json();
+    const errorBody = await res.json().catch(() => ({}));
     throw new Error(errorBody.error || `API Error: ${res.status}`);
   }
   return res.json();
@@ -343,20 +343,26 @@ const ProductSearch = ({ onProductSelect, invoiceCurrency }: { onProductSelect: 
           leaveTo="opacity-0"
         >
           <Combobox.Options className="absolute z-10 mt-1 max-h-60 w-full overflow-auto rounded-md bg-white py-1 text-base shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none dark:bg-gray-800 sm:text-sm">
-            {products.map((product: any) => (
-              <Combobox.Option key={product.id} className={({ active }) => `relative cursor-pointer select-none py-2 pl-4 pr-4 ${active ? 'bg-blue-600 text-white' : 'text-gray-900 dark:text-gray-200'}`} value={product}>
-                <div className="flex justify-between">
-                  <span className="block truncate font-medium">{product.name}</span>
-                  <span className="text-sm">
-                    {product.salePrices?.[invoiceCurrency] 
-                      ? formatCurrency(product.salePrices[invoiceCurrency], invoiceCurrency)
-                      : (product.salePrices?.USD ? `(No ${invoiceCurrency} Price)` : "No Price")
-                    }
-                  </span>
+            {products.length === 0 && query !== "" && !isLoading ? (
+                <div className="py-2 px-4 text-sm text-gray-500">
+                    {error ? "Error loading products" : "No products found."}
                 </div>
-                <span className="block truncate text-sm text-gray-500">{product.quantity} in stock</span>
-              </Combobox.Option>
-            ))}
+            ) : (
+                products.map((product: any) => (
+                <Combobox.Option key={product.id} className={({ active }) => `relative cursor-pointer select-none py-2 pl-4 pr-4 ${active ? 'bg-blue-600 text-white' : 'text-gray-900 dark:text-gray-200'}`} value={product}>
+                    <div className="flex justify-between">
+                    <span className="block truncate font-medium">{product.name}</span>
+                    <span className="text-sm">
+                        {product.salePrices?.[invoiceCurrency] 
+                        ? formatCurrency(product.salePrices[invoiceCurrency], invoiceCurrency)
+                        : (product.salePrices?.USD ? `(No ${invoiceCurrency} Price)` : "No Price")
+                        }
+                    </span>
+                    </div>
+                    <span className="block truncate text-sm text-gray-500">{product.quantity} in stock</span>
+                </Combobox.Option>
+                ))
+            )}
           </Combobox.Options>
         </Transition>
       </div>
@@ -812,7 +818,7 @@ function PosForm() {
               <Printer className="h-4 w-4" /> Save & Print
             </button>
             
-             {/* --- SAVE AS DRAFT BUTTON (FIXED) --- */}
+             {/* --- SAVE AS DRAFT BUTTON (FIXED: Added ?. safety) --- */}
              <button 
               type="button" 
               onClick={handleSaveDraft} 
@@ -967,7 +973,7 @@ function DraftsModal({ isOpen, onClose, onLoadDraft }: { isOpen: boolean, onClos
                         <h3 className="text-sm font-semibold text-gray-900 dark:text-white mb-1">Unable to load drafts</h3>
                         <p className="text-xs text-gray-500 dark:text-gray-400 max-w-sm mb-4">{error.message}</p>
                         <div className="text-xs bg-gray-50 border border-gray-200 rounded p-2 text-gray-600 dark:bg-gray-800 dark:border-gray-700 dark:text-gray-400">
-                            Developer Note: If this is a Firestore error, check Vercel logs for the "Index Link".
+                            Developer Note: Check if <code>api/drafts/route.ts</code> is deployed and accessible.
                         </div>
                     </div>
                  ) : isLoading ? (
@@ -980,7 +986,7 @@ function DraftsModal({ isOpen, onClose, onLoadDraft }: { isOpen: boolean, onClos
                      /* 3. Modern Empty State */
                      <div className="flex flex-col items-center justify-center py-20 text-center">
                          <div className="bg-gray-100 p-4 rounded-full mb-3 dark:bg-gray-700/50">
-                             <FileText className="h-8 w-8 text-gray-400 dark:text-gray-500" />
+                             <FileBox className="h-8 w-8 text-gray-400 dark:text-gray-500" />
                          </div>
                          <h3 className="text-sm font-medium text-gray-900 dark:text-white">No drafts found</h3>
                          <p className="text-xs text-gray-500 mt-1 max-w-xs mx-auto">
