@@ -11,7 +11,7 @@ import {
   ChevronRight, X, Save, Trash2,
   Download, Printer, ChevronDown, CheckCircle,
   ChevronsUpDown, Loader2, Calendar as CalendarIconLucide,
-  MapPin, Phone, Check, FileText, ClipboardList
+  MapPin, Phone, Check, FileText, ClipboardList, Clock, ArrowRight, AlertCircle
 } from "lucide-react";
 import { Dialog, Transition, Combobox } from "@headlessui/react";
 import { type DateRange } from "react-day-picker";
@@ -914,9 +914,9 @@ function PosForm() {
 // 🌀 Helpers & UI Components
 // =============================================================================
 
-// --- NEW DRAFTS MODAL COMPONENT ---
+// --- NEW DRAFTS MODAL COMPONENT (MODERNIZED & FIXED) ---
 function DraftsModal({ isOpen, onClose, onLoadDraft }: { isOpen: boolean, onClose: () => void, onLoadDraft: (draft: any) => void }) {
-    const { data, error, mutate } = useSWR(isOpen ? "/api/drafts" : null, fetcher);
+    const { data, error, isLoading, mutate } = useSWR(isOpen ? "/api/drafts" : null, fetcher);
     const [deletingId, setDeletingId] = useState<string | null>(null);
     const { user } = useAuth();
 
@@ -940,57 +940,119 @@ function DraftsModal({ isOpen, onClose, onLoadDraft }: { isOpen: boolean, onClos
 
     return (
         <TransitionedModal isOpen={isOpen} onClose={onClose} size="lg">
-             <Dialog.Title className="text-xl font-bold dark:text-white flex items-center gap-2">
-                 <ClipboardList className="h-6 w-6 text-blue-600" /> Saved Drafts
-             </Dialog.Title>
-             <p className="text-sm text-gray-500 mt-1 mb-4">Click "Open" to load a draft into the POS.</p>
+             <div className="flex items-center justify-between border-b border-gray-100 dark:border-gray-700 pb-4 mb-4">
+                 <div className="flex items-center gap-2">
+                     <div className="bg-blue-100 dark:bg-blue-900/50 p-2 rounded-lg">
+                         <ClipboardList className="h-5 w-5 text-blue-600 dark:text-blue-400" />
+                     </div>
+                     <div>
+                         <Dialog.Title className="text-lg font-bold text-gray-900 dark:text-white">Saved Drafts</Dialog.Title>
+                         <p className="text-xs text-gray-500 dark:text-gray-400">
+                             {data?.drafts?.length ? `${data.drafts.length} drafts available` : 'Manage your unfinished sales'}
+                         </p>
+                     </div>
+                 </div>
+                 <button onClick={onClose} className="text-gray-400 hover:text-gray-500 dark:hover:text-gray-300">
+                     <X className="h-5 w-5" />
+                 </button>
+             </div>
              
-             <div className="min-h-[200px] max-h-[500px] overflow-y-auto -mx-2 px-2">
-                 {!data ? (
-                     <div className="py-10 text-center"><Loader2 className="h-8 w-8 animate-spin mx-auto text-gray-400" /></div>
-                 ) : data.drafts.length === 0 ? (
-                     <div className="py-10 text-center text-gray-500">No saved drafts found.</div>
+             <div className="min-h-[300px] max-h-[600px] overflow-y-auto -mx-2 px-2 custom-scrollbar">
+                 {/* 1. Show Error with Clear Instructions */}
+                 {error ? (
+                    <div className="flex flex-col items-center justify-center py-10 text-center px-4">
+                        <div className="bg-red-100 p-3 rounded-full mb-3 dark:bg-red-900/30">
+                            <AlertCircle className="h-6 w-6 text-red-600 dark:text-red-400" />
+                        </div>
+                        <h3 className="text-sm font-semibold text-gray-900 dark:text-white mb-1">Unable to load drafts</h3>
+                        <p className="text-xs text-gray-500 dark:text-gray-400 max-w-sm mb-4">{error.message}</p>
+                        <div className="text-xs bg-gray-50 border border-gray-200 rounded p-2 text-gray-600 dark:bg-gray-800 dark:border-gray-700 dark:text-gray-400">
+                            Developer Note: If this is a Firestore error, check Vercel logs for the "Index Link".
+                        </div>
+                    </div>
+                 ) : isLoading ? (
+                     /* 2. Modern Loader */
+                     <div className="flex flex-col items-center justify-center py-20">
+                         <Loader2 className="h-8 w-8 animate-spin text-blue-500 mb-2" />
+                         <span className="text-xs text-gray-400">Loading drafts...</span>
+                     </div>
+                 ) : data?.drafts?.length === 0 ? (
+                     /* 3. Modern Empty State */
+                     <div className="flex flex-col items-center justify-center py-20 text-center">
+                         <div className="bg-gray-100 p-4 rounded-full mb-3 dark:bg-gray-700/50">
+                             <FileText className="h-8 w-8 text-gray-400 dark:text-gray-500" />
+                         </div>
+                         <h3 className="text-sm font-medium text-gray-900 dark:text-white">No drafts found</h3>
+                         <p className="text-xs text-gray-500 mt-1 max-w-xs mx-auto">
+                             Save a sale as a draft to finish it later. It will appear here.
+                         </p>
+                     </div>
                  ) : (
-                     <div className="space-y-3">
-                        {data.drafts.map((draft: any) => (
-                            <div key={draft.id} className="group relative flex flex-col sm:flex-row sm:items-center justify-between gap-4 rounded-xl border border-gray-200 bg-gray-50 p-4 transition-all hover:bg-white hover:shadow-md dark:border-gray-700 dark:bg-gray-800 dark:hover:bg-gray-700">
-                                <div className="flex-1">
-                                    <div className="flex items-center gap-2">
-                                        <span className="font-semibold text-gray-900 dark:text-white">
-                                            {draft.customer?.name || "Unknown Customer"}
-                                        </span>
-                                        <span className="rounded bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-800 dark:bg-blue-900 dark:text-blue-200">
-                                            {formatCurrency(draft.totalAmount, draft.invoiceCurrency)}
-                                        </span>
+                     /* 4. Modern List Grid */
+                     <div className="grid grid-cols-1 gap-3">
+                        {data?.drafts?.map((draft: any) => (
+                            <div key={draft.id} className="group relative bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl p-4 hover:shadow-md hover:border-blue-300 dark:hover:border-blue-700 transition-all duration-200">
+                                <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
+                                    <div className="flex-1 min-w-0">
+                                        <div className="flex items-center gap-2 mb-1">
+                                            <h4 className="font-semibold text-gray-900 dark:text-white truncate">
+                                                {draft.customer?.name || "Unknown Customer"}
+                                            </h4>
+                                            {draft.items?.length > 0 && (
+                                                <span className="inline-flex items-center rounded-md bg-gray-100 px-2 py-1 text-xs font-medium text-gray-600 dark:bg-gray-700 dark:text-gray-300 ring-1 ring-inset ring-gray-500/10">
+                                                    {draft.items.length} Items
+                                                </span>
+                                            )}
+                                        </div>
+                                        
+                                        <div className="flex items-center gap-4 text-xs text-gray-500 dark:text-gray-400 mb-2">
+                                            <div className="flex items-center gap-1">
+                                                <Clock className="h-3 w-3" />
+                                                {new Date(draft.updatedAt).toLocaleDateString()}
+                                            </div>
+                                            <div className="flex items-center gap-1">
+                                                <span>•</span>
+                                                <span className="font-medium text-gray-700 dark:text-gray-300">
+                                                    {formatCurrency(draft.totalAmount, draft.invoiceCurrency)}
+                                                </span>
+                                            </div>
+                                        </div>
+
+                                        {draft.notes && (
+                                            <p className="text-xs text-gray-500 bg-gray-50 dark:bg-gray-700/50 p-2 rounded-md italic truncate max-w-md">
+                                                "{draft.notes}"
+                                            </p>
+                                        )}
                                     </div>
-                                    <div className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-                                        {new Date(draft.updatedAt).toLocaleDateString()} at {new Date(draft.updatedAt).toLocaleTimeString()} • {draft.items?.length || 0} items
+
+                                    <div className="flex items-center gap-2 self-start sm:self-center w-full sm:w-auto mt-2 sm:mt-0">
+                                        <button 
+                                            onClick={(e) => handleDelete(e, draft.id)}
+                                            disabled={deletingId === draft.id}
+                                            className="flex-1 sm:flex-none justify-center rounded-lg px-3 py-2 text-xs font-medium text-red-600 bg-red-50 hover:bg-red-100 dark:bg-red-900/20 dark:hover:bg-red-900/40 border border-transparent transition-colors flex items-center gap-1"
+                                            title="Delete Draft"
+                                        >
+                                            {deletingId === draft.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />}
+                                            <span className="sm:hidden">Delete</span>
+                                        </button>
+                                        <button 
+                                            onClick={() => onLoadDraft(draft)}
+                                            className="flex-2 sm:flex-none justify-center flex items-center gap-1 rounded-lg bg-blue-600 px-4 py-2 text-xs font-semibold text-white shadow-sm hover:bg-blue-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 transition-all"
+                                        >
+                                            Open Draft <ArrowRight className="h-3 w-3" />
+                                        </button>
                                     </div>
-                                    {draft.notes && <div className="mt-1 text-xs text-gray-400 italic truncate max-w-md">{draft.notes}</div>}
-                                </div>
-                                <div className="flex items-center gap-2">
-                                    <button 
-                                        onClick={(e) => handleDelete(e, draft.id)}
-                                        disabled={deletingId === draft.id}
-                                        className="rounded-lg p-2 text-gray-400 hover:bg-red-50 hover:text-red-600 transition-colors"
-                                        title="Delete Draft"
-                                    >
-                                        {deletingId === draft.id ? <Loader2 className="h-5 w-5 animate-spin" /> : <Trash2 className="h-5 w-5" />}
-                                    </button>
-                                    <button 
-                                        onClick={() => onLoadDraft(draft)}
-                                        className="flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-blue-700 transition-colors"
-                                    >
-                                        Open Draft
-                                    </button>
                                 </div>
                             </div>
                         ))}
                      </div>
                  )}
              </div>
-             <div className="mt-6 flex justify-end">
-                <button onClick={onClose} className="rounded-lg border px-4 py-2 text-sm font-medium hover:bg-gray-50 dark:hover:bg-gray-700">Close</button>
+             
+             <div className="mt-4 pt-4 border-t border-gray-100 dark:border-gray-700 flex justify-end">
+                <button onClick={onClose} className="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700 transition-colors">
+                    Close
+                </button>
              </div>
         </TransitionedModal>
     );
