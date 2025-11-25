@@ -11,7 +11,7 @@ import {
   ChevronRight, X, Save, Trash2,
   Download, Printer, ChevronDown, CheckCircle,
   ChevronsUpDown, Loader2, Calendar as CalendarIconLucide,
-  MapPin, Phone, Check, FileText, ClipboardList // Added FileText/ClipboardList for Drafts
+  MapPin, Phone, Check, FileText, ClipboardList
 } from "lucide-react";
 import { Dialog, Transition, Combobox } from "@headlessui/react";
 import { type DateRange } from "react-day-picker";
@@ -812,8 +812,13 @@ function PosForm() {
               <Printer className="h-4 w-4" /> Save & Print
             </button>
             
-             {/* --- SAVE AS DRAFT BUTTON --- */}
-             <button type="button" onClick={handleSaveDraft} disabled={isSaving || (items.length === 0 && !customer.name)} className="flex-1 flex items-center justify-center gap-2 rounded-lg border border-amber-500 text-amber-600 px-4 py-2 text-sm font-medium hover:bg-amber-50 disabled:opacity-50 dark:hover:bg-amber-900/20">
+             {/* --- SAVE AS DRAFT BUTTON (FIXED) --- */}
+             <button 
+              type="button" 
+              onClick={handleSaveDraft} 
+              disabled={isSaving || (items.length === 0 && !customer?.name)} 
+              className="flex-1 flex items-center justify-center gap-2 rounded-lg border border-amber-500 text-amber-600 px-4 py-2 text-sm font-medium hover:bg-amber-50 disabled:opacity-50 dark:hover:bg-amber-900/20"
+            >
               {isSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileText className="h-4 w-4" />} 
               {currentDraftId ? "Update Draft" : "Save as Draft"}
             </button>
