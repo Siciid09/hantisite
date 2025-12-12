@@ -263,7 +263,7 @@ function ReportsPage() {
       {/* --- Header --- */}
       <header className="mb-6 flex flex-col items-start justify-between gap-4 md:flex-row md:items-center">
         <div>
-          <h1 className="text-3xl font-bold">Reports & Analytics</h1>
+          <h1 className="text-3xl font-bold">Reports  & Analytics</h1>
           <p className="text-gray-500 dark:text-gray-400">View all reports for your business</p>
         </div>
         <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
