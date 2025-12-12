@@ -1,4 +1,4 @@
-import { firestoreAdmin, messagingAdmin } from "@/lib/firebaseAdmin";
+import { firestoreAdmin, messagingAdmin } from "@/lib/firebaseAdmin"; // Adjust path as needed
 import dayjs from "dayjs";
 
 // =============================================================================
@@ -22,6 +22,7 @@ const TEMPLATES = {
   },
 
   // --- DAILY AI BRIEF MESSAGES ---
+  // Note: These are simple strings, not objects with titles, based on your usage in runDailyBrief
   daily_growth: "🚀 Booming! Sales grew {val}% today.\n🚀 Korodh! Iibku wuxuu kordhay {val}% maanta.",
   daily_high_vol: "🔥 Busy day! {count} sales totaling {currency} {revenue}.",
   daily_debt_risk: "⚠️ High Debt Day. You gave {currency} {debt} in credit.",
@@ -40,7 +41,7 @@ async function sendFCM(token: string, title: string, body: string, type: string,
       notification: { title, body },
       data: { 
         type: type, 
-        click_action: "FLUTTER_NOTIFICATION_CLICK",
+        click_action: "FLUTTER_NOTIFICATION_CLICK", // Standard for Flutter background clicks
         ...data 
       }
     });
@@ -69,6 +70,7 @@ export async function runSubscriptionCheck() {
       const isExpired = daysLeft <= 0;
       const tmpl = isExpired ? TEMPLATES.sub_expired : TEMPLATES.sub_trial_warning;
       
+      // FIX: Ensure we access .body before replacing
       const body = tmpl.body.replace("{days}", daysLeft.toString());
       
       await sendFCM(user.fcmToken, tmpl.title, body, "subscription_warning", {
@@ -126,6 +128,7 @@ export async function runDailyBrief() {
     let body = "";
     const growth = yRevenue > 0 ? ((revenue - yRevenue) / yRevenue) * 100 : 0;
 
+    // Note: Since daily_growth/high_vol etc are just strings in the object above, we can replace directly.
     if (growth > 25) {
       body = TEMPLATES.daily_growth.replace("{val}", growth.toFixed(0));
     } else if (salesSnap.size > 20) {
@@ -169,13 +172,23 @@ export async function checkInventoryInstant(items: any[], uid: string) {
 
       // 3. Trigger Alert if Critical
       if (qty <= threshold) {
-        const body = TEMPLATES.inv_low_stock
+        
+        // ======================================================
+        // ✅ FIX APPLIED HERE
+        // ======================================================
+        // Old (Error): TEMPLATES.inv_low_stock.replace(...)
+        // New (Fixed): TEMPLATES.inv_low_stock.body.replace(...)
+        const body = TEMPLATES.inv_low_stock.body
           .replace(/{product}/g, pData?.name || "Item")
           .replace(/{qty}/g, qty.toString());
 
-        await sendFCM(fcmToken, TEMPLATES.inv_low_stock.title, body, "inventory_alert", {
-          productId: item.productId
-        });
+        await sendFCM(
+          fcmToken, 
+          TEMPLATES.inv_low_stock.title, 
+          body, 
+          "inventory_alert", 
+          { productId: item.productId }
+        );
       }
     }
   }

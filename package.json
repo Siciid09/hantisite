@@ -49,7 +49,7 @@
     "recharts": "^3.3.0",
     "swr": "^2.3.6",
     "tailwind-merge": "^3.3.1",
-    "xlsx": "^0.18.5",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-latest/xlsx-latest.tgz",
     "yup": "^1.7.1",
     "zod": "^4.1.12",
     "zustand": "^5.0.8"
@@ -60,7 +60,7 @@
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
-    "@types/react-pdf": "^6.2.0",
+    "@types/react-pdf": "^5.0.7",
     "eslint": "^9",
     "eslint-config-next": "16.0.0",
     "firebase-admin": "^13.6.0",
